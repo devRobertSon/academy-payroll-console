@@ -56,7 +56,15 @@ service cloud.firestore {
     }
 
     match /workEntries/{entryId} {
-      allow read, create, update: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && (!exists(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month))
+          || get(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month)).data.status != 'published');
+      allow update: if isAdmin()
+        && (!exists(/databases/$(database)/documents/payrollRuns/$(resource.data.month))
+          || get(/databases/$(database)/documents/payrollRuns/$(resource.data.month)).data.status != 'published')
+        && (!exists(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month))
+          || get(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month)).data.status != 'published');
       allow delete: if isAdmin()
         && !exists(/databases/$(database)/documents/payrollRuns/$(resource.data.month))
         || (isAdmin()
@@ -131,6 +139,27 @@ service cloud.firestore {
           'payslipId', 'teacherId', 'teacherUid', 'month', 'viewedAt'
         ])
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherUid == request.auth.uid
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherId == request.resource.data.teacherId
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.month == request.resource.data.month
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';
+      allow update, delete: if false;
+    }
+
+    match /payslipDeliveries/{deliveryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'payslipId', 'teacherId', 'month', 'recipientEmail', 'channel',
+          'gmailMessageId', 'sentBy', 'sentAt'
+        ])
+        && request.resource.data.payslipId is string
+        && request.resource.data.teacherId is string
+        && request.resource.data.month is string
+        && request.resource.data.recipientEmail is string
+        && request.resource.data.channel == 'gmail_attachment'
+        && request.resource.data.gmailMessageId is string
+        && request.resource.data.sentBy == request.auth.uid
+        && request.resource.data.sentAt == request.time
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherId == request.resource.data.teacherId
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.month == request.resource.data.month
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';

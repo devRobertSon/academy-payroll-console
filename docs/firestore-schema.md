@@ -15,6 +15,7 @@
 | `payrollRuns` | 관리 | 차단 |
 | `payslips` | 관리 | 본인 확정본만 |
 | `payslipReceipts` | 조회 | 본인 열람 기록 생성/조회 |
+| `payslipDeliveries` | 조회·생성 | 접근 불가 |
 | `payrollLedgers` | 생성/조회 | 차단 |
 | `auditLogs` | 생성/조회 | 차단 |
 
@@ -189,3 +190,20 @@
 ```
 
 선생님이 발행된 본인 명세서를 처음 열 때만 생성됩니다. 급여 확정본의 불변성을 지키기 위해 `payslips` 문서에 열람 시간을 쓰지 않으며, 열람 기록도 업데이트·삭제하지 않습니다.
+
+### `payslipDeliveries/{deliveryId}`
+
+```json
+{
+  "payslipId": "2026-08_teacherId",
+  "teacherId": "teacherId",
+  "month": "2026-08",
+  "recipientEmail": "등록된 선생님 이메일",
+  "channel": "gmail_attachment",
+  "gmailMessageId": "Gmail API 메시지 ID",
+  "sentBy": "관리자 UID",
+  "sentAt": "server timestamp"
+}
+```
+
+관리자만 생성·조회할 수 있으며 수정과 삭제는 허용하지 않습니다. 급여명세서 본문, PDF, Gmail OAuth 토큰은 저장하지 않습니다. 규칙은 연결된 `payslips` 문서가 `published` 상태이고 선생님과 급여월이 일치하는지 다시 확인합니다.

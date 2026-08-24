@@ -186,6 +186,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .payslip-item span { color: var(--muted); font-size: 10px; }
 .payslip-item .amount { grid-row: 1 / 3; grid-column: 2; align-self: center; color: var(--ink); font-size: 12px; font-weight: 700; }
 .payslip-sheet { min-height: 680px; padding: clamp(24px, 5vw, 52px); border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+.payslip-sheet.pdf-export { min-height: 0; padding: 32px 38px 0; border: 0; box-shadow: none; }
 .payslip-title { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 26px; border-bottom: 2px solid var(--ink); }
 .payslip-title h2 { margin: 0 0 6px; font-size: 24px; }
 .payslip-title p { margin: 0; color: var(--muted); font-size: 11px; }
@@ -196,6 +197,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .payslip-summary span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
 .payslip-summary strong { font-size: 15px; }
 .payslip-sheet h3 { margin: 24px 0 10px; font-size: 12px; }
+.payslip-sheet tr, .payslip-totals { break-inside: avoid; page-break-inside: avoid; }
 .payslip-totals { margin-top: 26px; padding-top: 18px; border-top: 2px solid var(--ink); }
 .payslip-totals div { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
 .payslip-totals .net { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 18px; font-weight: 700; }
@@ -208,6 +210,12 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .modal-header .icon-button { margin-left: auto; }
 .modal-body { padding: 20px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--surface-subtle); }
+.delivery-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.delivery-summary > div { min-width: 0; padding: 14px 0; }
+.delivery-summary > div + div { padding-left: 18px; border-left: 1px solid var(--line); }
+.delivery-summary span, .delivery-summary small { display: block; color: var(--muted); font-size: 10px; }
+.delivery-summary strong { display: block; margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; }
+.email-fallback { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
 .form-field { display: grid; gap: 6px; }
 .form-field.full { grid-column: 1 / -1; }
@@ -262,6 +270,9 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .progress-strip { grid-template-columns: 1fr; }
   .payslip-sheet { padding: 22px 16px; }
   .payslip-title h2 { font-size: 20px; }
+  .delivery-summary { grid-template-columns: 1fr; }
+  .delivery-summary > div + div { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
+  .email-fallback { align-items: stretch; flex-direction: column; }
 }
 
 @media print {

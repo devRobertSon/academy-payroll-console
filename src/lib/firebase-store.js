@@ -1,3 +1,5 @@
+import { GMAIL_SEND_SCOPE } from "./gmail.js";
+
 const FIREBASE_VERSION = "11.8.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
 
@@ -18,6 +20,8 @@ export async function createFirebaseStore(config) {
   }
   const auth = authSdk.getAuth(app);
   const db = firestoreSdk.getFirestore(app);
+  let gmailAccessToken = null;
+  let gmailAccessTokenExpiresAt = 0;
   await authSdk.setPersistence(auth, authSdk.browserLocalPersistence);
 
   async function sessionFromUser(firebaseUser) {
@@ -66,7 +70,7 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslipReceipts] = await Promise.all([
+      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslips, payslipReceipts, payslipDeliveries] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("rateRules"),
         loadCollection("workEntries"),
@@ -75,7 +79,9 @@ export async function createFirebaseStore(config) {
         loadCollection("insurancePolicies"),
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
-        loadCollection("payslipReceipts")
+        loadCollection("payslips"),
+        loadCollection("payslipReceipts"),
+        loadCollection("payslipDeliveries")
       ]);
       return {
         teachers,
@@ -85,7 +91,9 @@ export async function createFirebaseStore(config) {
         taxPolicies,
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
         payrollOverrides,
-        payslipReceipts
+        payslips,
+        payslipReceipts,
+        payslipDeliveries
       };
     }
 
@@ -141,13 +149,70 @@ export async function createFirebaseStore(config) {
     });
   }
 
+  async function authorizeGmailSend() {
+    if (gmailAccessToken && Date.now() < gmailAccessTokenExpiresAt) return gmailAccessToken;
+    if (!auth.currentUser) throw new Error("관리자 Google 계정으로 다시 로그인해 주세요.");
+
+    const provider = new authSdk.GoogleAuthProvider();
+    provider.addScope(GMAIL_SEND_SCOPE);
+    provider.setCustomParameters({ login_hint: auth.currentUser.email || "" });
+    const result = await authSdk.reauthenticateWithPopup(auth.currentUser, provider);
+    const credential = authSdk.GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) throw new Error("Gmail 발송 권한을 확인하지 못했습니다.");
+    gmailAccessToken = credential.accessToken;
+    gmailAccessTokenExpiresAt = Date.now() + 50 * 60 * 1000;
+    return gmailAccessToken;
+  }
+
+  async function sendGmailMessage(raw) {
+    const accessToken = await authorizeGmailSend();
+    const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ raw })
+    });
+    if (!response.ok) {
+      if (response.status === 401) {
+        gmailAccessToken = null;
+        gmailAccessTokenExpiresAt = 0;
+      }
+      if (response.status === 403) throw new Error("Gmail API 활성화와 gmail.send 권한 승인을 확인해 주세요.");
+      const details = await response.json().catch(() => null);
+      throw new Error(details?.error?.message || "Gmail에서 메일을 발송하지 못했습니다.");
+    }
+    return response.json();
+  }
+
+  async function recordPayslipDelivery(delivery) {
+    const id = crypto.randomUUID();
+    const sentAt = new Date().toISOString();
+    await firestoreSdk.setDoc(firestoreSdk.doc(db, "payslipDeliveries", id), {
+      ...delivery,
+      sentBy: auth.currentUser.uid,
+      sentAt: firestoreSdk.serverTimestamp()
+    });
+    return { id, ...delivery, sentBy: auth.currentUser.uid, sentAt };
+  }
+
+  async function signOut() {
+    gmailAccessToken = null;
+    gmailAccessTokenExpiresAt = 0;
+    await authSdk.signOut(auth);
+  }
+
   return {
     signIn,
     restoreSession,
-    signOut: () => authSdk.signOut(auth),
+    signOut,
     loadWorkspace,
     saveDocument,
     publishPayrollRun,
-    recordPayslipView
+    recordPayslipView,
+    authorizeGmailSend,
+    sendGmailMessage,
+    recordPayslipDelivery
   };
 }

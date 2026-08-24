@@ -12,6 +12,7 @@ await checkRequiredFiles();
 await checkJavaScriptSyntax();
 await checkHtmlAssets();
 await checkRepositorySafety();
+await checkDeliverySecurity();
 if (!staticOnly) await checkLocalPage();
 
 if (failures.length) {
@@ -81,6 +82,27 @@ async function checkRepositorySafety() {
   if (demoEmails.some((email) => !email.endsWith(".invalid"))) failures.push("Demo data contains a non-.invalid email address.");
 }
 
+async function checkDeliverySecurity() {
+  const rules = await readFile(join(root, "firestore.rules"), "utf8");
+  const requiredRules = [
+    "match /payslipDeliveries/{deliveryId}",
+    "request.resource.data.channel == 'gmail_attachment'",
+    "request.resource.data.sentBy == request.auth.uid",
+    "request.resource.data.sentAt == request.time"
+  ];
+  for (const rule of requiredRules) {
+    if (!rules.includes(rule)) failures.push(`Payslip delivery security rule is missing: ${rule}`);
+  }
+
+  const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  if (!store.includes('loadCollection("payslips")')) {
+    failures.push("Admin workspace must load immutable payslip snapshots for delivery.");
+  }
+  if (store.includes("localStorage.setItem") && store.includes("gmailAccessToken")) {
+    failures.push("Gmail OAuth token must not be persisted in localStorage.");
+  }
+}
+
 async function checkLocalPage() {
   const port = await reservePort();
   const server = spawn(process.execPath, [join(root, "scripts", "serve.mjs")], {
@@ -147,4 +169,3 @@ async function exists(path) {
     return false;
   }
 }
-

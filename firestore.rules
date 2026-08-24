@@ -32,13 +32,40 @@ service cloud.firestore {
       return request.resource.data.teacherId is string
         && request.resource.data.teacherUid is string
         && request.resource.data.month is string
-        && request.resource.data.status in ['draft', 'published'];
+        && request.resource.data.status == 'published'
+        && request.resource.data.revision is int
+        && request.resource.data.revision >= 1;
     }
 
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
       allow create, update, delete: if isAdmin();
+    }
+
+    match /accessRequests/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'status', 'requestedAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.displayName is string
+        && request.resource.data.status == 'pending'
+        && request.resource.data.requestedAt == request.time;
+      allow update: if isAdmin()
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.teacherId is string
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'teacherId', 'reviewedAt', 'reviewedBy'
+        ]);
+      allow delete: if false;
     }
 
     match /teachers/{teacherId} {
@@ -101,10 +128,26 @@ service cloud.firestore {
 
     match /payrollRuns/{month} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && request.resource.data.status in ['draft', 'ready', 'published'];
+      allow create: if isAdmin()
+        && request.resource.data.status in ['draft', 'ready', 'published']
+        && (request.resource.data.status != 'published'
+          || (request.resource.data.revision is int && request.resource.data.revision == 1));
       allow update: if isAdmin()
-        && resource.data.status != 'published'
-        && request.resource.data.status in ['draft', 'ready', 'published'];
+        && (
+          (resource.data.status in ['draft', 'ready']
+            && request.resource.data.status in ['draft', 'ready', 'published'])
+          || (resource.data.status == 'published'
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.revision == resource.data.get('revision', 1)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'revision', 'cancellationId', 'cancellationReason',
+              'cancelledAt', 'updatedAt', 'updatedBy'
+            ]))
+          || (resource.data.status == 'cancelled'
+            && request.resource.data.status == 'published'
+            && request.resource.data.revision is int
+            && request.resource.data.revision == resource.data.revision + 1)
+        );
       allow delete: if false;
     }
 
@@ -116,9 +159,37 @@ service cloud.firestore {
           && resource.data.status == 'published');
       allow create: if isAdmin() && validPublishedPayslip();
       allow update: if isAdmin()
-        && resource.data.status != 'published'
-        && validPublishedPayslip();
+        && (
+          (resource.data.status == 'published'
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'cancellationId', 'cancellationReason', 'cancelledAt',
+              'updatedAt', 'updatedBy'
+            ]))
+          || (resource.data.status == 'cancelled'
+            && validPublishedPayslip()
+            && request.resource.data.revision == resource.data.get('revision', 1) + 1)
+        );
       allow delete: if false;
+    }
+
+    match /payslipVersions/{versionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validPublishedPayslip();
+      allow update, delete: if false;
+    }
+
+    match /payrollCancellations/{cancellationId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.month is string
+        && request.resource.data.revision is int
+        && request.resource.data.revision >= 1
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() >= 5
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
     }
 
     match /payslipReceipts/{receiptId} {
@@ -134,13 +205,15 @@ service cloud.firestore {
         && account().role == 'teacher'
         && request.resource.data.teacherUid == request.auth.uid
         && request.resource.data.teacherId == account().teacherId
+        && request.resource.data.revision is int
         && request.resource.data.viewedAt == request.time
         && request.resource.data.keys().hasOnly([
-          'payslipId', 'teacherId', 'teacherUid', 'month', 'viewedAt'
+          'payslipId', 'teacherId', 'teacherUid', 'month', 'revision', 'viewedAt'
         ])
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherUid == request.auth.uid
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherId == request.resource.data.teacherId
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.month == request.resource.data.month
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.revision == request.resource.data.revision
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';
       allow update, delete: if false;
     }
@@ -150,11 +223,12 @@ service cloud.firestore {
       allow create: if isAdmin()
         && request.resource.data.keys().hasOnly([
           'payslipId', 'teacherId', 'month', 'recipientEmail', 'channel',
-          'gmailMessageId', 'sentBy', 'sentAt'
+          'gmailMessageId', 'revision', 'sentBy', 'sentAt'
         ])
         && request.resource.data.payslipId is string
         && request.resource.data.teacherId is string
         && request.resource.data.month is string
+        && request.resource.data.revision is int
         && request.resource.data.recipientEmail is string
         && request.resource.data.channel == 'gmail_attachment'
         && request.resource.data.gmailMessageId is string
@@ -162,6 +236,7 @@ service cloud.firestore {
         && request.resource.data.sentAt == request.time
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherId == request.resource.data.teacherId
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.month == request.resource.data.month
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.revision == request.resource.data.revision
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';
       allow update, delete: if false;
     }

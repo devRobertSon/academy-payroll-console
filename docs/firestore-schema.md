@@ -5,6 +5,7 @@
 | 컬렉션 | 관리자 | 선생님 |
 |---|---|---|
 | `users` | 전체 관리 | 본인 문서 조회 |
+| `accessRequests` | 승인 요청 조회·처리 | 미등록 본인 요청 생성·조회 |
 | `teachers` | 관리 | 연결된 본인 조회 |
 | `rateRules` | 관리 | 차단 |
 | `workEntries` | 관리 | 차단 |
@@ -14,6 +15,8 @@
 | `payrollOverrides` | 관리 | 차단 |
 | `payrollRuns` | 관리 | 차단 |
 | `payslips` | 관리 | 본인 확정본만 |
+| `payslipVersions` | 불변 버전 조회·생성 | 차단 |
+| `payrollCancellations` | 불변 취소 기록 조회·생성 | 차단 |
 | `payslipReceipts` | 조회 | 본인 열람 기록 생성/조회 |
 | `payslipDeliveries` | 조회·생성 | 접근 불가 |
 | `payrollLedgers` | 생성/조회 | 차단 |
@@ -53,6 +56,23 @@
 ```
 
 계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. 추후 꼭 필요하다면 별도 암호화·마스킹·열람 감사 설계를 먼저 해야 합니다.
+
+### `accessRequests/{uid}`
+
+```json
+{
+  "uid": "Firebase Authentication UID",
+  "email": "Google 로그인 토큰의 이메일",
+  "displayName": "Google 표시 이름",
+  "status": "pending | approved",
+  "requestedAt": "server timestamp",
+  "teacherId": "승인 후 연결된 teachers 문서 ID",
+  "reviewedAt": "server timestamp",
+  "reviewedBy": "관리자 UID"
+}
+```
+
+미등록 사용자는 본인 UID로 `pending` 요청만 만들 수 있습니다. 이메일은 로그인 토큰과 같아야 하며, 관리자는 같은 이메일의 활성·미연결 선생님과만 연결합니다.
 
 ### `rateRules/{ruleId}`
 
@@ -144,13 +164,15 @@
 ```json
 {
   "month": "2026-08",
-  "status": "draft | ready | published",
+  "status": "draft | ready | published | cancelled",
+  "revision": 2,
+  "releaseId": "2026-08_v2",
   "publishedAt": "ISO timestamp",
   "updatedBy": "admin uid"
 }
 ```
 
-`published`가 되면 Security Rules가 업데이트와 삭제를 거부합니다.
+`published` 상태에서는 취소 전환 외의 수정이 금지됩니다. 취소 후 재발행할 때만 `revision`이 1 증가합니다.
 
 ### `payslips/{yyyy-mm}_{teacherId}`
 
@@ -161,6 +183,8 @@
   "teacherUid": "Firebase Authentication UID",
   "teacherName": "발행 시점 이름",
   "status": "published",
+  "revision": 2,
+  "releaseId": "2026-08_v2",
   "policyVersion": "NTS-2024-02-29 / INSURANCE-2026-01",
   "taxPolicyVersion": "NTS-2024-02-29",
   "insurancePolicyVersion": "INSURANCE-2026-01",
@@ -177,6 +201,26 @@
 
 선생님 조회 쿼리는 `teacherUid == request.auth.uid`와 `status == published` 조건을 모두 포함해야 합니다.
 
+### `payslipVersions/{yyyy-mm_teacherId_vN}`
+
+각 발행 차수의 급여명세서 스냅샷입니다. `payslips`는 선생님에게 보이는 현재본이고 `payslipVersions`는 관리자 감사용 불변 원본입니다. 생성 후 수정·삭제할 수 없습니다.
+
+### `payrollCancellations/{yyyy-mm_vN}`
+
+```json
+{
+  "month": "2026-08",
+  "revision": 1,
+  "releaseId": "2026-08_v1",
+  "reason": "수업 시간 누락으로 계산 수정 필요",
+  "payslipIds": ["2026-08_teacherId"],
+  "actorUid": "관리자 UID",
+  "createdAt": "server timestamp"
+}
+```
+
+취소 기록은 수정·삭제하지 않습니다. 사유에는 주민등록번호, 급여 세부 내용 등 개인정보를 적지 않습니다.
+
 ### `payslipReceipts/{payslipId}_{teacherUid}`
 
 ```json
@@ -185,6 +229,7 @@
   "teacherId": "teacherId",
   "teacherUid": "Firebase Authentication UID",
   "month": "2026-08",
+  "revision": 2,
   "viewedAt": "server timestamp"
 }
 ```
@@ -198,6 +243,7 @@
   "payslipId": "2026-08_teacherId",
   "teacherId": "teacherId",
   "month": "2026-08",
+  "revision": 2,
   "recipientEmail": "등록된 선생님 이메일",
   "channel": "gmail_attachment",
   "gmailMessageId": "Gmail API 메시지 ID",

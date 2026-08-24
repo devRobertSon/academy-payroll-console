@@ -1,5 +1,6 @@
 import { appConfig } from "./config.js";
 import {
+  demoAccessRequests,
   demoEntries,
   demoOverrides,
   demoPayrollRuns,
@@ -16,6 +17,16 @@ import { createFirebaseStore } from "./lib/firebase-store.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
 import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js";
+import {
+  artifactRevision,
+  currentArtifactForRevision,
+  matchingTeachersForAccessRequest,
+  nextPayrollRevision,
+  normalizeEmail,
+  payslipId,
+  payslipVersionId,
+  validateTeacherAccessApproval
+} from "./lib/payroll-lifecycle.js";
 import {
   calculatePayroll,
   parseEmploymentTaxTableRows,
@@ -42,8 +53,11 @@ const state = {
     insurancePolicies: [],
     overrides: {},
     payslips: [],
+    payslipVersions: [],
     payslipReceipts: [],
-    payslipDeliveries: []
+    payslipDeliveries: [],
+    payrollCancellations: [],
+    accessRequests: []
   }
 };
 
@@ -139,8 +153,11 @@ function loadDemoData() {
     insurancePolicies: officialInsurancePolicies.map((policy) => structuredClone(policy)),
     overrides: structuredClone(demoOverrides),
     payslips: [],
+    payslipVersions: [],
     payslipReceipts: [],
-    payslipDeliveries: []
+    payslipDeliveries: [],
+    payrollCancellations: [],
+    accessRequests: structuredClone(demoAccessRequests)
   };
 }
 
@@ -169,8 +186,11 @@ function hydrateFirebaseData(loaded) {
   state.data.taxPolicies = mergeBuiltInTaxPolicies(loaded.taxPolicies || []);
   state.data.insurancePolicies = mergeBuiltInInsurancePolicies(loaded.insurancePolicies || []);
   state.data.payslips = loaded.payslips || [];
+  state.data.payslipVersions = loaded.payslipVersions || [];
   state.data.payslipReceipts = loaded.payslipReceipts || [];
   state.data.payslipDeliveries = loaded.payslipDeliveries || [];
+  state.data.payrollCancellations = loaded.payrollCancellations || [];
+  state.data.accessRequests = loaded.accessRequests || [];
   state.data.overrides = Object.fromEntries((loaded.payrollOverrides || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
   const latestMonth = state.data.payrollRuns.map((run) => run.month).sort().at(-1);
   if (latestMonth) state.month = latestMonth;
@@ -221,13 +241,18 @@ function renderDashboard() {
   const payrolls = payrollsForMonth(state.month);
   const summary = summarizePayroll(payrolls.map((item) => item.payroll));
   const run = runForMonth(state.month);
+  const cancellations = cancellationsForMonth(state.month);
   setPage("급여 대시보드", formatMonth(state.month), `
     <button class="button button-secondary" type="button" data-action="copy-notice" ${run.status !== "published" ? "disabled" : ""}><i data-lucide="send"></i><span>안내문 복사</span></button>
     <button class="button button-secondary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>내역서 저장</span></button>
-    <button class="button button-primary" type="button" data-action="publish-run" ${run.status === "published" ? "disabled" : ""}><i data-lucide="check-check"></i><span>${run.status === "published" ? "확정 완료" : "급여 확정"}</span></button>
+    ${run.status === "published"
+      ? `<button class="button button-danger" type="button" data-action="cancel-run"><i data-lucide="rotate-ccw"></i><span>확정 취소</span></button>`
+      : `<button class="button button-primary" type="button" data-action="publish-run"><i data-lucide="check-check"></i><span>${run.status === "cancelled" ? "수정본 재발행" : "급여 확정"}</span></button>`}
   `);
   elements.content.innerHTML = `
-    ${run.status !== "published" ? `<div class="notice warning"><i data-lucide="triangle-alert"></i><span>현재 계산 결과는 초안입니다. 수업 내역과 공제액을 검토한 뒤 확정해 주세요. 사회보험·세액은 기장 회계사의 최종 확인이 필요합니다.</span></div>` : ""}
+    ${run.status === "cancelled"
+      ? `<div class="notice warning"><i data-lucide="history"></i><span>${formatMonth(state.month)} ${e(run.revision || 1)}차 확정본이 취소됐습니다. 수업 내역과 공제액을 수정한 뒤 새 차수로 재발행하세요. 기존 확정본과 취소 사유는 보존됩니다.</span></div>`
+      : run.status !== "published" ? `<div class="notice warning"><i data-lucide="triangle-alert"></i><span>현재 계산 결과는 초안입니다. 수업 내역과 공제액을 검토한 뒤 확정해 주세요. 사회보험·세액은 기장 회계사의 최종 확인이 필요합니다.</span></div>` : ""}
     <div class="toolbar">
       <input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" />
       <span class="status-chip ${e(run.status)}">${statusLabel(run.status)}</span>
@@ -250,13 +275,15 @@ function renderDashboard() {
         ${progressStep("1", "수업 내역 입력", `${entriesForMonth(state.month).length}건`, true, true)}
         ${progressStep("2", "계산 검토", `${payrolls.length}명`, true, run.status !== "draft")}
         ${progressStep("3", "급여 확정", statusLabel(run.status), run.status !== "draft", run.status === "published")}
-        ${progressStep("4", "명세서 공개", run.publishedAt ? "선생님 열람 가능" : "확정 후 공개", run.status === "published", false)}
+        ${progressStep("4", "명세서 공개", run.status === "published" ? "선생님 열람 가능" : run.status === "cancelled" ? "재발행 후 공개" : "확정 후 공개", run.status === "published", false)}
       </div>
     </section>
+    ${cancellations.length ? `<section class="content-section"><div class="section-heading"><div><h2>취소·재발행 이력</h2><p>기존 확정본을 삭제하지 않고 변경 사유를 보존합니다.</p></div></div><div class="data-surface table-scroll"><table><thead><tr><th>취소 차수</th><th>사유</th><th>처리 시각</th><th>처리자</th></tr></thead><tbody>${cancellations.map((item) => `<tr><td>${e(item.revision)}차</td><td>${e(item.reason)}</td><td>${e(formatDateTime(item.createdAt))}</td><td>${e(item.actorUid || "관리자")}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
-  elements.topbarActions.querySelector("[data-action='publish-run']").addEventListener("click", openPublishModal);
+  elements.topbarActions.querySelector("[data-action='publish-run']")?.addEventListener("click", openPublishModal);
+  elements.topbarActions.querySelector("[data-action='cancel-run']")?.addEventListener("click", openCancelPayrollModal);
   if (run.status === "published") elements.topbarActions.querySelector("[data-action='copy-notice']").addEventListener("click", copyPayslipNotice);
   bindPayrollRows();
 }
@@ -295,17 +322,27 @@ function renderTeachers() {
   const selected = teacherById(state.selectedTeacherId) || state.data.teachers[0];
   if (selected) state.selectedTeacherId = selected.id;
   const filtered = state.data.teachers.filter((teacher) => teacher.name.includes(state.search));
+  const pendingRequests = state.data.accessRequests.filter((request) => request.status === "pending");
   elements.content.innerHTML = `
     <div class="toolbar"><div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="이름 검색" aria-label="이름 검색" data-control="search" /></div></div>
+    <section class="content-section account-requests">
+      <div class="section-heading"><div><h2>Google 계정 승인 요청</h2><p>선생님이 포털에서 처음 로그인하면 여기에 표시됩니다.</p></div><span class="status-chip ${pendingRequests.length ? "draft" : "published"}">${pendingRequests.length ? `${pendingRequests.length}건 대기` : "대기 없음"}</span></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>요청자</th><th>Google 이메일</th><th>요청 시각</th><th>연결 가능</th><th aria-label="작업"></th></tr></thead><tbody>
+        ${pendingRequests.map((request) => {
+          const matches = matchingTeachersForAccessRequest(request, state.data.teachers);
+          return `<tr><td><strong>${e(request.displayName || "이름 미확인")}</strong></td><td>${e(request.email)}</td><td>${e(formatDateTime(request.requestedAt))}</td><td>${matches.length === 1 ? `<span class="status-chip ready">${e(matches[0].name)}</span>` : `<span class="status-chip pending">이메일 확인 필요</span>`}</td><td><div class="row-actions"><button class="button button-secondary button-compact" type="button" data-approve-access="${e(request.uid || request.id)}"><i data-lucide="user-check"></i><span>계정 연결</span></button></div></td></tr>`;
+        }).join("") || emptyRow(5)}
+      </tbody></table></div>
+    </section>
     <div class="split-layout">
       <section class="data-surface table-scroll">
         <table><thead><tr><th>선생님</th><th>담당 과목</th><th>계약 요약</th><th>상태</th></tr></thead><tbody>
-          ${filtered.map((teacher) => `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${e(teacher.subjects.join(", "))}</td><td>${e(teacher.contractSummary)}</td><td><span class="status-chip paid">활성</span></td></tr>`).join("") || emptyRow(4)}
+          ${filtered.map((teacher) => `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${e(teacher.subjects.join(", "))}</td><td>${e(teacher.contractSummary)}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`).join("") || emptyRow(4)}
         </tbody></table>
       </section>
       ${selected ? `<aside class="detail-panel">
-        <div class="detail-panel-header"><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div>
-        <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "로그인 후 연결")}</dd></div><div><dt>상태</dt><dd>활성</dd></div></dl></div>
+        <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><button class="icon-button" type="button" title="선생님 정보 수정" aria-label="${e(selected.name)} 정보 수정" data-edit-teacher><i data-lucide="pencil"></i></button></div>
+        <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         <div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>계약 형태</dt><dd>${e(selected.contractSummary)}</dd></div><div><dt>지급 예정일</dt><dd>매월 ${e(selected.paymentDay)}일</dd></div></dl></div>
         <div class="detail-block"><div class="detail-title-row"><h3>근로소득 원천징수 정보</h3><button class="icon-button" type="button" title="원천징수 정보 수정" aria-label="${e(selected.name)} 원천징수 정보 수정" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>공제대상가족</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}명</dd></div><div><dt>8~20세 자녀</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}명</dd></div><div><dt>원천징수 비율</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>
         <div class="detail-block"><h3>담당 과목</h3><div class="tag-list">${selected.subjects.map((subject) => `<span class="tag">${e(subject)}</span>`).join("")}</div></div>
@@ -315,7 +352,12 @@ function renderTeachers() {
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
+  elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
   elements.content.querySelector("[data-edit-tax-profile]")?.addEventListener("click", () => openTaxProfileModal(selected));
+  elements.content.querySelectorAll("[data-approve-access]").forEach((button) => button.addEventListener("click", () => {
+    const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.approveAccess);
+    if (request) openAccessApprovalModal(request);
+  }));
   elements.content.querySelectorAll("[data-select-teacher]").forEach((row) => row.addEventListener("click", () => {
     state.selectedTeacherId = row.dataset.selectTeacher;
     renderTeachers();
@@ -456,7 +498,7 @@ function payrollsForMonth(month) {
 function payrollForTeacher(teacherId, month) {
   if (!appConfig.demoMode && state.data.payslips.length) {
     const saved = state.data.payslips.find((item) => item.month === month && item.teacherId === teacherId);
-    if (saved) return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
+    if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
     if (state.user?.role === "teacher") return null;
   }
   const teacher = teacherById(teacherId);
@@ -477,6 +519,11 @@ function payrollForTeacher(teacherId, month) {
 function entriesForMonth(month) { return state.data.entries.filter((entry) => entry.month === month); }
 function teacherById(id) { return state.data.teachers.find((teacher) => teacher.id === id); }
 function runForMonth(month) { return state.data.payrollRuns.find((run) => run.month === month) || { month, status: "draft", publishedAt: null }; }
+function cancellationsForMonth(month) {
+  return state.data.payrollCancellations
+    .filter((item) => item.month === month)
+    .sort((a, b) => Number(b.revision) - Number(a.revision));
+}
 function taxPolicyForMonth(month) {
   return resolveEffectivePolicy(state.data.taxPolicies, month, ntsTaxPolicy2024);
 }
@@ -504,7 +551,7 @@ function mergeBuiltInInsurancePolicies(policies) {
 function availablePayslipMonths(teacherId) {
   if (!appConfig.demoMode && state.data.payslips.length) {
     return state.data.payslips
-      .filter((item) => item.teacherId === teacherId)
+      .filter((item) => item.teacherId === teacherId && (state.user.role === "admin" || item.status === "published"))
       .map((item) => item.month)
       .sort()
       .reverse();
@@ -517,6 +564,10 @@ function availablePayslipMonths(teacherId) {
 function payslipStatus(teacherId, month) {
   const saved = state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
   return saved?.status || runForMonth(month).status;
+}
+
+function currentPayslip(teacherId, month) {
+  return state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
 }
 
 function payrollTable(items) {
@@ -540,7 +591,7 @@ function payslipSheet(teacher, payroll, month, run) {
   const deductionRows = Object.entries(deductionLabels()).filter(([key]) => payroll.deductions[key] > 0);
   return `<article class="payslip-sheet">
     <header class="payslip-title"><div><h2>${formatMonth(month)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><span class="brand-mark" aria-hidden="true">AP</span></header>
-    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? "발행 완료" : "미리보기"}</strong></div></div>
+    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? `${artifactRevision(run)}차 발행 완료` : "미리보기"}</strong></div></div>
     <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>과목</th><th>구분</th><th class="numeric">시간</th><th class="numeric">시급</th><th class="numeric">금액</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment])}</td><td class="numeric">${e(line.hours)}</td><td class="numeric">${formatNumber(line.hourlyRate)}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
     <div class="payslip-totals"><div><span>총 지급액</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>총 공제액</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>실 지급액</span><strong>${formatWon(payroll.net)}</strong></div></div>
@@ -606,10 +657,12 @@ function openTeacherModal() {
       <div class="form-field"><label for="teacher-tax-ratio">원천징수 비율</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
       <p class="form-help full">실제 계정 연결은 사용자가 처음 로그인한 뒤 관리자 승인 절차에서 UID를 확인하도록 운영하세요.</p>
     </form>`, "등록", async () => {
-      const form = document.querySelector("#teacher-form");
-      if (!form.reportValidity()) return false;
-      const data = Object.fromEntries(new FormData(form));
-      const teacher = { id: crypto.randomUUID(), name: data.name, email: data.email, subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean), contractSummary: data.contractSummary || "조건 미설정", paymentDay: Number(data.paymentDay), status: "active", authUid: null, taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) } };
+    const form = document.querySelector("#teacher-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    const email = normalizeEmail(data.email);
+    if (state.data.teachers.some((teacher) => normalizeEmail(teacher.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
+    const teacher = { id: crypto.randomUUID(), name: data.name.trim(), email, subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean), contractSummary: data.contractSummary.trim() || "조건 미설정", paymentDay: Number(data.paymentDay), status: "active", authUid: null, taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) } };
       state.data.teachers.push(teacher);
       if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
       state.selectedTeacherId = teacher.id;
@@ -664,6 +717,71 @@ function openCsvHelpModal() {
     state.month = entries[0].month;
     showToast(`${entries.length}건의 수업 내역을 추가했습니다.`);
     renderEntries();
+  });
+}
+
+function openAccessApprovalModal(request) {
+  const matches = matchingTeachersForAccessRequest(request, state.data.teachers);
+  const options = matches.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)} · ${e(teacher.email)}</option>`).join("");
+  openModal("Google 계정 연결 승인", `
+    <div class="notice ${matches.length === 1 ? "" : "warning"}"><i data-lucide="shield-check"></i><span>${matches.length === 1 ? "요청 이메일과 등록 이메일이 일치합니다. 승인하면 선생님이 다시 로그인할 수 있습니다." : "같은 이메일의 활성 선생님을 찾지 못했습니다. 선생님을 먼저 등록하거나 이메일을 수정해 주세요."}</span></div>
+    <dl class="definition-list approval-summary"><div><dt>요청자</dt><dd>${e(request.displayName || "이름 미확인")}</dd></div><div><dt>Google 이메일</dt><dd>${e(request.email)}</dd></div><div><dt>Firebase UID</dt><dd>${e(request.uid || request.id)}</dd></div></dl>
+    <form id="access-approval-form" class="form-grid" style="margin-top:18px">
+      <div class="form-field full"><label for="approval-teacher">연결할 선생님</label><select id="approval-teacher" name="teacherId" required ${matches.length ? "" : "disabled"}>${options || `<option value="">일치하는 선생님 없음</option>`}</select></div>
+      <label class="checkbox-row full"><input name="confirmed" type="checkbox" ${matches.length ? "" : "disabled"} /> 이메일과 선생님 정보를 확인했습니다.</label>
+    </form>
+  `, "승인 및 연결", async () => {
+    const form = document.querySelector("#access-approval-form");
+    if (!matches.length) throw new Error("이메일이 일치하는 선생님을 먼저 등록해 주세요.");
+    if (!form.reportValidity()) return false;
+    if (!form.elements.confirmed.checked) { showToast("승인 확인을 선택해 주세요."); return false; }
+    const teacher = teacherById(new FormData(form).get("teacherId"));
+    validateTeacherAccessApproval(request, teacher);
+    if (state.store) await state.store.approveTeacherAccess(request, teacher);
+    teacher.authUid = request.uid || request.id;
+    request.status = "approved";
+    request.teacherId = teacher.id;
+    request.reviewedAt = new Date().toISOString();
+    showToast(`${teacher.name} 선생님의 Google 계정을 연결했습니다.`);
+    renderTeachers();
+  });
+}
+
+function openTeacherEditModal(teacher) {
+  const profile = taxProfileForTeacher(teacher);
+  openModal("선생님 정보 수정", `
+    <div class="notice"><i data-lucide="user-cog"></i><span>비활성화하면 다음 로그인부터 접근이 차단되며 과거 급여 자료는 삭제되지 않습니다.</span></div>
+    <form id="teacher-edit-form" class="form-grid">
+      <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
+      <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
+      <div class="form-field full"><label for="teacher-edit-subjects">담당 과목</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="쉼표로 구분" /></div>
+      <div class="form-field"><label for="teacher-edit-contract">계약 요약</label><input id="teacher-edit-contract" name="contractSummary" value="${e(teacher.contractSummary)}" /></div>
+      <div class="form-field"><label for="teacher-edit-payday">지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
+      <div class="form-field"><label for="teacher-edit-status">계정 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select></div>
+      <div class="form-field"><label for="teacher-edit-dependents">공제대상가족 수</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
+      <div class="form-field"><label for="teacher-edit-children">8~20세 자녀 수</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
+      <div class="form-field full"><label for="teacher-edit-ratio">원천징수 비율</label><select id="teacher-edit-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select></div>
+    </form>
+  `, "저장", async () => {
+    const form = document.querySelector("#teacher-edit-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    const email = normalizeEmail(data.email);
+    if (state.data.teachers.some((item) => item.id !== teacher.id && normalizeEmail(item.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
+    const updated = {
+      ...teacher,
+      name: data.name.trim(),
+      email,
+      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
+      contractSummary: data.contractSummary.trim() || "조건 미설정",
+      paymentDay: Number(data.paymentDay),
+      status: data.status,
+      taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
+    };
+    if (state.store) await state.store.updateTeacher(updated);
+    Object.assign(teacher, updated);
+    showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
+    renderTeachers();
   });
 }
 
@@ -945,40 +1063,110 @@ function validateHighIncomeBrackets(brackets) {
 function openPublishModal() {
   const currentRun = runForMonth(state.month);
   if (currentRun.status === "published") return;
-  openModal("급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 확정하면 선생님이 본인 명세서를 열람할 수 있습니다. 확정본을 수정해야 할 때는 취소 이력을 남기고 새 버전을 발행해야 합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액을 모두 검토했습니다.</label>`, "확정", async () => {
+  const revision = nextPayrollRevision(currentRun);
+  const isReissue = currentRun.status === "cancelled";
+  openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."}</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
     if (!document.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
     const payrolls = payrollsForMonth(state.month);
     const missingAccounts = payrolls.filter(({ teacher }) => !teacher.authUid);
     if (state.store && missingAccounts.length) throw new Error(`로그인 UID가 연결되지 않은 선생님이 있습니다: ${missingAccounts.map(({ teacher }) => teacher.name).join(", ")}`);
-    const run = { ...currentRun, status: "published", publishedAt: new Date().toISOString() };
+    const publishedAt = new Date().toISOString();
+    const run = { ...currentRun, status: "published", revision, releaseId: `${state.month}_v${revision}`, publishedAt, cancellationId: null, cancellationReason: null, cancelledAt: null };
+    const payslips = payrolls.map(({ teacher, payroll }) => ({
+      id: payslipId(state.month, teacher.id),
+      versionId: payslipVersionId(state.month, teacher.id, revision),
+      data: {
+        month: state.month,
+        teacherId: teacher.id,
+        teacherUid: teacher.authUid,
+        teacherName: teacher.name,
+        status: "published",
+        revision,
+        releaseId: run.releaseId,
+        policyVersion: payroll.policyVersion,
+        taxPolicyVersion: payroll.taxPolicyVersion,
+        insurancePolicyVersion: payroll.insurancePolicyVersion,
+        calculation: payroll,
+        publishedAt
+      }
+    }));
     if (state.store) {
       await state.store.publishPayrollRun(
         run,
-        payrolls.map(({ teacher, payroll }) => ({
-          id: `${state.month}_${teacher.id}`,
-          data: {
-            month: state.month,
-            teacherId: teacher.id,
-            teacherUid: teacher.authUid,
-            teacherName: teacher.name,
-            status: "published",
-            policyVersion: payroll.policyVersion,
-            taxPolicyVersion: payroll.taxPolicyVersion,
-            insurancePolicyVersion: payroll.insurancePolicyVersion,
-            calculation: payroll,
-            publishedAt: run.publishedAt
-          }
-        })),
+        payslips,
         {
           id: crypto.randomUUID(),
-          data: { action: "PAYROLL_PUBLISHED", month: state.month, actorUid: state.user.uid, createdAt: run.publishedAt }
+          data: { action: isReissue ? "PAYROLL_REPUBLISHED" : "PAYROLL_PUBLISHED", month: state.month, revision, actorUid: state.user.uid, createdAt: run.publishedAt }
         }
       );
     }
+    payslips.forEach((payslip) => {
+      const currentIndex = state.data.payslips.findIndex((item) => item.id === payslip.id);
+      const current = { id: payslip.id, ...structuredClone(payslip.data) };
+      if (currentIndex >= 0) state.data.payslips[currentIndex] = current;
+      else state.data.payslips.push(current);
+      state.data.payslipVersions.push({ id: payslip.versionId, ...structuredClone(payslip.data) });
+    });
     const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
     if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
     else state.data.payrollRuns.push(run);
-    showToast("급여를 확정하고 명세서를 공개했습니다.");
+    showToast(isReissue ? `${revision}차 수정 명세서를 재발행했습니다.` : "급여를 확정하고 명세서를 공개했습니다.");
+    renderDashboard();
+  });
+}
+
+function openCancelPayrollModal() {
+  const currentRun = runForMonth(state.month);
+  if (currentRun.status !== "published") return;
+  const revision = artifactRevision(currentRun);
+  openModal("급여 확정 취소", `
+    <div class="notice warning"><i data-lucide="shield-alert"></i><span>${formatMonth(state.month)} ${revision}차 확정본을 취소합니다. 기존 명세서는 이력으로 보존되고 선생님 화면에서는 즉시 내려갑니다.</span></div>
+    <form id="cancel-payroll-form" class="form-grid">
+      <div class="form-field full"><label for="cancel-reason">취소 사유</label><textarea id="cancel-reason" name="reason" minlength="5" maxlength="500" placeholder="예: 수업 시간 누락으로 계산 수정 필요" required></textarea><span class="form-help">개인정보를 적지 말고 변경이 필요한 이유만 기록하세요.</span></div>
+      <label class="checkbox-row full"><input name="confirmed" type="checkbox" /> 선생님에게 공개된 명세서가 취소된다는 점을 확인했습니다.</label>
+    </form>
+  `, "확정 취소", async () => {
+    const form = document.querySelector("#cancel-payroll-form");
+    if (!form.reportValidity()) return false;
+    if (!form.elements.confirmed.checked) { showToast("취소 확인을 선택해 주세요."); return false; }
+    const reason = new FormData(form).get("reason").trim();
+    const cancelledAt = new Date().toISOString();
+    const cancellationId = `${state.month}_v${revision}`;
+    let currentPayslips = state.data.payslips.filter((item) => item.month === state.month && item.status === "published");
+    if (!currentPayslips.length) {
+      currentPayslips = payrollsForMonth(state.month).map(({ teacher, payroll }) => ({
+        id: payslipId(state.month, teacher.id), month: state.month, teacherId: teacher.id,
+        teacherUid: teacher.authUid, teacherName: teacher.name, status: "published",
+        revision, releaseId: currentRun.releaseId || `${state.month}_v${revision}`,
+        calculation: payroll, publishedAt: currentRun.publishedAt
+      }));
+    }
+    const archives = currentPayslips
+      .map((item) => {
+        const { id, ...data } = item;
+        return { id: payslipVersionId(state.month, item.teacherId, revision), data: { ...data, status: "published", revision } };
+      })
+      .filter((archive) => !state.data.payslipVersions.some((item) => item.id === archive.id));
+    const run = { ...currentRun, status: "cancelled", revision, cancellationId, cancellationReason: reason, cancelledAt };
+    const cancellation = {
+      id: cancellationId,
+      data: { month: state.month, revision, reason, releaseId: currentRun.releaseId || `${state.month}_v${revision}`, payslipIds: currentPayslips.map((item) => item.id), actorUid: state.user.uid }
+    };
+    if (state.store) {
+      await state.store.cancelPayrollRun(
+        run,
+        currentPayslips.map((item) => ({ id: item.id })),
+        archives,
+        cancellation,
+        { id: crypto.randomUUID(), data: { action: "PAYROLL_CANCELLED", month: state.month, revision, reason, actorUid: state.user.uid } }
+      );
+    }
+    currentPayslips.forEach((item) => Object.assign(item, { status: "cancelled", cancellationId, cancellationReason: reason, cancelledAt }));
+    archives.forEach((archive) => state.data.payslipVersions.push({ id: archive.id, ...archive.data }));
+    state.data.payrollCancellations.push({ id: cancellation.id, ...cancellation.data, createdAt: cancelledAt });
+    const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
+    if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
+    showToast("확정본을 취소했습니다. 수정 후 새 차수로 재발행하세요.");
     renderDashboard();
   });
 }
@@ -1041,8 +1229,10 @@ function openPayslipEmailModal(teacher, payroll, run) {
     showToast("확정된 급여명세서만 이메일로 발송할 수 있습니다.");
     return;
   }
-  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} 급여명세서`;
-  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} 급여명세서를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
+  const revision = artifactRevision(currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
+  const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
+  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} 급여명세서${revisionLabel}`;
+  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
   const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth);
   openModal("급여명세서 이메일 발송", `
     <div class="notice compact"><i data-lucide="shield-check"></i><span>발송할 때 관리자 Google 계정에 Gmail 전송 권한만 요청합니다. 권한 토큰과 첨부 파일은 저장하지 않습니다.</span></div>
@@ -1077,9 +1267,10 @@ function openPayslipEmailModal(teacher, payroll, run) {
     });
     const result = await state.store.sendGmailMessage(raw);
     const deliveryData = {
-      payslipId: `${state.selectedPayslipMonth}_${teacher.id}`,
+      payslipId: payslipId(state.selectedPayslipMonth, teacher.id),
       teacherId: teacher.id,
       month: state.selectedPayslipMonth,
+      revision,
       recipientEmail: data.to,
       channel: "gmail_attachment",
       gmailMessageId: result.id
@@ -1144,12 +1335,14 @@ function portalUrl() {
 
 async function recordPayslipViewed(teacherId, month) {
   if (receiptFor(teacherId, month)) return;
-  const payslipId = `${month}_${teacherId}`;
-  const receipt = { id: `${payslipId}_${state.user.uid}`, payslipId, teacherId, teacherUid: state.user.uid, month, viewedAt: new Date().toISOString() };
+  const current = currentPayslip(teacherId, month);
+  const revision = artifactRevision(current || runForMonth(month));
+  const currentPayslipId = payslipId(month, teacherId);
+  const receipt = { id: `${currentPayslipId}_v${revision}_${state.user.uid}`, payslipId: currentPayslipId, teacherId, teacherUid: state.user.uid, month, revision, viewedAt: new Date().toISOString() };
   state.data.payslipReceipts.push(receipt);
   if (state.store) {
     try {
-      await state.store.recordPayslipView(payslipId, teacherId, month);
+      await state.store.recordPayslipView(currentPayslipId, teacherId, month, revision);
     } catch (error) {
       state.data.payslipReceipts = state.data.payslipReceipts.filter((item) => item.id !== receipt.id);
       console.error("급여명세서 열람 기록 저장 실패", error);
@@ -1158,13 +1351,13 @@ async function recordPayslipViewed(teacherId, month) {
 }
 
 function receiptFor(teacherId, month) {
-  return state.data.payslipReceipts.find((item) => item.teacherId === teacherId && item.month === month);
+  const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
+  return currentArtifactForRevision(state.data.payslipReceipts, teacherId, month, revision);
 }
 
 function deliveryFor(teacherId, month) {
-  return state.data.payslipDeliveries
-    .filter((item) => item.teacherId === teacherId && item.month === month)
-    .sort((a, b) => deliveryTime(b.sentAt) - deliveryTime(a.sentAt))[0];
+  const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
+  return currentArtifactForRevision(state.data.payslipDeliveries, teacherId, month, revision);
 }
 
 function formatViewedAt(value) {
@@ -1177,6 +1370,11 @@ function formatDeliveryAt(value) {
   return Number.isNaN(date.getTime()) ? "발송 시간 기록" : date.toLocaleString("ko-KR");
 }
 
+function formatDateTime(value) {
+  const date = value?.toDate ? value.toDate() : new Date(value);
+  return Number.isNaN(date.getTime()) ? "시간 확인 필요" : date.toLocaleString("ko-KR");
+}
+
 function deliveryTime(value) {
   const date = value?.toDate ? value.toDate() : new Date(value);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -1186,7 +1384,7 @@ function metric(icon, label, value, helper) { return `<div class="metric"><span 
 function progressStep(number, title, detail, active, complete) { return `<div class="progress-step ${active ? "active" : ""} ${complete ? "complete" : ""}"><strong>${e(number)}. ${e(title)}</strong><span>${e(detail)}</span></div>`; }
 function personCell(teacher) { return `<div class="person-cell"><span class="avatar">${e(teacher.name.slice(0, 1))}</span><span class="person-meta"><strong>${e(teacher.name)}</strong><span>${e(teacher.email)}</span></span></div>`; }
 function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="empty-state">표시할 내역이 없습니다.</div></td></tr>`; }
-function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", paid: "지급 완료" })[status] || status; }
+function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", cancelled: "취소 후 수정", paid: "지급 완료" })[status] || status; }
 function roleLabel(role) { return ({ admin: "관리자", teacher: "선생님" })[role] || role; }
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
 function policyPercentInput(rate) { return Number(((Number(rate) || 0) * 100).toFixed(3)); }
@@ -1209,4 +1407,3 @@ function isOfficialPublicSourceUrl(value) {
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
-

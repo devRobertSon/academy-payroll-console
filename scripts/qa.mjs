@@ -13,6 +13,7 @@ await checkJavaScriptSyntax();
 await checkHtmlAssets();
 await checkRepositorySafety();
 await checkDeliverySecurity();
+await checkLifecycleSecurity();
 if (!staticOnly) await checkLocalPage();
 
 if (failures.length) {
@@ -100,6 +101,26 @@ async function checkDeliverySecurity() {
   }
   if (store.includes("localStorage.setItem") && store.includes("gmailAccessToken")) {
     failures.push("Gmail OAuth token must not be persisted in localStorage.");
+  }
+}
+
+async function checkLifecycleSecurity() {
+  const rules = await readFile(join(root, "firestore.rules"), "utf8");
+  const requiredRules = [
+    "match /accessRequests/{uid}",
+    "request.resource.data.email == request.auth.token.email",
+    "match /payslipVersions/{versionId}",
+    "match /payrollCancellations/{cancellationId}",
+    "request.resource.data.status == 'cancelled'",
+    "request.resource.data.revision == resource.data.revision + 1"
+  ];
+  for (const rule of requiredRules) {
+    if (!rules.includes(rule)) failures.push(`Payroll lifecycle security rule is missing: ${rule}`);
+  }
+
+  const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  for (const operation of ["approveTeacherAccess", "updateTeacher", "cancelPayrollRun"]) {
+    if (!store.includes(`async function ${operation}`)) failures.push(`Firebase store operation is missing: ${operation}`);
   }
 }
 

@@ -61,6 +61,8 @@ button { color: inherit; }
 .button-secondary { border-color: var(--line-strong); background: var(--surface); }
 .button-secondary:hover { border-color: var(--brand); color: var(--brand); }
 .button-danger { color: var(--danger); border-color: #e4bbbb; background: var(--surface); }
+.button-compact { min-height: 32px; padding: 5px 9px; font-size: 10px; }
+.button-compact svg { width: 14px; height: 14px; }
 .button-wide { width: min(440px, 100%); min-height: 48px; font-size: 14px; }
 .demo-login { width: min(440px, 100%); }
 .divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--muted); font-size: 11px; }
@@ -108,6 +110,7 @@ button { color: inherit; }
 .status-chip.published, .status-chip.paid { color: var(--brand); background: var(--brand-pale); }
 .status-chip.ready { color: var(--info); background: var(--info-pale); }
 .status-chip.pending { color: var(--muted); background: #ecefed; }
+.status-chip.cancelled { color: var(--danger); background: var(--danger-pale); }
 
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); margin-bottom: 24px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 3px 14px rgba(21,39,32,.035); }
 .metric { min-width: 0; padding: 20px; border-right: 1px solid var(--line); }
@@ -145,6 +148,9 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .detail-panel-header { padding: 20px; border-bottom: 1px solid var(--line); }
 .detail-panel-header h2 { margin: 0 0 5px; font-size: 17px; }
 .detail-panel-header p { margin: 0; color: var(--muted); font-size: 11px; }
+.detail-panel-header.detail-title-row { align-items: flex-start; margin-bottom: 0; }
+.detail-panel-header.detail-title-row > div { min-width: 0; }
+.detail-panel-header.detail-title-row .icon-button { margin-left: auto; }
 .detail-block { padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .detail-block:last-child { border-bottom: 0; }
 .detail-block h3 { margin: 0 0 12px; font-size: 11px; color: var(--muted); }
@@ -167,6 +173,10 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .source-list a:hover { text-decoration: underline; }
 .source-list svg { width: 14px; height: 14px; }
 .policy-history { margin-top: 24px; }
+.account-requests { margin-bottom: 24px; }
+.account-requests .section-heading { align-items: center; }
+.account-requests .section-heading > .status-chip { margin-left: auto; }
+.approval-summary { padding: 14px; border: 1px solid var(--line); background: var(--surface-subtle); }
 .progress-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin-bottom: 22px; }
 .progress-step { padding: 12px 14px; border-top: 3px solid var(--line-strong); background: rgba(255,255,255,.55); }
 .progress-step strong { display: block; margin-bottom: 3px; font-size: 11px; }

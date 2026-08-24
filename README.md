@@ -8,7 +8,9 @@
 
 - 관리자/선생님 역할별 화면
 - Google 로그인 및 Firestore 사용자 권한 확인
+- 미등록 Google 계정의 승인 요청과 관리자 UID 연결
 - 선생님·과목·시급·계약 조건 관리
+- 선생님 정보 수정·비활성화와 계정 접근 동시 제어
 - 같은 선생님의 과목별 시급과 소득 구분 혼합 처리
 - 수업별 4대보험 적용 여부와 소득 구분 스냅샷
 - 수업 내역 직접 입력 및 UTF-8 CSV 업로드
@@ -20,6 +22,7 @@
 - 2026년 공식 사회보험 근로자 부담률·상하한과 시행일별 새 버전 등록
 - 공제액 자동 계산과 관리자 수동 보정
 - 월별 급여 확정, 명세서 공개, 확정본 잠금
+- 확정 취소 사유와 불변 버전을 보존하는 차수별 재발행
 - 급여 확정 후 포털 로그인 안내문·링크 복사
 - 선생님 본인의 발행된 과거 급여명세서 열람
 - 선생님의 명세서 최초 열람 기록
@@ -114,7 +117,8 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 
 설계 상세는 [`docs/architecture.md`](./docs/architecture.md), 컬렉션 구조는 [`docs/firestore-schema.md`](./docs/firestore-schema.md), 운영 점검은 [`docs/security-checklist.md`](./docs/security-checklist.md), 변경 QA는 [`docs/qa.md`](./docs/qa.md)를 참고하세요.
 
+실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md)를 따르세요.
+
 ## 법적 유의사항
 
 이 프로젝트의 계산 엔진은 업무 도구의 기반이며 세무·노무 자문이나 신고 프로그램을 대체하지 않습니다. 4대보험과 세액은 계약 관계, 월 보수, 상·하한, 비과세 항목, 소득 종류에 따라 달라질 수 있으므로 실제 발행 전 세무사 또는 노무사의 확인이 필요합니다.
-

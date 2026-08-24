@@ -22,6 +22,17 @@ export const demoUsers = {
   }
 };
 
+export const demoAccessRequests = [
+  {
+    id: "demo-pending-teacher",
+    uid: "demo-pending-teacher",
+    displayName: "정강사",
+    email: "teacher05@example.invalid",
+    status: "pending",
+    requestedAt: "2026-08-25T09:00:00Z"
+  }
+];
+
 export const demoTeachers = [
   {
     id: "teacher-01",
@@ -65,6 +76,17 @@ export const demoTeachers = [
     subjects: ["과학 실험"],
     contractSummary: "공제 없음 · 수동 검토",
     paymentDay: 12,
+    taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
+  },
+  {
+    id: "teacher-05",
+    authUid: null,
+    name: "정강사",
+    email: "teacher05@example.invalid",
+    status: "active",
+    subjects: ["중등 과학"],
+    contractSummary: "계정 연결 대기",
+    paymentDay: 10,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   }
 ];

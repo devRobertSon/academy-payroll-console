@@ -27,9 +27,14 @@ export async function createFirebaseStore(config) {
   async function sessionFromUser(firebaseUser) {
     if (!firebaseUser) return null;
     const userSnap = await firestoreSdk.getDoc(firestoreSdk.doc(db, "users", firebaseUser.uid));
-    if (!userSnap.exists() || userSnap.data().status !== "active") {
+    if (!userSnap.exists()) {
+      await createAccessRequest(firebaseUser);
       await authSdk.signOut(auth);
-      throw new Error("등록되었거나 활성화된 계정이 아닙니다. 관리자에게 문의해 주세요.");
+      throw new Error("계정 승인 요청을 보냈습니다. 관리자가 연결한 뒤 다시 로그인해 주세요.");
+    }
+    if (userSnap.data().status !== "active") {
+      await authSdk.signOut(auth);
+      throw new Error("비활성화된 계정입니다. 관리자에게 문의해 주세요.");
     }
     return {
       uid: firebaseUser.uid,
@@ -37,6 +42,18 @@ export async function createFirebaseStore(config) {
       name: userSnap.data().displayName || firebaseUser.displayName || firebaseUser.email,
       ...userSnap.data()
     };
+  }
+
+  async function createAccessRequest(firebaseUser) {
+    const reference = firestoreSdk.doc(db, "accessRequests", firebaseUser.uid);
+    if ((await firestoreSdk.getDoc(reference)).exists()) return;
+    await firestoreSdk.setDoc(reference, {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || "",
+      displayName: firebaseUser.displayName || firebaseUser.email || "승인 대기 사용자",
+      status: "pending",
+      requestedAt: firestoreSdk.serverTimestamp()
+    });
   }
 
   async function signIn() {
@@ -70,7 +87,7 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslips, payslipReceipts, payslipDeliveries] = await Promise.all([
+      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("rateRules"),
         loadCollection("workEntries"),
@@ -80,8 +97,11 @@ export async function createFirebaseStore(config) {
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
         loadCollection("payslips"),
+        loadCollection("payslipVersions"),
         loadCollection("payslipReceipts"),
-        loadCollection("payslipDeliveries")
+        loadCollection("payslipDeliveries"),
+        loadCollection("payrollCancellations"),
+        loadCollection("accessRequests")
       ]);
       return {
         teachers,
@@ -92,8 +112,11 @@ export async function createFirebaseStore(config) {
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
         payrollOverrides,
         payslips,
+        payslipVersions,
         payslipReceipts,
-        payslipDeliveries
+        payslipDeliveries,
+        payrollCancellations,
+        accessRequests
       };
     }
 
@@ -122,6 +145,68 @@ export async function createFirebaseStore(config) {
     return reference.id;
   }
 
+  async function approveTeacherAccess(request, teacher) {
+    const batch = firestoreSdk.writeBatch(db);
+    const reviewedAt = firestoreSdk.serverTimestamp();
+    batch.set(firestoreSdk.doc(db, "users", request.uid), {
+      displayName: teacher.name,
+      email: request.email,
+      role: "teacher",
+      status: "active",
+      teacherId: teacher.id,
+      updatedAt: reviewedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    batch.update(firestoreSdk.doc(db, "teachers", teacher.id), {
+      authUid: request.uid,
+      updatedAt: reviewedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    batch.update(firestoreSdk.doc(db, "accessRequests", request.uid), {
+      status: "approved",
+      teacherId: teacher.id,
+      reviewedAt,
+      reviewedBy: auth.currentUser.uid
+    });
+    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+      action: "TEACHER_ACCESS_APPROVED",
+      teacherId: teacher.id,
+      subjectUid: request.uid,
+      actorUid: auth.currentUser.uid,
+      createdAt: reviewedAt
+    });
+    await batch.commit();
+  }
+
+  async function updateTeacher(teacher) {
+    const batch = firestoreSdk.writeBatch(db);
+    const updatedAt = firestoreSdk.serverTimestamp();
+    batch.set(firestoreSdk.doc(db, "teachers", teacher.id), {
+      ...teacher,
+      updatedAt,
+      updatedBy: auth.currentUser.uid
+    }, { merge: true });
+    if (teacher.authUid) {
+      batch.set(firestoreSdk.doc(db, "users", teacher.authUid), {
+        displayName: teacher.name,
+        email: teacher.email,
+        role: "teacher",
+        status: teacher.status,
+        teacherId: teacher.id,
+        updatedAt,
+        updatedBy: auth.currentUser.uid
+      }, { merge: true });
+    }
+    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+      action: "TEACHER_UPDATED",
+      teacherId: teacher.id,
+      status: teacher.status,
+      actorUid: auth.currentUser.uid,
+      createdAt: updatedAt
+    });
+    await batch.commit();
+  }
+
   async function publishPayrollRun(run, payslips, auditLog) {
     const batch = firestoreSdk.writeBatch(db);
     const common = {
@@ -130,14 +215,49 @@ export async function createFirebaseStore(config) {
     };
     payslips.forEach((payslip) => {
       batch.set(firestoreSdk.doc(db, "payslips", payslip.id), { ...payslip.data, ...common });
+      batch.set(firestoreSdk.doc(db, "payslipVersions", payslip.versionId), { ...payslip.data, ...common });
     });
     batch.set(firestoreSdk.doc(db, "payrollRuns", run.month), { ...run, ...common });
     batch.set(firestoreSdk.doc(db, "auditLogs", auditLog.id), auditLog.data);
     await batch.commit();
   }
 
-  async function recordPayslipView(payslipId, teacherId, month) {
-    const receiptId = `${payslipId}_${auth.currentUser.uid}`;
+  async function cancelPayrollRun(run, payslips, archives, cancellation, auditLog) {
+    const batch = firestoreSdk.writeBatch(db);
+    const common = {
+      updatedAt: firestoreSdk.serverTimestamp(),
+      updatedBy: auth.currentUser.uid
+    };
+    archives.forEach((archive) => {
+      batch.set(firestoreSdk.doc(db, "payslipVersions", archive.id), { ...archive.data, ...common });
+    });
+    payslips.forEach((payslip) => {
+      batch.update(firestoreSdk.doc(db, "payslips", payslip.id), {
+        status: "cancelled",
+        cancellationId: cancellation.id,
+        cancellationReason: cancellation.data.reason,
+        cancelledAt: firestoreSdk.serverTimestamp(),
+        ...common
+      });
+    });
+    batch.update(firestoreSdk.doc(db, "payrollRuns", run.month), {
+      ...run,
+      cancelledAt: firestoreSdk.serverTimestamp(),
+      ...common
+    });
+    batch.set(firestoreSdk.doc(db, "payrollCancellations", cancellation.id), {
+      ...cancellation.data,
+      createdAt: firestoreSdk.serverTimestamp()
+    });
+    batch.set(firestoreSdk.doc(db, "auditLogs", auditLog.id), {
+      ...auditLog.data,
+      createdAt: firestoreSdk.serverTimestamp()
+    });
+    await batch.commit();
+  }
+
+  async function recordPayslipView(payslipId, teacherId, month, revision) {
+    const receiptId = `${payslipId}_v${revision}_${auth.currentUser.uid}`;
     const reference = firestoreSdk.doc(db, "payslipReceipts", receiptId);
     if ((await firestoreSdk.getDoc(reference)).exists()) return;
     await firestoreSdk.setDoc(reference, {
@@ -145,6 +265,7 @@ export async function createFirebaseStore(config) {
       teacherId,
       teacherUid: auth.currentUser.uid,
       month,
+      revision,
       viewedAt: firestoreSdk.serverTimestamp()
     });
   }
@@ -209,7 +330,10 @@ export async function createFirebaseStore(config) {
     signOut,
     loadWorkspace,
     saveDocument,
+    approveTeacherAccess,
+    updateTeacher,
     publishPayrollRun,
+    cancelPayrollRun,
     recordPayslipView,
     authorizeGmailSend,
     sendGmailMessage,

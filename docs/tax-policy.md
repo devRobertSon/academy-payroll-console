@@ -5,7 +5,7 @@
 확인일은 2026-08-25이며, 원천징수 계산은 아래 공식 자료를 기준으로 구현했습니다.
 
 - [국세청 근로소득 원천징수](https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7862&mi=6583)
-- [소득세법 시행령 별표 2 근로소득 간이세액표](https://www.law.go.kr/flDownload.do?flSeq=127235479&gubun=)
+- [소득세법 시행령 별표 2 근로소득 간이세액표](https://www.law.go.kr/lsBylInfoPLinkR.do?bylBrNo=00&bylCls=BE&bylNo=0002&lsNm=%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95+%EC%8B%9C%ED%96%89%EB%A0%B9)
 - [국세청 사업소득 원천징수](https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7902&mi=6622)
 - [국세청 기타소득 원천징수](https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7893&mi=2227)
 - [국세청 원천징수 개요와 지방소득세](https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7701&mi=2289)

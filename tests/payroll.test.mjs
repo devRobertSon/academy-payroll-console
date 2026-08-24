@@ -9,7 +9,11 @@ import {
   summarizePayroll
 } from "../src/lib/payroll.js";
 import { demoPolicy } from "../src/data/demo-data.js";
-import { ntsTaxPolicy2024 } from "../src/data/nts-tax-policy.js";
+import {
+  createCombinedPolicy,
+  ntsTaxPolicy2024,
+  officialInsurancePolicies
+} from "../src/data/nts-tax-policy.js";
 import { csvRowsToObjects, parseCsv } from "../src/lib/csv.js";
 
 test("한 선생님의 근로소득과 사업소득을 분리 계산한 뒤 합산한다", () => {
@@ -36,6 +40,32 @@ test("보험 미적용 근로소득은 보험 기준액에 포함하지 않는�
   assert.equal(payroll.deductions.nationalPension, 0);
   assert.equal(payroll.deductions.healthInsurance, 0);
   assert.equal(payroll.deductions.employmentInsurance, 0);
+});
+
+test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {
+  const insurancePolicy = resolveEffectivePolicy(officialInsurancePolicies, "2026-08");
+  const payroll = calculatePayroll([
+    { hours: 1, hourlyRate: 2000000, treatment: "employee", insuranceCovered: true }
+  ], createCombinedPolicy(ntsTaxPolicy2024, insurancePolicy));
+
+  assert.equal(insurancePolicy.version, "INSURANCE-2026-07");
+  assert.equal(payroll.deductions.nationalPension, 95000);
+  assert.equal(payroll.deductions.healthInsurance, 71900);
+  assert.equal(payroll.deductions.longTermCare, 9448);
+  assert.equal(payroll.deductions.employmentInsurance, 18000);
+});
+
+test("2026년 7월 국민연금 상한과 건강보험료 상한을 적용한다", () => {
+  const january = resolveEffectivePolicy(officialInsurancePolicies, "2026-06");
+  const july = resolveEffectivePolicy(officialInsurancePolicies, "2026-07");
+  const payroll = calculatePayroll([
+    { hours: 1, hourlyRate: 200000000, treatment: "employee", insuranceCovered: true }
+  ], createCombinedPolicy(ntsTaxPolicy2024, july));
+
+  assert.equal(january.version, "INSURANCE-2026-01");
+  assert.equal(july.version, "INSURANCE-2026-07");
+  assert.equal(payroll.deductions.nationalPension, 313025);
+  assert.equal(payroll.deductions.healthInsurance, 4591740);
 });
 
 test("관리자가 입력한 공제액으로 자동 계산값을 덮어쓸 수 있다", () => {
@@ -156,3 +186,4 @@ test("간이세액표 CSV는 연속 구간과 1천만원 기준 행을 검증한
   assert.equal(parsed.tableRows.length, 1);
   assert.equal(parsed.taxAtTenMillion[10], 10);
 });
+

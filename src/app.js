@@ -10,7 +10,8 @@ import {
 import {
   createCombinedPolicy,
   demoInsurancePolicy,
-  ntsTaxPolicy2024
+  ntsTaxPolicy2024,
+  officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
@@ -167,9 +168,7 @@ function hydrateFirebaseData(loaded) {
   state.data.entries = loaded.entries || [];
   state.data.payrollRuns = loaded.payrollRuns || [];
   state.data.taxPolicies = mergeBuiltInTaxPolicies(loaded.taxPolicies || []);
-  state.data.insurancePolicies = loaded.insurancePolicies?.length
-    ? loaded.insurancePolicies
-    : [structuredClone(demoInsurancePolicy)];
+  state.data.insurancePolicies = mergeBuiltInInsurancePolicies(loaded.insurancePolicies || []);
   state.data.payslips = loaded.payslips || [];
   state.data.payslipReceipts = loaded.payslipReceipts || [];
   state.data.payslipDeliveries = loaded.payslipDeliveries || [];
@@ -377,7 +376,9 @@ function renderSettings() {
       <section class="detail-panel">
         <div class="detail-panel-header"><h2>사회보험 정책</h2><p>${e(insurancePolicy.version)} · 국세청 기준과 별도 관리</p></div>
         <div class="detail-block"><h3>근로소득 보험</h3><dl class="definition-list"><div><dt>국민연금</dt><dd>${ratePercent(insurancePolicy.employee?.nationalPension?.rate)}</dd></div><div><dt>건강보험</dt><dd>${ratePercent(insurancePolicy.employee?.healthInsurance?.rate)}</dd></div><div><dt>장기요양</dt><dd>건강보험료의 ${ratePercent(insurancePolicy.employee?.longTermCareRate)}</dd></div><div><dt>고용보험</dt><dd>${ratePercent(insurancePolicy.employee?.employmentInsurance?.rate)}</dd></div></dl></div>
-        <div class="detail-block"><div class="notice warning compact"><i data-lucide="triangle-alert"></i><span>이 값은 화면 동작용 데모입니다. 국민연금공단·국민건강보험공단·근로복지공단 기준과 가입 상태를 별도로 확인해야 합니다.</span></div></div>
+        <div class="detail-block"><h3>공식 근거</h3><div class="source-list">${(insurancePolicy.sources || []).map((source) => `<a href="${e(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>${e(source.title)}</a>`).join("")}</div></div>
+        <div class="detail-block"><div class="notice warning compact"><i data-lucide="triangle-alert"></i><span>자동 계산은 선택한 보험 적용 수업의 지급액을 기준으로 한 예상값입니다. 공단 고지액, 입·퇴사월, 두루누리 지원, 휴직·정산 등은 급여 확정 전에 수동 공제액으로 맞추세요.</span></div></div>
+        <div class="detail-block"><button class="button button-secondary" type="button" data-action="add-insurance-policy"><i data-lucide="plus"></i><span>새 사회보험 기준</span></button></div>
         <div class="detail-block"><h3>보안 점검</h3><dl class="definition-list"><div><dt>저장소 개인정보</dt><dd>포함 금지</dd></div><div><dt>Firestore 기본 권한</dt><dd>전면 거부</dd></div><div><dt>선생님 명세서</dt><dd>본인 UID만</dd></div><div><dt>확정본 수정</dt><dd>금지</dd></div></dl></div>
         <div class="detail-block"><h3>현재 실행 모드</h3><span class="status-chip ${appConfig.demoMode ? "draft" : "published"}">${appConfig.demoMode ? "데모 데이터" : "Firebase 연결"}</span></div>
       </section>
@@ -386,9 +387,14 @@ function renderSettings() {
       <div class="section-heading"><div><h2>세금 기준 적용 이력</h2><p>시행일이 가장 최근인 유효 버전이 자동 적용됩니다.</p></div></div>
       <div class="data-surface table-scroll"><table><thead><tr><th>버전</th><th>기준명</th><th>시행일</th><th>확인일</th><th>상태</th></tr></thead><tbody>${[...state.data.taxPolicies].sort((a, b) => String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))).map((policy) => `<tr><td><strong>${e(policy.version)}</strong></td><td>${e(policy.name)}</td><td>${e(policy.effectiveFrom)}</td><td>${e(policy.verifiedAt || "-")}</td><td><span class="status-chip published">${policy.builtIn ? "내장 공식본" : "등록 완료"}</span></td></tr>`).join("")}</tbody></table></div>
     </section>
+    <section class="content-section policy-history">
+      <div class="section-heading"><div><h2>사회보험 기준 적용 이력</h2><p>국민연금 상·하한처럼 연중 변경되는 기준도 시행일별로 보존합니다.</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>버전</th><th>기준명</th><th>시행일</th><th>종료일</th><th>상태</th></tr></thead><tbody>${[...state.data.insurancePolicies].sort((a, b) => String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))).map((policy) => `<tr><td><strong>${e(policy.version)}</strong></td><td>${e(policy.name)}</td><td>${e(policy.effectiveFrom)}</td><td>${e(policy.effectiveTo || "계속")}</td><td><span class="status-chip published">${policy.builtIn ? "내장 공식본" : "등록 완료"}</span></td></tr>`).join("")}</tbody></table></div>
+    </section>
   `;
   elements.topbarActions.querySelector("[data-action='export-tax-table']").addEventListener("click", downloadTaxTableTemplate);
   elements.topbarActions.querySelector("[data-action='add-tax-policy']").addEventListener("click", openTaxPolicyModal);
+  elements.content.querySelector("[data-action='add-insurance-policy']").addEventListener("click", openInsurancePolicyModal);
 }
 
 function renderPayslips() {
@@ -477,7 +483,7 @@ function taxPolicyForMonth(month) {
 }
 
 function insurancePolicyForMonth(month) {
-  return resolveEffectivePolicy(state.data.insurancePolicies, month, demoInsurancePolicy);
+  return resolveEffectivePolicy(state.data.insurancePolicies, month, officialInsurancePolicies.at(-1));
 }
 
 function policyForMonth(month) {
@@ -486,6 +492,12 @@ function policyForMonth(month) {
 
 function mergeBuiltInTaxPolicies(policies) {
   const byVersion = new Map([[ntsTaxPolicy2024.version, structuredClone(ntsTaxPolicy2024)]]);
+  policies.forEach((policy) => byVersion.set(policy.version || policy.id, policy));
+  return [...byVersion.values()];
+}
+
+function mergeBuiltInInsurancePolicies(policies) {
+  const byVersion = new Map(officialInsurancePolicies.map((policy) => [policy.version, structuredClone(policy)]));
   policies.forEach((policy) => byVersion.set(policy.version || policy.id, policy));
   return [...byVersion.values()];
 }
@@ -818,6 +830,100 @@ function openTaxPolicyModal() {
   });
 }
 
+function openInsurancePolicyModal() {
+  const current = insurancePolicyForMonth(state.month);
+  const sourceUrl = (kind) => current.sources?.find((source) => source.kind === kind)?.url || "";
+  openModal("새 사회보험 기준 등록", `
+    <div class="notice warning"><i data-lucide="history"></i><span>기존 기준은 과거 명세서 재현을 위해 수정하지 않습니다. 공단의 공식 요율과 시행일을 확인한 뒤 새 버전을 등록하세요.</span></div>
+    <form id="insurance-policy-form" class="form-grid">
+      <div class="form-field"><label for="insurance-version">버전 ID</label><input id="insurance-version" name="version" pattern="[A-Za-z0-9._-]+" placeholder="예: INSURANCE-2027-01" required /></div>
+      <div class="form-field"><label for="insurance-name">기준명</label><input id="insurance-name" name="name" value="${e(current.name)}" required /></div>
+      <div class="form-field"><label for="insurance-effective">시행일</label><input id="insurance-effective" name="effectiveFrom" type="date" required /></div>
+      <div class="form-field"><label for="pension-rate">국민연금 근로자 부담률 (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.nationalPension.rate) * 100)}" required /></div>
+      <div class="form-field"><label for="pension-minimum">국민연금 기준소득월액 하한</label><input id="pension-minimum" name="pensionMinimumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
+      <div class="form-field"><label for="pension-maximum">국민연금 기준소득월액 상한</label><input id="pension-maximum" name="pensionMaximumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
+      <div class="form-field"><label for="health-rate">건강보험 근로자 부담률 (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.healthInsurance.rate) * 100)}" required /></div>
+      <div class="form-field"><label for="health-minimum">건강보험 근로자 부담 하한액</label><input id="health-minimum" name="healthMinimumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
+      <div class="form-field"><label for="health-maximum">건강보험 근로자 부담 상한액</label><input id="health-maximum" name="healthMaximumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
+      <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.longTermCareRate) * 100)}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
+      <div class="form-field"><label for="employment-rate">고용보험 근로자 부담률 (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.employmentInsurance.rate) * 100)}" required /></div>
+      <div class="form-field full"><label for="pension-source">국민연금 공식 근거 URL</label><input id="pension-source" name="pensionSourceUrl" type="url" value="${e(sourceUrl("nationalPension"))}" required /></div>
+      <div class="form-field full"><label for="pension-bounds-source">국민연금 상·하한 공식 근거 URL</label><input id="pension-bounds-source" name="pensionBoundsSourceUrl" type="url" value="${e(sourceUrl("nationalPensionBounds"))}" required /></div>
+      <div class="form-field full"><label for="health-source">건강보험 공식 근거 URL</label><input id="health-source" name="healthSourceUrl" type="url" value="${e(sourceUrl("healthInsurance"))}" required /></div>
+      <div class="form-field full"><label for="health-bounds-source">건강보험 상·하한 공식 근거 URL</label><input id="health-bounds-source" name="healthBoundsSourceUrl" type="url" value="${e(sourceUrl("healthInsuranceBounds"))}" required /></div>
+      <div class="form-field full"><label for="long-term-source">장기요양 공식 근거 URL</label><input id="long-term-source" name="longTermCareSourceUrl" type="url" value="${e(sourceUrl("longTermCare"))}" required /></div>
+      <div class="form-field full"><label for="employment-source">고용보험 공식 근거 URL</label><input id="employment-source" name="employmentSourceUrl" type="url" value="${e(sourceUrl("employmentInsurance"))}" required /><span class="form-help">국민연금공단·건강보험공단·고용노동부·보건복지부·국가법령정보센터 주소만 허용합니다.</span></div>
+    </form>
+  `, "등록", async () => {
+    const form = document.querySelector("#insurance-policy-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    if (state.data.insurancePolicies.some((policy) => policy.version === data.version)) {
+      throw new Error("같은 사회보험 버전 ID가 이미 있습니다.");
+    }
+    const sourceUrls = [
+      data.pensionSourceUrl,
+      data.pensionBoundsSourceUrl,
+      data.healthSourceUrl,
+      data.healthBoundsSourceUrl,
+      data.longTermCareSourceUrl,
+      data.employmentSourceUrl
+    ];
+    if (sourceUrls.some((url) => !isOfficialPublicSourceUrl(url))) {
+      throw new Error("공단·정부·국가법령정보센터의 공식 자료 주소를 입력해 주세요.");
+    }
+    const pensionMinimumBase = Number(data.pensionMinimumBase);
+    const pensionMaximumBase = Number(data.pensionMaximumBase);
+    const healthMinimumAmount = Number(data.healthMinimumAmount);
+    const healthMaximumAmount = Number(data.healthMaximumAmount);
+    if (pensionMinimumBase > pensionMaximumBase || healthMinimumAmount > healthMaximumAmount) {
+      throw new Error("사회보험 상한액은 하한액보다 크거나 같아야 합니다.");
+    }
+    const policy = {
+      id: data.version,
+      version: data.version,
+      name: data.name,
+      effectiveFrom: data.effectiveFrom,
+      effectiveTo: null,
+      verifiedAt: new Date().toISOString().slice(0, 10),
+      status: "published",
+      builtIn: false,
+      employee: {
+        nationalPension: {
+          rate: Number(data.pensionRate) / 100,
+          minimumBase: pensionMinimumBase,
+          maximumBase: pensionMaximumBase
+        },
+        healthInsurance: {
+          rate: Number(data.healthRate) / 100,
+          minimumBase: 0,
+          maximumBase: Number.MAX_SAFE_INTEGER,
+          minimumAmount: healthMinimumAmount,
+          maximumAmount: healthMaximumAmount
+        },
+        longTermCareRate: Number(data.longTermCareRate) / 100,
+        employmentInsurance: {
+          rate: Number(data.employmentRate) / 100,
+          minimumBase: 0,
+          maximumBase: Number.MAX_SAFE_INTEGER
+        }
+      },
+      sources: [
+        { kind: "nationalPension", title: "국민연금 보험료율", url: data.pensionSourceUrl },
+        { kind: "nationalPensionBounds", title: "국민연금 기준소득월액 상·하한", url: data.pensionBoundsSourceUrl },
+        { kind: "healthInsurance", title: "건강보험 보험료율", url: data.healthSourceUrl },
+        { kind: "healthInsuranceBounds", title: "건강보험료 상·하한", url: data.healthBoundsSourceUrl },
+        { kind: "longTermCare", title: "장기요양보험료율", url: data.longTermCareSourceUrl },
+        { kind: "employmentInsurance", title: "고용보험 보험료율", url: data.employmentSourceUrl }
+      ]
+    };
+    state.data.insurancePolicies.push(policy);
+    if (state.store) await state.store.saveDocument("insurancePolicies", policy.id, policy);
+    showToast("새 사회보험 기준을 등록했습니다.");
+    renderSettings();
+  });
+}
+
 function downloadTaxTableTemplate() {
   const policy = taxPolicyForMonth(state.month);
   const headers = ["minMonthlyPay", "maxMonthlyPay", ...Array.from({ length: 11 }, (_, index) => `dependent${index + 1}`)];
@@ -1089,6 +1195,18 @@ function slug(value) { return String(value).trim().toLowerCase().replace(/\s+/g,
 function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", custom: "기타 공제" }; }
 function safeHttpUrl(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; } catch { return "#"; } }
 function isOfficialGovernmentUrl(value) { try { const host = new URL(value).hostname.toLowerCase(); return host === "go.kr" || host.endsWith(".go.kr"); } catch { return false; } }
+function isOfficialPublicSourceUrl(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "nps.or.kr" || host.endsWith(".nps.or.kr")
+      || host === "nhis.or.kr" || host.endsWith(".nhis.or.kr")
+      || host === "law.go.kr" || host.endsWith(".law.go.kr")
+      || host === "go.kr" || host.endsWith(".go.kr");
+  } catch {
+    return false;
+  }
+}
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
+

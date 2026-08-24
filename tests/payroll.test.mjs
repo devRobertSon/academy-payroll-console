@@ -11,10 +11,19 @@ import {
 import { demoPolicy } from "../src/data/demo-data.js";
 import {
   createCombinedPolicy,
+  NTS_SOURCE_URLS,
   ntsTaxPolicy2024,
   officialInsurancePolicies
 } from "../src/data/nts-tax-policy.js";
 import { csvRowsToObjects, parseCsv } from "../src/lib/csv.js";
+
+test("간이세액표 공식 근거는 파일이 아닌 웹 열람 페이지로 연결한다", () => {
+  const url = new URL(NTS_SOURCE_URLS.employmentTable);
+
+  assert.equal(url.hostname, "www.law.go.kr");
+  assert.equal(url.pathname, "/lsBylInfoPLinkR.do");
+  assert.notEqual(url.pathname, "/flDownload.do");
+});
 
 test("한 선생님의 근로소득과 사업소득을 분리 계산한 뒤 합산한다", () => {
   const payroll = calculatePayroll([

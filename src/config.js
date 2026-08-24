@@ -2,6 +2,11 @@ export const appConfig = {
   academyName: "학원 급여 포털",
   portalUrl: "https://devrobertson.github.io/academy-payroll-console/",
   demoMode: false,
+  assistant: {
+    provider: "gemini",
+    enabled: false,
+    model: "gemini-2.5-flash-lite"
+  },
   firebase: {
     apiKey: "AIzaSyD2zMDl_mQwt2B9GrsiCNxrSkFi8LsLQ8U",
     authDomain: "academy-payroll-console.firebaseapp.com",
@@ -12,3 +17,4 @@ export const appConfig = {
     appCheckSiteKey: "6LeTr5YtAAAAAGCROHJHiHRINu17QGGiEAEYY8N9"
   }
 };
+

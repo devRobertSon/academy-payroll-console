@@ -4,8 +4,8 @@ export const appConfig = {
   demoMode: false,
   assistant: {
     provider: "gemini",
-    enabled: false,
-    model: "gemini-2.5-flash-lite"
+    enabled: true,
+    model: "gemini-3.5-flash-lite"
   },
   firebase: {
     apiKey: "AIzaSyD2zMDl_mQwt2B9GrsiCNxrSkFi8LsLQ8U",

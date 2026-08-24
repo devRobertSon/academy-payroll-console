@@ -69,6 +69,17 @@
             <div><strong>급여 콘솔</strong><span id="sidebar-academy-name">샘플 학원</span></div>
           </div>
           <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
+          <div id="assistant-entry" class="sidebar-assistant" hidden>
+            <button id="help-nav-button" class="nav-button sidebar-help-button" type="button" data-view="help">
+              <i data-lucide="book-open-text" aria-hidden="true"></i>
+              <span>사용 설명서</span>
+            </button>
+            <button id="assistant-toggle" class="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
+              <i data-lucide="message-circle-question" aria-hidden="true"></i>
+              <span><strong>AI 도움말</strong><small>사용법 질문하기</small></span>
+              <i data-lucide="chevron-right" aria-hidden="true"></i>
+            </button>
+          </div>
           <div class="sidebar-user">
             <span id="user-avatar" class="avatar">관</span>
             <div><strong id="user-name">관리자</strong><span id="user-role">관리자</span></div>
@@ -94,8 +105,26 @@
       </div>
     </div>
 
+    <aside id="assistant-panel" class="assistant-panel" role="dialog" aria-modal="false" aria-labelledby="assistant-title" hidden>
+      <header class="assistant-header">
+        <div>
+          <span class="assistant-icon" aria-hidden="true"><i data-lucide="message-circle-question"></i></span>
+          <div><h2 id="assistant-title">AI 도움말</h2><p id="assistant-status">내장 사용 설명서</p></div>
+        </div>
+        <button id="assistant-close" class="icon-button" type="button" title="도움말 닫기" aria-label="도움말 닫기"><i data-lucide="x"></i></button>
+      </header>
+      <div id="assistant-messages" class="assistant-messages" aria-live="polite"></div>
+      <div class="assistant-privacy"><i data-lucide="shield-check" aria-hidden="true"></i><span>이름, 이메일, 전화번호, 계좌번호, 주민번호와 급여액을 입력하지 마세요.</span></div>
+      <form id="assistant-form" class="assistant-form">
+        <label class="sr-only" for="assistant-input">프로그램 사용법 질문</label>
+        <textarea id="assistant-input" rows="2" maxlength="500" placeholder="예: 명세서를 이메일로 보내려면?"></textarea>
+        <button class="icon-button assistant-send" type="submit" title="질문 보내기" aria-label="질문 보내기"><i data-lucide="send"></i></button>
+      </form>
+    </aside>
+
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
     <script type="module" src="./src/app.js"></script>
   </body>
 </html>
+

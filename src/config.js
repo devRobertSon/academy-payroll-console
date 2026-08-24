@@ -9,6 +9,6 @@ export const appConfig = {
     storageBucket: "academy-payroll-console.firebasestorage.app",
     messagingSenderId: "438842508979",
     appId: "1:438842508979:web:11ba0963c221600c7c92c6",
-    appCheckSiteKey: ""
+    appCheckSiteKey: "6LeTr5YtAAAAAGCROHJHiHRINu17QGGiEAEYY8N9"
   }
 };

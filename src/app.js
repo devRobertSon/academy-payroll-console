@@ -1,4 +1,5 @@
 import { appConfig } from "./config.js";
+import { helpArticles } from "./data/help-content.js";
 import {
   demoAccessRequests,
   demoEntries,
@@ -14,6 +15,7 @@ import {
   officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
 import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js";
@@ -43,6 +45,9 @@ const state = {
   search: "",
   selectedTeacherId: null,
   selectedPayslipMonth: "2026-08",
+  helpSearch: "",
+  assistantMessages: [],
+  assistantBusy: false,
   store: null,
   data: {
     teachers: [],
@@ -71,6 +76,15 @@ const elements = {
   pageEyebrow: document.querySelector("#page-eyebrow"),
   topbarActions: document.querySelector("#topbar-actions"),
   content: document.querySelector("#page-content"),
+  assistantEntry: document.querySelector("#assistant-entry"),
+  helpNavButton: document.querySelector("#help-nav-button"),
+  assistantToggle: document.querySelector("#assistant-toggle"),
+  assistantPanel: document.querySelector("#assistant-panel"),
+  assistantClose: document.querySelector("#assistant-close"),
+  assistantMessages: document.querySelector("#assistant-messages"),
+  assistantStatus: document.querySelector("#assistant-status"),
+  assistantForm: document.querySelector("#assistant-form"),
+  assistantInput: document.querySelector("#assistant-input"),
   modalRoot: document.querySelector("#modal-root"),
   toastRoot: document.querySelector("#toast-root")
 };
@@ -131,15 +145,33 @@ function bindStaticEvents() {
   });
   document.querySelector("#logout-button").addEventListener("click", logout);
   document.querySelector("#mobile-menu").addEventListener("click", () => elements.workspace.classList.toggle("menu-open"));
+  elements.assistantToggle.addEventListener("click", openAssistant);
+  elements.helpNavButton.addEventListener("click", () => {
+    state.view = "help";
+    elements.workspace.classList.remove("menu-open");
+    render();
+    window.scrollTo({ top: 0, left: 0 });
+  });
+  elements.assistantClose.addEventListener("click", closeAssistant);
+  elements.assistantForm.addEventListener("submit", submitAssistantQuestion);
+  elements.assistantMessages.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-assistant-question]");
+    if (!button) return;
+    elements.assistantInput.value = button.dataset.assistantQuestion;
+    elements.assistantForm.requestSubmit();
+  });
   elements.nav.addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
     if (!button) return;
     state.view = button.dataset.view;
     elements.workspace.classList.remove("menu-open");
     render();
+    window.scrollTo({ top: 0, left: 0 });
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeModal();
+    if (event.key !== "Escape") return;
+    if (!elements.assistantPanel.hidden) closeAssistant();
+    else closeModal();
   });
 }
 
@@ -172,6 +204,9 @@ async function openWorkspace(user) {
   }
   elements.login.hidden = true;
   elements.workspace.hidden = false;
+  elements.assistantEntry.hidden = user.role !== "admin";
+  if (user.role === "admin") initializeAssistant();
+  else closeAssistant();
   document.querySelector("#user-name").textContent = user.name;
   document.querySelector("#user-role").textContent = roleLabel(user.role);
   document.querySelector("#user-avatar").textContent = user.name.slice(0, 1);
@@ -199,6 +234,9 @@ function hydrateFirebaseData(loaded) {
 async function logout() {
   if (state.store) await state.store.signOut();
   state.user = null;
+  state.assistantMessages = [];
+  closeAssistant();
+  elements.assistantEntry.hidden = true;
   elements.workspace.hidden = true;
   elements.login.hidden = false;
   setLoginStatus("");
@@ -213,6 +251,7 @@ function render() {
     rates: renderRates,
     ledger: renderLedger,
     settings: renderSettings,
+    help: renderHelp,
     payslips: renderPayslips,
     profile: renderProfile,
     adminPayslip: renderPayslips
@@ -229,6 +268,7 @@ function renderNav() {
     section = group;
     return `${sectionMarkup}<button class="nav-button ${state.view === view || (view === "payslips" && state.view === "adminPayslip") ? "active" : ""}" type="button" data-view="${view}"><i data-lucide="${icon}" aria-hidden="true"></i>${e(label)}</button>`;
   }).join("");
+  elements.helpNavButton.classList.toggle("active", state.view === "help");
 }
 
 function setPage(title, eyebrow, actions = "") {
@@ -438,6 +478,60 @@ function renderSettings() {
   elements.content.querySelector("[data-action='add-insurance-policy']").addEventListener("click", openInsurancePolicyModal);
 }
 
+function renderHelp() {
+  const query = state.helpSearch.trim();
+  const visibleArticles = query
+    ? searchHelpArticles(query, helpArticles, helpArticles.length)
+    : helpArticles;
+  setPage("사용 설명서", "관리자 도움말", `
+    <button class="button button-primary" type="button" title="AI 도움말 열기" aria-label="AI 도움말 열기" data-action="open-assistant"><i data-lucide="message-circle-question"></i><span>AI 도움말</span></button>
+  `);
+  elements.content.innerHTML = `
+    <div class="notice"><i data-lucide="book-check"></i><span>관리자 업무 순서와 화면별 사용법입니다. 실제 개인정보를 넣기 전에 테스트 계정과 가상 급여로 전체 절차를 확인하세요.</span></div>
+    <div class="help-toolbar">
+      <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.helpSearch)}" placeholder="설명서 검색" aria-label="사용 설명서 검색" data-help-search /></div>
+      <span>${visibleArticles.length}개 항목</span>
+    </div>
+    <div class="help-layout">
+      <aside class="help-toc" aria-label="사용 설명서 목차">
+        <strong>목차</strong>
+        ${helpArticles.map((article, index) => `<button type="button" data-help-jump="${e(article.id)}"><span>${index + 1}</span>${e(article.title)}</button>`).join("")}
+      </aside>
+      <section class="help-content" aria-label="사용 설명서 내용">
+        ${visibleArticles.map((article, index) => `
+          <article id="help-${e(article.id)}" class="help-article">
+            <header><span>${String(index + 1).padStart(2, "0")}</span><div><h2>${e(article.title)}</h2><p>${e(article.summary)}</p></div></header>
+            <ol>${article.steps.map((step) => `<li>${e(step)}</li>`).join("")}</ol>
+            ${article.cautions.map((caution) => `<div class="help-caution"><i data-lucide="triangle-alert"></i><span>${e(caution)}</span></div>`).join("")}
+            <button class="button button-secondary button-compact" type="button" data-help-ask="${e(article.title)}"><i data-lucide="message-circle-question"></i><span>이 항목 질문하기</span></button>
+          </article>
+        `).join("") || `<div class="empty-state"><strong>일치하는 설명서가 없습니다.</strong><span>기능 이름으로 다시 검색하거나 AI 도움말에 질문해 주세요.</span></div>`}
+      </section>
+    </div>
+  `;
+  elements.topbarActions.querySelector("[data-action='open-assistant']").addEventListener("click", openAssistant);
+  elements.content.querySelector("[data-help-search]").addEventListener("input", (event) => {
+    const caret = event.target.selectionStart;
+    state.helpSearch = event.target.value;
+    renderHelp();
+    const nextInput = elements.content.querySelector("[data-help-search]");
+    nextInput.focus();
+    nextInput.setSelectionRange(caret, caret);
+  });
+  elements.content.querySelectorAll("[data-help-jump]").forEach((button) => button.addEventListener("click", () => {
+    if (state.helpSearch) {
+      state.helpSearch = "";
+      renderHelp();
+    }
+    requestAnimationFrame(() => document.querySelector(`#help-${button.dataset.helpJump}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }));
+  elements.content.querySelectorAll("[data-help-ask]").forEach((button) => button.addEventListener("click", () => {
+    openAssistant();
+    elements.assistantInput.value = `${button.dataset.helpAsk} 사용 방법을 알려줘`;
+    elements.assistantInput.focus();
+  }));
+}
+
 function renderPayslips() {
   const teacherId = state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId;
   const teacher = teacherById(teacherId);
@@ -485,6 +579,99 @@ function renderProfile() {
     <div class="split-layout"><section class="detail-panel"><div class="detail-panel-header"><h2>${e(teacher.name)}</h2><p>${e(teacher.email)}</p></div><div class="detail-block"><h3>로그인 연결</h3><dl class="definition-list"><div><dt>Google 이메일</dt><dd>${e(state.user.email)}</dd></div><div><dt>계정 상태</dt><dd>활성</dd></div></dl></div><div class="detail-block"><h3>담당 과목</h3><div class="tag-list">${teacher.subjects.map((item) => `<span class="tag">${e(item)}</span>`).join("")}</div></div></section>
     <section><div class="notice"><i data-lucide="message-square-text"></i><span>이름, 이메일, 계약 조건이 실제 정보와 다르면 학원 관리자에게 수정을 요청해 주세요.</span></div></section></div>
   ` : `<div class="empty-state">연결된 선생님 정보가 없습니다.</div>`;
+}
+
+function initializeAssistant() {
+  if (!state.assistantMessages.length) {
+    state.assistantMessages.push({
+      role: "assistant",
+      text: "프로그램 사용법을 질문해 주세요. 실제 이름, 이메일, 전화번호, 계좌번호, 주민번호와 급여액은 입력하지 마세요.",
+      source: "사용 설명서"
+    });
+  }
+  elements.assistantStatus.textContent = appConfig.assistant?.enabled
+    ? "Gemini · 사용 설명서 전용"
+    : "내장 설명서 · Gemini 연결 전";
+  renderAssistantMessages();
+}
+
+function openAssistant() {
+  if (state.user?.role !== "admin") return;
+  initializeAssistant();
+  elements.assistantPanel.hidden = false;
+  elements.assistantToggle.setAttribute("aria-expanded", "true");
+  refreshIcons();
+  requestAnimationFrame(() => elements.assistantInput.focus());
+}
+
+function closeAssistant() {
+  elements.assistantPanel.hidden = true;
+  elements.assistantToggle.setAttribute("aria-expanded", "false");
+}
+
+async function submitAssistantQuestion(event) {
+  event.preventDefault();
+  if (state.assistantBusy || state.user?.role !== "admin") return;
+  const question = elements.assistantInput.value.trim();
+  if (!question) return;
+  elements.assistantInput.value = "";
+  state.assistantMessages.push({ role: "user", text: question });
+  state.assistantBusy = true;
+  renderAssistantMessages(true);
+
+  const localAnswer = buildLocalHelpAnswer(question, helpArticles, currentViewLabel());
+  let answer = localAnswer;
+  let source = "사용 설명서";
+  const canUseGemini = appConfig.assistant?.enabled
+    && appConfig.assistant?.provider === "gemini"
+    && !appConfig.demoMode
+    && state.store
+    && detectSensitiveInput(question).length === 0;
+
+  if (canUseGemini) {
+    try {
+      const prompt = buildGeminiPrompt(question, helpArticles, currentViewLabel());
+      answer = await state.store.askHelpAssistant(prompt, appConfig.assistant.model);
+      source = "Gemini · 사용 설명서";
+      elements.assistantStatus.textContent = "Gemini · 사용 설명서 전용";
+    } catch (error) {
+      console.warn("Gemini 도움말을 사용할 수 없어 내장 설명서로 답합니다.", error);
+      elements.assistantStatus.textContent = "내장 설명서 · Gemini 응답 불가";
+    }
+  }
+
+  state.assistantMessages.push({ role: "assistant", text: answer, source });
+  state.assistantBusy = false;
+  renderAssistantMessages();
+}
+
+function renderAssistantMessages(showPending = false) {
+  const suggestions = state.assistantMessages.length === 1 ? `
+    <div class="assistant-suggestions" aria-label="추천 질문">
+      ${["선생님 계정은 어떻게 승인해?", "수업 CSV는 어떻게 올려?", "명세서를 이메일로 보내려면?"].map((question) => `<button type="button" data-assistant-question="${e(question)}">${e(question)}</button>`).join("")}
+    </div>
+  ` : "";
+  elements.assistantMessages.innerHTML = state.assistantMessages.map((message) => `
+    <div class="assistant-message ${message.role}">
+      <div>${assistantMessageHtml(message.text)}</div>
+      ${message.source ? `<small>${e(message.source)}</small>` : ""}
+    </div>
+  `).join("") + suggestions + (showPending ? `<div class="assistant-message assistant pending"><div>설명서를 확인하고 있습니다.</div></div>` : "");
+  const submit = elements.assistantForm.querySelector("button[type='submit']");
+  submit.disabled = state.assistantBusy;
+  elements.assistantInput.disabled = state.assistantBusy;
+  elements.assistantMessages.scrollTop = elements.assistantMessages.scrollHeight;
+  refreshIcons();
+}
+
+function currentViewLabel() {
+  if (state.view === "adminPayslip") return "개인 급여명세서";
+  if (state.view === "help") return "사용 설명서";
+  return adminNav.find(([, view]) => view === state.view)?.[3] || "관리자 화면";
+}
+
+function assistantMessageHtml(value) {
+  return e(value).replace(/\n/g, "<br>");
 }
 
 function payrollsForMonth(month) {
@@ -1407,3 +1594,4 @@ function isOfficialPublicSourceUrl(value) {
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
+

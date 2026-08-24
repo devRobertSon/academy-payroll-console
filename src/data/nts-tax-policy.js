@@ -76,10 +76,78 @@ export const demoInsurancePolicy = {
   }
 };
 
-export function createCombinedPolicy(taxPolicy = ntsTaxPolicy2024, insurancePolicy = demoInsurancePolicy) {
+const INSURANCE_SOURCE_URLS = {
+  pensionRate: "https://www.nps.or.kr/pnsinfo/ntpsklg/getOHAF0097M0.do",
+  pensionBounds: "https://www.nps.or.kr/pnsinfo/ntpsklg/getOHAF0038M0.do?menuId=MN24001113&tab=tab5",
+  healthRate: "https://edi.nhis.or.kr/portal/images/popup/20251204_pop01longdesc.html",
+  healthBounds: "https://law.go.kr/LSW/admRulLsInfoP.do?admRulSeq=2100000270472",
+  longTermCare: "https://www.mohw.go.kr/menu.es?mid=a10712030100",
+  employment: "https://www.moel.go.kr/info/astmgmt/employ/employList.do"
+};
+
+function insurancePolicy2026({ version, effectiveFrom, effectiveTo, pensionMinimumBase, pensionMaximumBase }) {
+  return {
+    id: version,
+    version,
+    name: "2026년 사회보험 근로자 부담 기준",
+    effectiveFrom,
+    effectiveTo,
+    verifiedAt: "2026-08-25",
+    status: "published",
+    builtIn: true,
+    employee: {
+      nationalPension: {
+        rate: 0.0475,
+        minimumBase: pensionMinimumBase,
+        maximumBase: pensionMaximumBase
+      },
+      healthInsurance: {
+        rate: 0.03595,
+        minimumBase: 0,
+        maximumBase: Number.MAX_SAFE_INTEGER,
+        minimumAmount: 10080,
+        maximumAmount: 4591740
+      },
+      longTermCareRate: 0.1314,
+      employmentInsurance: {
+        rate: 0.009,
+        minimumBase: 0,
+        maximumBase: Number.MAX_SAFE_INTEGER
+      }
+    },
+    sources: [
+      { kind: "nationalPension", title: "국민연금공단 2026년 보험료율", url: INSURANCE_SOURCE_URLS.pensionRate },
+      { kind: "nationalPensionBounds", title: "국민연금 기준소득월액 상·하한", url: INSURANCE_SOURCE_URLS.pensionBounds },
+      { kind: "healthInsurance", title: "국민건강보험공단 2026년 보험료율", url: INSURANCE_SOURCE_URLS.healthRate },
+      { kind: "healthInsuranceBounds", title: "건강보험료 상·하한 고시", url: INSURANCE_SOURCE_URLS.healthBounds },
+      { kind: "longTermCare", title: "보건복지부 2026년 장기요양보험료율", url: INSURANCE_SOURCE_URLS.longTermCare },
+      { kind: "employmentInsurance", title: "고용노동부 고용보험 안내", url: INSURANCE_SOURCE_URLS.employment }
+    ]
+  };
+}
+
+export const officialInsurancePolicies = [
+  insurancePolicy2026({
+    version: "INSURANCE-2026-01",
+    effectiveFrom: "2026-01-01",
+    effectiveTo: "2026-06-30",
+    pensionMinimumBase: 400000,
+    pensionMaximumBase: 6370000
+  }),
+  insurancePolicy2026({
+    version: "INSURANCE-2026-07",
+    effectiveFrom: "2026-07-01",
+    effectiveTo: null,
+    pensionMinimumBase: 410000,
+    pensionMaximumBase: 6590000
+  })
+];
+
+export function createCombinedPolicy(taxPolicy = ntsTaxPolicy2024, insurancePolicy = officialInsurancePolicies.at(-1)) {
   return {
     version: `${taxPolicy.version} / ${insurancePolicy.version}`,
     taxPolicy,
     insurancePolicy
   };
 }
+

@@ -1,7 +1,13 @@
 import { GMAIL_SEND_SCOPE } from "./gmail.js";
 
-const FIREBASE_VERSION = "11.8.1";
+const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
+
+const HELP_SYSTEM_INSTRUCTION = `당신은 Academy Payroll Console의 사용법 전용 도우미입니다.
+제공된 사용 설명서 발췌만 근거로 한국어로 간결하게 답하세요.
+급여액을 계산하거나 세무·노무 결론을 내리지 말고, 데이터를 수정·확정·발송했다고 말하지 마세요.
+개인정보를 요청하지 마세요. 질문에 개인정보가 보이면 삭제하고 다시 질문하도록 안내하세요.
+설명서에 없는 내용은 추측하지 말고 관리자 또는 회계사 확인이 필요하다고 답하세요.`;
 
 export async function createFirebaseStore(config) {
   const [appSdk, authSdk, firestoreSdk, appCheckSdk] = await Promise.all([
@@ -22,6 +28,8 @@ export async function createFirebaseStore(config) {
   const db = firestoreSdk.getFirestore(app);
   let gmailAccessToken = null;
   let gmailAccessTokenExpiresAt = 0;
+  let helpModel = null;
+  let helpModelName = null;
   await authSdk.setPersistence(auth, authSdk.browserLocalPersistence);
 
   async function sessionFromUser(firebaseUser) {
@@ -327,6 +335,24 @@ export async function createFirebaseStore(config) {
     return { id, ...delivery, sentBy: auth.currentUser.uid, sentAt };
   }
 
+  async function askHelpAssistant(prompt, modelName) {
+    if (!auth.currentUser) throw new Error("관리자 Google 계정으로 다시 로그인해 주세요.");
+    if (!helpModel || helpModelName !== modelName) {
+      const aiSdk = await import(sdk("ai"));
+      const ai = aiSdk.getAI(app, { backend: new aiSdk.GoogleAIBackend() });
+      helpModel = aiSdk.getGenerativeModel(ai, {
+        model: modelName,
+        systemInstruction: HELP_SYSTEM_INSTRUCTION,
+        generationConfig: { temperature: 0.2, maxOutputTokens: 700 }
+      });
+      helpModelName = modelName;
+    }
+    const result = await helpModel.generateContent(prompt);
+    const answer = result.response.text().trim();
+    if (!answer) throw new Error("Gemini가 답변을 만들지 못했습니다.");
+    return answer;
+  }
+
   async function signOut() {
     gmailAccessToken = null;
     gmailAccessTokenExpiresAt = 0;
@@ -346,7 +372,8 @@ export async function createFirebaseStore(config) {
     recordPayslipView,
     authorizeGmailSend,
     sendGmailMessage,
-    recordPayslipDelivery
+    recordPayslipDelivery,
+    askHelpAssistant
   };
 }
 

@@ -5,7 +5,7 @@ import {
 
 export const NTS_SOURCE_URLS = {
   employment: "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7862&mi=6583",
-  employmentTable: "https://www.law.go.kr/flDownload.do?flSeq=127235479&gubun=",
+  employmentTable: "https://www.law.go.kr/lsBylInfoPLinkR.do?bylBrNo=00&bylCls=BE&bylNo=0002&lsNm=%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95+%EC%8B%9C%ED%96%89%EB%A0%B9",
   business: "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7902&mi=6622",
   other: "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7893&mi=2227",
   withholdingOverview: "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7701&mi=2289"

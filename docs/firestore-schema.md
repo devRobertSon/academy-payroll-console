@@ -8,7 +8,9 @@
 | `teachers` | 관리 | 연결된 본인 조회 |
 | `rateRules` | 관리 | 차단 |
 | `workEntries` | 관리 | 차단 |
-| `payrollPolicies` | 관리 | 차단 |
+| `taxPolicies` | 조회·새 버전 생성 | 차단 |
+| `insurancePolicies` | 조회·새 버전 생성 | 차단 |
+| `payrollPolicies` | 이전 버전 호환 | 차단 |
 | `payrollOverrides` | 관리 | 차단 |
 | `payrollRuns` | 관리 | 차단 |
 | `payslips` | 관리 | 본인 확정본만 |
@@ -40,7 +42,12 @@
   "status": "active",
   "subjects": ["고등 수학", "논술"],
   "paymentDay": 10,
-  "contractSummary": "화면 표시용 요약"
+  "contractSummary": "화면 표시용 요약",
+  "taxProfile": {
+    "dependentCount": 4,
+    "children8To20": 2,
+    "withholdingRatio": 1
+  }
 }
 ```
 
@@ -57,6 +64,7 @@
   "hourlyRate": 55000,
   "treatment": "employee | business | other | exempt",
   "insuranceCovered": true,
+  "otherIncomeCategory": "temporaryLecture | null",
   "effectiveFrom": "2026-08-01",
   "effectiveTo": null
 }
@@ -75,13 +83,60 @@
   "hourlyRate": 55000,
   "treatment": "employee",
   "insuranceCovered": true,
+  "otherIncomeCategory": null,
+  "otherPaymentGroup": null,
   "source": "manual | csv"
 }
 ```
 
-### `payrollPolicies/{version}`
+### `taxPolicies/{version}`
 
-월별 계산 요율, 기준액 상·하한, 반올림 규칙과 버전을 저장합니다. 법정 값의 변경 이력을 유지하기 위해 기존 문서를 덮어쓰지 않고 새 버전을 만듭니다.
+국세청 원천징수 요율, 시행일, 근로소득 간이세액표, 자녀 공제액, 월 1천만원 초과 산식과 공식 근거 URL을 저장합니다. 기존 문서는 업데이트·삭제할 수 없으며 법정 기준 변경 시 새 버전을 만듭니다.
+
+```json
+{
+  "version": "NTS-2027-01-01",
+  "name": "국세청 원천징수 기준",
+  "effectiveFrom": "2027-01-01",
+  "effectiveTo": null,
+  "verifiedAt": "2027-01-05",
+  "status": "published",
+  "employment": {
+    "tableRevision": "2027-01-01",
+    "tableRows": [],
+    "taxAtTenMillion": [],
+    "childCredits": {},
+    "highIncomeBrackets": []
+  },
+  "business": {},
+  "other": {},
+  "sources": []
+}
+```
+
+### `insurancePolicies/{version}`
+
+국민연금·건강보험·장기요양보험·고용보험의 별도 기준을 시행일별로 저장합니다. 국세청 세금 정책과 혼합하지 않습니다.
+
+### `payrollOverrides/{yyyy-mm_teacherId}`
+
+월별 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
+
+```json
+{
+  "month": "2026-08",
+  "teacherId": "teacherId",
+  "employeeNonTaxableAmount": 200000,
+  "employeeStudentLoanSupportAmount": 0,
+  "employeeIncomeTax": null,
+  "employeeLocalTax": null,
+  "nationalPension": null,
+  "healthInsurance": null,
+  "longTermCare": null,
+  "employmentInsurance": null,
+  "custom": 0
+}
+```
 
 ### `payrollRuns/{yyyy-mm}`
 
@@ -105,7 +160,9 @@
   "teacherUid": "Firebase Authentication UID",
   "teacherName": "발행 시점 이름",
   "status": "published",
-  "policyVersion": "2026-08-v1",
+  "policyVersion": "NTS-2024-02-29 / INSURANCE-2026-01",
+  "taxPolicyVersion": "NTS-2024-02-29",
+  "insurancePolicyVersion": "INSURANCE-2026-01",
   "calculation": {
     "earningLines": [],
     "grossByTreatment": {},

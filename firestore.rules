@@ -69,6 +69,23 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /taxPolicies/{policyId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.version == policyId
+        && request.resource.data.effectiveFrom is string
+        && request.resource.data.status == 'published';
+      allow update, delete: if false;
+    }
+
+    match /insurancePolicies/{policyId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.version == policyId
+        && request.resource.data.effectiveFrom is string;
+      allow update, delete: if false;
+    }
+
     match /payrollOverrides/{overrideId} {
       allow read, create, update: if isAdmin();
       allow delete: if false;

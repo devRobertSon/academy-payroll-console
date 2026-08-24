@@ -1,16 +1,10 @@
-export const demoPolicy = {
-  version: "DEMO-2026-08",
-  effectiveMonth: "2026-08",
-  employee: {
-    nationalPension: { rate: 0.045, minimumBase: 0, maximumBase: 6370000 },
-    healthInsurance: { rate: 0.03545, minimumBase: 0, maximumBase: 127056982 },
-    longTermCareRate: 0.1295,
-    employmentInsurance: { rate: 0.009, minimumBase: 0, maximumBase: 999999999 },
-    localIncomeTaxRate: 0.1
-  },
-  business: { incomeTaxRate: 0.03, localIncomeTaxRate: 0.003 },
-  other: { withholdingRate: 0.088 }
-};
+import {
+  createCombinedPolicy,
+  demoInsurancePolicy,
+  ntsTaxPolicy2024
+} from "./nts-tax-policy.js";
+
+export const demoPolicy = createCombinedPolicy(ntsTaxPolicy2024, demoInsurancePolicy);
 
 export const demoUsers = {
   admin: {
@@ -37,7 +31,8 @@ export const demoTeachers = [
     status: "active",
     subjects: ["초등 수학", "중등 수학"],
     contractSummary: "근로소득 · 4대보험 적용",
-    paymentDay: 10
+    paymentDay: 10,
+    taxProfile: { dependentCount: 2, children8To20: 0, withholdingRatio: 1 }
   },
   {
     id: "teacher-02",
@@ -47,7 +42,8 @@ export const demoTeachers = [
     status: "active",
     subjects: ["중등 영어"],
     contractSummary: "사업소득 · 원천징수",
-    paymentDay: 10
+    paymentDay: 10,
+    taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   },
   {
     id: "teacher-03",
@@ -57,7 +53,8 @@ export const demoTeachers = [
     status: "active",
     subjects: ["고등 수학", "논술 특강"],
     contractSummary: "혼합 · 수업별 소득 구분",
-    paymentDay: 12
+    paymentDay: 12,
+    taxProfile: { dependentCount: 4, children8To20: 2, withholdingRatio: 1 }
   },
   {
     id: "teacher-04",
@@ -67,7 +64,8 @@ export const demoTeachers = [
     status: "active",
     subjects: ["과학 실험"],
     contractSummary: "공제 없음 · 수동 검토",
-    paymentDay: 12
+    paymentDay: 12,
+    taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   }
 ];
 
@@ -112,14 +110,7 @@ export const demoPayrollRuns = [
   { month: "2026-06", status: "published", publishedAt: "2026-07-08T08:30:00Z" }
 ];
 
-export const demoOverrides = {
-  "2026-08:teacher-01": { employeeIncomeTax: 42000 },
-  "2026-08:teacher-03": { employeeIncomeTax: 32000 },
-  "2026-07:teacher-01": { employeeIncomeTax: 40000 },
-  "2026-07:teacher-03": { employeeIncomeTax: 30000 },
-  "2026-06:teacher-01": { employeeIncomeTax: 37000 },
-  "2026-06:teacher-03": { employeeIncomeTax: 28000 }
-};
+export const demoOverrides = {};
 
 function monthEntries(month, rows) {
   return rows.map((row, index) => ({

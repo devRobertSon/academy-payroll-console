@@ -3,14 +3,24 @@ import {
   demoEntries,
   demoOverrides,
   demoPayrollRuns,
-  demoPolicy,
   demoRateRules,
   demoTeachers,
   demoUsers
 } from "./data/demo-data.js";
+import {
+  createCombinedPolicy,
+  demoInsurancePolicy,
+  ntsTaxPolicy2024
+} from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
-import { calculatePayroll, summarizePayroll, TREATMENT_LABELS } from "./lib/payroll.js";
+import {
+  calculatePayroll,
+  parseEmploymentTaxTableRows,
+  resolveEffectivePolicy,
+  summarizePayroll,
+  TREATMENT_LABELS
+} from "./lib/payroll.js";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
 
 const state = {
@@ -26,7 +36,8 @@ const state = {
     rateRules: [],
     entries: [],
     payrollRuns: [],
-    policies: [],
+    taxPolicies: [],
+    insurancePolicies: [],
     overrides: {},
     payslips: [],
     payslipReceipts: []
@@ -121,7 +132,8 @@ function loadDemoData() {
     rateRules: structuredClone(demoRateRules),
     entries: structuredClone(demoEntries),
     payrollRuns: structuredClone(demoPayrollRuns),
-    policies: [structuredClone(demoPolicy)],
+    taxPolicies: [structuredClone(ntsTaxPolicy2024)],
+    insurancePolicies: [structuredClone(demoInsurancePolicy)],
     overrides: structuredClone(demoOverrides),
     payslips: [],
     payslipReceipts: []
@@ -150,7 +162,10 @@ function hydrateFirebaseData(loaded) {
   state.data.rateRules = loaded.rateRules || [];
   state.data.entries = loaded.entries || [];
   state.data.payrollRuns = loaded.payrollRuns || [];
-  state.data.policies = loaded.policies || [];
+  state.data.taxPolicies = mergeBuiltInTaxPolicies(loaded.taxPolicies || []);
+  state.data.insurancePolicies = loaded.insurancePolicies?.length
+    ? loaded.insurancePolicies
+    : [structuredClone(demoInsurancePolicy)];
   state.data.payslips = loaded.payslips || [];
   state.data.payslipReceipts = loaded.payslipReceipts || [];
   state.data.overrides = Object.fromEntries((loaded.payrollOverrides || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
@@ -289,6 +304,7 @@ function renderTeachers() {
         <div class="detail-panel-header"><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "로그인 후 연결")}</dd></div><div><dt>상태</dt><dd>활성</dd></div></dl></div>
         <div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>계약 형태</dt><dd>${e(selected.contractSummary)}</dd></div><div><dt>지급 예정일</dt><dd>매월 ${e(selected.paymentDay)}일</dd></div></dl></div>
+        <div class="detail-block"><div class="detail-title-row"><h3>근로소득 원천징수 정보</h3><button class="icon-button" type="button" title="원천징수 정보 수정" aria-label="${e(selected.name)} 원천징수 정보 수정" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>공제대상가족</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}명</dd></div><div><dt>8~20세 자녀</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}명</dd></div><div><dt>원천징수 비율</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>
         <div class="detail-block"><h3>담당 과목</h3><div class="tag-list">${selected.subjects.map((subject) => `<span class="tag">${e(subject)}</span>`).join("")}</div></div>
       </aside>` : ""}
     </div>
@@ -296,6 +312,7 @@ function renderTeachers() {
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
+  elements.content.querySelector("[data-edit-tax-profile]")?.addEventListener("click", () => openTaxProfileModal(selected));
   elements.content.querySelectorAll("[data-select-teacher]").forEach((row) => row.addEventListener("click", () => {
     state.selectedTeacherId = row.dataset.selectTeacher;
     renderTeachers();
@@ -305,7 +322,7 @@ function renderTeachers() {
 function renderRates() {
   setPage("시급 · 계약 조건", "적용 기간별 규칙", `<button class="button button-primary" type="button" data-action="add-rate"><i data-lucide="plus"></i><span>조건 추가</span></button>`);
   elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="layers-3"></i><span>한 선생님에게 과목별 시급과 서로 다른 소득 구분을 동시에 지정할 수 있습니다. 수업일에 유효한 가장 구체적인 조건이 적용됩니다.</span></div>
+    <div class="notice"><i data-lucide="layers-3"></i><span>한 선생님에게 과목별 시급과 서로 다른 소득 구분을 동시에 지정할 수 있습니다. 고용관계가 있으면 근로소득, 독립적으로 계속·반복하는 강의는 사업소득, 일시적 강의는 기타소득으로 검토하며 앱이 계약 실질을 자동 판정하지는 않습니다.</span></div>
     <section class="content-section">
       <div class="section-heading"><div><h2>현재 적용 조건</h2><p>선생님 + 과목 + 적용 기간 기준</p></div></div>
       <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>과목</th><th class="numeric">시급</th><th>소득 구분</th><th>4대보험</th><th>적용 시작</th></tr></thead><tbody>
@@ -335,23 +352,38 @@ function renderLedger() {
 }
 
 function renderSettings() {
-  const policy = policyForMonth(state.month);
-  setPage("계산 · 보안 설정", "관리자 전용");
+  const taxPolicy = taxPolicyForMonth(state.month);
+  const insurancePolicy = insurancePolicyForMonth(state.month);
+  const lectureRule = taxPolicy.other?.categories?.temporaryLecture || {};
+  setPage("계산 · 보안 설정", "관리자 전용", `
+    <button class="button button-secondary" type="button" data-action="export-tax-table"><i data-lucide="file-down"></i><span>간이세액표 CSV</span></button>
+    <button class="button button-primary" type="button" data-action="add-tax-policy"><i data-lucide="plus"></i><span>새 세금 기준</span></button>
+  `);
   elements.content.innerHTML = `
-    <div class="notice warning"><i data-lucide="scale"></i><span>아래 비율은 계산 구조를 확인하기 위한 설정값입니다. 실제 적용 월의 법정 요율, 기준소득월액, 보수월액, 간이세액표와 계약 관계는 기장 회계사 확인 후 입력해야 합니다.</span></div>
+    <div class="notice"><i data-lucide="landmark"></i><span>원천징수는 국세청 안내와 소득세법 시행령 별표 2를 기준으로 계산합니다. 법령이 바뀌면 기존 기준을 수정하지 않고 새 시행일의 버전을 추가하세요. 확정 명세서에는 적용 버전이 그대로 보존됩니다.</span></div>
     <div class="split-layout">
       <section class="detail-panel">
-        <div class="detail-panel-header"><h2>계산 정책 ${e(policy.version || "미설정")}</h2><p>${formatMonth(policy.effectiveMonth || state.month)} 적용</p></div>
-        <div class="detail-block"><h3>근로소득 보험</h3><dl class="definition-list"><div><dt>국민연금</dt><dd>${ratePercent(policy.employee?.nationalPension?.rate)}</dd></div><div><dt>건강보험</dt><dd>${ratePercent(policy.employee?.healthInsurance?.rate)}</dd></div><div><dt>장기요양</dt><dd>건강보험료의 ${ratePercent(policy.employee?.longTermCareRate)}</dd></div><div><dt>고용보험</dt><dd>${ratePercent(policy.employee?.employmentInsurance?.rate)}</dd></div></dl></div>
-        <div class="detail-block"><h3>원천징수</h3><dl class="definition-list"><div><dt>사업소득 소득세</dt><dd>${ratePercent(policy.business?.incomeTaxRate)}</dd></div><div><dt>사업소득 지방세</dt><dd>${ratePercent(policy.business?.localIncomeTaxRate)}</dd></div><div><dt>기타소득</dt><dd>${ratePercent(policy.other?.withholdingRate)}</dd></div></dl></div>
+        <div class="detail-panel-header"><h2>${e(taxPolicy.name || "세금 기준")}</h2><p>${e(taxPolicy.version)} · ${e(taxPolicy.effectiveFrom)}부터 적용</p></div>
+        <div class="detail-block"><h3>근로소득</h3><dl class="definition-list"><div><dt>간이세액표</dt><dd>${e(taxPolicy.employment?.tableRevision)} 개정</dd></div><div><dt>급여 구간</dt><dd>${formatNumber(taxPolicy.employment?.tableRows?.length)}개</dd></div><div><dt>원천징수 선택</dt><dd>80% · 100% · 120%</dd></div><div><dt>8~20세 자녀 공제</dt><dd>인원별 적용</dd></div></dl></div>
+        <div class="detail-block"><h3>사업소득</h3><dl class="definition-list"><div><dt>소득세</dt><dd>${ratePercent(taxPolicy.business?.incomeTaxRate)}</dd></div><div><dt>지방소득세</dt><dd>소득세의 ${ratePercent(taxPolicy.business?.localIncomeTaxRateOfIncomeTax)}</dd></div><div><dt>합계 효과세율</dt><dd>${ratePercent(Number(taxPolicy.business?.incomeTaxRate || 0) * (1 + Number(taxPolicy.business?.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
+        <div class="detail-block"><h3>일시적 강의 기타소득</h3><dl class="definition-list"><div><dt>필요경비율</dt><dd>${ratePercent(lectureRule.expenseRate)}</dd></div><div><dt>소득세율</dt><dd>${ratePercent(lectureRule.incomeTaxRate)}</dd></div><div><dt>과세최저한</dt><dd>건별 소득금액 ${formatWon(lectureRule.minimumTaxableIncomeAmount)} 이하</dd></div><div><dt>최저한 초과 효과세율</dt><dd>${ratePercent((1 - Number(lectureRule.expenseRate || 0)) * Number(lectureRule.incomeTaxRate || 0) * (1 + Number(lectureRule.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
+        <div class="detail-block"><h3>공식 근거</h3><div class="source-list">${(taxPolicy.sources || []).map((source) => `<a href="${e(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>${e(source.title)}</a>`).join("")}</div></div>
       </section>
       <section class="detail-panel">
-        <div class="detail-panel-header"><h2>보안 점검</h2><p>공개 GitHub Pages 운영 기준</p></div>
-        <div class="detail-block"><dl class="definition-list"><div><dt>저장소 개인정보</dt><dd>포함 금지</dd></div><div><dt>Firestore 기본 권한</dt><dd>전면 거부</dd></div><div><dt>선생님 명세서</dt><dd>본인 UID만</dd></div><div><dt>관리자 쓰기</dt><dd>역할 확인</dd></div><div><dt>확정본 수정</dt><dd>금지</dd></div></dl></div>
+        <div class="detail-panel-header"><h2>사회보험 정책</h2><p>${e(insurancePolicy.version)} · 국세청 기준과 별도 관리</p></div>
+        <div class="detail-block"><h3>근로소득 보험</h3><dl class="definition-list"><div><dt>국민연금</dt><dd>${ratePercent(insurancePolicy.employee?.nationalPension?.rate)}</dd></div><div><dt>건강보험</dt><dd>${ratePercent(insurancePolicy.employee?.healthInsurance?.rate)}</dd></div><div><dt>장기요양</dt><dd>건강보험료의 ${ratePercent(insurancePolicy.employee?.longTermCareRate)}</dd></div><div><dt>고용보험</dt><dd>${ratePercent(insurancePolicy.employee?.employmentInsurance?.rate)}</dd></div></dl></div>
+        <div class="detail-block"><div class="notice warning compact"><i data-lucide="triangle-alert"></i><span>이 값은 화면 동작용 데모입니다. 국민연금공단·국민건강보험공단·근로복지공단 기준과 가입 상태를 별도로 확인해야 합니다.</span></div></div>
+        <div class="detail-block"><h3>보안 점검</h3><dl class="definition-list"><div><dt>저장소 개인정보</dt><dd>포함 금지</dd></div><div><dt>Firestore 기본 권한</dt><dd>전면 거부</dd></div><div><dt>선생님 명세서</dt><dd>본인 UID만</dd></div><div><dt>확정본 수정</dt><dd>금지</dd></div></dl></div>
         <div class="detail-block"><h3>현재 실행 모드</h3><span class="status-chip ${appConfig.demoMode ? "draft" : "published"}">${appConfig.demoMode ? "데모 데이터" : "Firebase 연결"}</span></div>
       </section>
     </div>
+    <section class="content-section policy-history">
+      <div class="section-heading"><div><h2>세금 기준 적용 이력</h2><p>시행일이 가장 최근인 유효 버전이 자동 적용됩니다.</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>버전</th><th>기준명</th><th>시행일</th><th>확인일</th><th>상태</th></tr></thead><tbody>${[...state.data.taxPolicies].sort((a, b) => String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))).map((policy) => `<tr><td><strong>${e(policy.version)}</strong></td><td>${e(policy.name)}</td><td>${e(policy.effectiveFrom)}</td><td>${e(policy.verifiedAt || "-")}</td><td><span class="status-chip published">${policy.builtIn ? "내장 공식본" : "등록 완료"}</span></td></tr>`).join("")}</tbody></table></div>
+    </section>
   `;
+  elements.topbarActions.querySelector("[data-action='export-tax-table']").addEventListener("click", downloadTaxTableTemplate);
+  elements.topbarActions.querySelector("[data-action='add-tax-policy']").addEventListener("click", openTaxPolicyModal);
 }
 
 function renderPayslips() {
@@ -407,14 +439,35 @@ function payrollForTeacher(teacherId, month) {
   if (!entries.length) return null;
   return {
     teacher,
-    payroll: calculatePayroll(entries, policyForMonth(month), state.data.overrides[`${month}:${teacherId}`])
+    payroll: calculatePayroll(
+      entries,
+      policyForMonth(month),
+      state.data.overrides[`${month}:${teacherId}`],
+      teacher.taxProfile
+    )
   };
 }
 
 function entriesForMonth(month) { return state.data.entries.filter((entry) => entry.month === month); }
 function teacherById(id) { return state.data.teachers.find((teacher) => teacher.id === id); }
 function runForMonth(month) { return state.data.payrollRuns.find((run) => run.month === month) || { month, status: "draft", publishedAt: null }; }
-function policyForMonth(month) { return state.data.policies.find((policy) => policy.effectiveMonth === month) || state.data.policies[0] || demoPolicy; }
+function taxPolicyForMonth(month) {
+  return resolveEffectivePolicy(state.data.taxPolicies, month, ntsTaxPolicy2024);
+}
+
+function insurancePolicyForMonth(month) {
+  return resolveEffectivePolicy(state.data.insurancePolicies, month, demoInsurancePolicy);
+}
+
+function policyForMonth(month) {
+  return createCombinedPolicy(taxPolicyForMonth(month), insurancePolicyForMonth(month));
+}
+
+function mergeBuiltInTaxPolicies(policies) {
+  const byVersion = new Map([[ntsTaxPolicy2024.version, structuredClone(ntsTaxPolicy2024)]]);
+  policies.forEach((policy) => byVersion.set(policy.version || policy.id, policy));
+  return [...byVersion.values()];
+}
 
 function availablePayslipMonths(teacherId) {
   if (!appConfig.demoMode && state.data.payslips.length) return state.data.payslips.map((item) => item.month).sort().reverse();
@@ -432,7 +485,7 @@ function payrollTable(items) {
   return `<table><thead><tr><th>선생님</th><th>소득 구성</th><th class="numeric">총 지급액</th><th class="numeric">공제액</th><th class="numeric">실 지급액</th><th>발행</th><th>열람</th><th aria-label="작업"></th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
     const receipt = receiptFor(teacher.id, state.month);
     const published = runForMonth(state.month).status === "published";
-    return `<tr><td>${personCell(teacher)}</td><td><div class="tag-list">${Object.entries(payroll.grossByTreatment).filter(([, amount]) => amount > 0).map(([type]) => `<span class="tag">${e(TREATMENT_LABELS[type])}</span>`).join("")}</div></td><td class="numeric">${formatWon(payroll.gross)}</td><td class="numeric">${formatWon(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatWon(payroll.net)}</strong></td><td><span class="status-chip ${runForMonth(state.month).status}">${statusLabel(runForMonth(state.month).status)}</span></td><td>${receipt ? `<span class="status-chip published" title="${e(formatViewedAt(receipt.viewedAt))}">열람 완료</span>` : `<span class="status-chip pending">${published ? "미열람" : "발행 전"}</span>`}</td><td><div class="row-actions"><button class="icon-button" type="button" title="명세서 보기" aria-label="${e(teacher.name)} 명세서 보기" data-view-payslip="${e(teacher.id)}"><i data-lucide="file-search"></i></button></div></td></tr>`;
+    return `<tr><td>${personCell(teacher)}</td><td><div class="tag-list">${Object.entries(payroll.grossByTreatment).filter(([, amount]) => amount > 0).map(([type]) => `<span class="tag">${e(TREATMENT_LABELS[type])}</span>`).join("")}</div></td><td class="numeric">${formatWon(payroll.gross)}</td><td class="numeric">${formatWon(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatWon(payroll.net)}</strong></td><td><span class="status-chip ${runForMonth(state.month).status}">${statusLabel(runForMonth(state.month).status)}</span></td><td>${receipt ? `<span class="status-chip published" title="${e(formatViewedAt(receipt.viewedAt))}">열람 완료</span>` : `<span class="status-chip pending">${published ? "미열람" : "발행 전"}</span>`}</td><td><div class="row-actions">${published ? "" : `<button class="icon-button" type="button" title="과세·공제 조정" aria-label="${e(teacher.name)} 과세 및 공제 조정" data-adjust-payroll="${e(teacher.id)}"><i data-lucide="calculator"></i></button>`}<button class="icon-button" type="button" title="명세서 보기" aria-label="${e(teacher.name)} 명세서 보기" data-view-payslip="${e(teacher.id)}"><i data-lucide="file-search"></i></button></div></td></tr>`;
   }).join("") || emptyRow(8)}</tbody></table>`;
 }
 
@@ -452,7 +505,7 @@ function payslipSheet(teacher, payroll, month, run) {
     <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>과목</th><th>구분</th><th class="numeric">시간</th><th class="numeric">시급</th><th class="numeric">금액</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment])}</td><td class="numeric">${e(line.hours)}</td><td class="numeric">${formatNumber(line.hourlyRate)}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
     <div class="payslip-totals"><div><span>총 지급액</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>총 공제액</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>실 지급액</span><strong>${formatWon(payroll.net)}</strong></div></div>
-    <p class="payslip-footnote">본 명세서는 확정된 월별 수업 내역과 적용 조건을 기준으로 작성되었습니다. 세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요.</p>
+    <p class="payslip-footnote">본 명세서는 확정된 월별 수업 내역과 적용 조건을 기준으로 작성되었습니다. 세금 기준 ${e(payroll.taxPolicyVersion || payroll.policyVersion)}, 사회보험 기준 ${e(payroll.insurancePolicyVersion || "별도 확인")}. 세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요.</p>
   </article>`;
 }
 
@@ -468,11 +521,16 @@ function bindPayrollRows() {
     state.view = "adminPayslip";
     render();
   }));
+  elements.content.querySelectorAll("[data-adjust-payroll]").forEach((button) => button.addEventListener("click", () => {
+    const teacher = teacherById(button.dataset.adjustPayroll);
+    if (teacher) openPayrollAdjustmentModal(teacher);
+  }));
 }
 
 function openEntryModal() {
   const teacherOptions = state.data.teachers.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)}</option>`).join("");
   openModal("수업 내역 추가", `
+    <div class="notice"><i data-lucide="list-checks"></i><span>소득 구분은 계약서 명칭이 아니라 실제 고용관계, 계속·반복성, 독립성을 확인해 선택하세요.</span></div>
     <form id="entry-form" class="form-grid">
       <div class="form-field"><label for="entry-date">수업일</label><input id="entry-date" name="workedOn" type="date" value="${e(state.month)}-15" required /></div>
       <div class="form-field"><label for="entry-teacher">선생님</label><select id="entry-teacher" name="teacherId" required>${teacherOptions}</select></div>
@@ -481,11 +539,13 @@ function openEntryModal() {
       <div class="form-field"><label for="entry-rate">시급</label><input id="entry-rate" name="hourlyRate" type="number" min="0" step="1000" required /></div>
       <div class="form-field"><label for="entry-treatment">소득 구분</label><select id="entry-treatment" name="treatment"><option value="employee">근로소득</option><option value="business">사업소득</option><option value="other">기타소득</option><option value="exempt">공제 없음</option></select></div>
       <div class="form-field"><label>보험 적용</label><label class="checkbox-row"><input name="insuranceCovered" type="checkbox" /> 이 수업을 보험 기준액에 포함</label></div>
+      <div class="form-field"><label for="entry-other-category">기타소득 분류</label><select id="entry-other-category" name="otherIncomeCategory"><option value="temporaryLecture">일시적 강의·인적용역</option></select></div>
+      <div class="form-field"><label for="entry-payment-group">기타소득 지급 건 ID</label><input id="entry-payment-group" name="otherPaymentGroup" placeholder="비우면 월 지급분 합산" /><span class="form-help">별도 지급 건이면 같은 ID끼리 과세최저한을 계산합니다.</span></div>
     </form>`, "추가", async () => {
       const form = document.querySelector("#entry-form");
       if (!form.reportValidity()) return false;
       const data = Object.fromEntries(new FormData(form));
-      const entry = { id: crypto.randomUUID(), month: data.workedOn.slice(0, 7), workedOn: data.workedOn, teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hours: Number(data.hours), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", source: "manual" };
+      const entry = { id: crypto.randomUUID(), month: data.workedOn.slice(0, 7), workedOn: data.workedOn, teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hours: Number(data.hours), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", otherIncomeCategory: data.treatment === "other" ? data.otherIncomeCategory : null, otherPaymentGroup: data.treatment === "other" ? data.otherPaymentGroup || null : null, source: "manual" };
       state.data.entries.push(entry);
       if (state.store) await state.store.saveDocument("workEntries", entry.id, entry);
       state.month = entry.month;
@@ -502,12 +562,15 @@ function openTeacherModal() {
       <div class="form-field full"><label for="teacher-subjects">담당 과목</label><input id="teacher-subjects" name="subjects" placeholder="쉼표로 구분" /></div>
       <div class="form-field"><label for="teacher-contract">계약 요약</label><input id="teacher-contract" name="contractSummary" placeholder="예: 혼합 · 수업별 구분" /></div>
       <div class="form-field"><label for="teacher-payday">지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" /></div>
+      <div class="form-field"><label for="teacher-dependents">공제대상가족 수</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
+      <div class="form-field"><label for="teacher-children">8~20세 자녀 수</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
+      <div class="form-field"><label for="teacher-tax-ratio">원천징수 비율</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
       <p class="form-help full">실제 계정 연결은 사용자가 처음 로그인한 뒤 관리자 승인 절차에서 UID를 확인하도록 운영하세요.</p>
     </form>`, "등록", async () => {
       const form = document.querySelector("#teacher-form");
       if (!form.reportValidity()) return false;
       const data = Object.fromEntries(new FormData(form));
-      const teacher = { id: crypto.randomUUID(), name: data.name, email: data.email, subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean), contractSummary: data.contractSummary || "조건 미설정", paymentDay: Number(data.paymentDay), status: "active", authUid: null };
+      const teacher = { id: crypto.randomUUID(), name: data.name, email: data.email, subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean), contractSummary: data.contractSummary || "조건 미설정", paymentDay: Number(data.paymentDay), status: "active", authUid: null, taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) } };
       state.data.teachers.push(teacher);
       if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
       state.selectedTeacherId = teacher.id;
@@ -523,13 +586,14 @@ function openRateModal() {
       <div class="form-field"><label for="rate-subject">과목</label><input id="rate-subject" name="subjectName" required /></div>
       <div class="form-field"><label for="rate-amount">시급</label><input id="rate-amount" name="hourlyRate" type="number" min="0" step="1000" required /></div>
       <div class="form-field"><label for="rate-treatment">소득 구분</label><select id="rate-treatment" name="treatment"><option value="employee">근로소득</option><option value="business">사업소득</option><option value="other">기타소득</option><option value="exempt">공제 없음</option></select></div>
+      <div class="form-field"><label for="rate-other-category">기타소득 분류</label><select id="rate-other-category" name="otherIncomeCategory"><option value="temporaryLecture">일시적 강의·인적용역</option></select></div>
       <div class="form-field"><label for="rate-start">적용 시작일</label><input id="rate-start" name="effectiveFrom" type="date" value="${e(state.month)}-01" required /></div>
       <div class="form-field"><label>보험 적용</label><label class="checkbox-row"><input name="insuranceCovered" type="checkbox" /> 보험 적용 수업</label></div>
     </form>`, "추가", async () => {
       const form = document.querySelector("#rate-form");
       if (!form.reportValidity()) return false;
       const data = Object.fromEntries(new FormData(form));
-      const rule = { id: crypto.randomUUID(), teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", effectiveFrom: data.effectiveFrom };
+      const rule = { id: crypto.randomUUID(), teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", otherIncomeCategory: data.treatment === "other" ? data.otherIncomeCategory : null, effectiveFrom: data.effectiveFrom };
       state.data.rateRules.push(rule);
       if (state.store) await state.store.saveDocument("rateRules", rule.id, rule);
       showToast("계약 조건을 추가했습니다.");
@@ -540,8 +604,8 @@ function openRateModal() {
 function openCsvHelpModal() {
   openModal("CSV 수업 내역 업로드", `
     <div class="notice"><i data-lucide="file-spreadsheet"></i><span>첫 줄의 열 이름을 아래 형식과 같게 만든 UTF-8 CSV를 선택해 주세요.</span></div>
-    <div class="data-surface table-scroll"><table><thead><tr><th>workedOn</th><th>teacherId</th><th>subjectName</th><th>hours</th><th>hourlyRate</th><th>treatment</th><th>insuranceCovered</th></tr></thead><tbody><tr><td>2026-08-05</td><td>teacher-id</td><td>중등 수학</td><td>2</td><td>42000</td><td>employee</td><td>true</td></tr></tbody></table></div>
-    <form id="csv-form" class="form-grid" style="margin-top:16px"><div class="form-field full"><label for="csv-file">CSV 파일</label><input id="csv-file" name="file" type="file" accept=".csv,text/csv" required /><span class="form-help">treatment 값: employee, business, other, exempt</span></div></form>
+    <div class="data-surface table-scroll"><table><thead><tr><th>workedOn</th><th>teacherId</th><th>subjectName</th><th>hours</th><th>hourlyRate</th><th>treatment</th><th>insuranceCovered</th><th>otherIncomeCategory</th><th>otherPaymentGroup</th></tr></thead><tbody><tr><td>2026-08-05</td><td>teacher-id</td><td>중등 수학</td><td>2</td><td>42000</td><td>employee</td><td>true</td><td></td><td></td></tr></tbody></table></div>
+    <form id="csv-form" class="form-grid" style="margin-top:16px"><div class="form-field full"><label for="csv-file">CSV 파일</label><input id="csv-file" name="file" type="file" accept=".csv,text/csv" required /><span class="form-help">treatment 값: employee, business, other, exempt. 기타소득은 선택 열에 temporaryLecture와 지급 건 ID를 넣을 수 있습니다.</span></div></form>
   `, "업로드", async () => {
     const input = document.querySelector("#csv-file");
     if (!input.files?.[0]) { showToast("CSV 파일을 선택해 주세요."); return false; }
@@ -553,7 +617,7 @@ function openCsvHelpModal() {
       if (!teacherById(item.teacherId)) throw new Error(`${index + 2}행의 teacherId가 등록되어 있지 않습니다.`);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(item.workedOn)) throw new Error(`${index + 2}행의 workedOn 형식을 확인해 주세요.`);
       if (!allowedTreatments.has(item.treatment)) throw new Error(`${index + 2}행의 treatment 값을 확인해 주세요.`);
-      return { id: crypto.randomUUID(), month: item.workedOn.slice(0, 7), workedOn: item.workedOn, teacherId: item.teacherId, subjectName: item.subjectName, subjectId: slug(item.subjectName), hours: Number(item.hours), hourlyRate: Number(item.hourlyRate), treatment: item.treatment, insuranceCovered: item.insuranceCovered.toLowerCase() === "true", source: "csv" };
+      return { id: crypto.randomUUID(), month: item.workedOn.slice(0, 7), workedOn: item.workedOn, teacherId: item.teacherId, subjectName: item.subjectName, subjectId: slug(item.subjectName), hours: Number(item.hours), hourlyRate: Number(item.hourlyRate), treatment: item.treatment, insuranceCovered: item.insuranceCovered.toLowerCase() === "true", otherIncomeCategory: item.treatment === "other" ? item.otherIncomeCategory || "temporaryLecture" : null, otherPaymentGroup: item.treatment === "other" ? item.otherPaymentGroup || null : null, source: "csv" };
     });
     if (entries.some((entry) => !Number.isFinite(entry.hours) || !Number.isFinite(entry.hourlyRate))) throw new Error("시간 또는 시급에 숫자가 아닌 값이 있습니다.");
     state.data.entries.push(...entries);
@@ -562,6 +626,187 @@ function openCsvHelpModal() {
     showToast(`${entries.length}건의 수업 내역을 추가했습니다.`);
     renderEntries();
   });
+}
+
+function openTaxProfileModal(teacher) {
+  const profile = taxProfileForTeacher(teacher);
+  openModal("근로소득 원천징수 정보", `
+    <div class="notice"><i data-lucide="calculator"></i><span>공제대상가족에는 근로자 본인이 포함됩니다. 8~20세 자녀 수는 간이세액표 세액에서 자녀 공제를 적용할 때 사용합니다.</span></div>
+    <form id="tax-profile-form" class="form-grid">
+      <div class="form-field"><label for="profile-dependents">공제대상가족 수</label><input id="profile-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
+      <div class="form-field"><label for="profile-children">8~20세 자녀 수</label><input id="profile-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
+      <div class="form-field full"><label for="profile-ratio">원천징수 비율</label><select id="profile-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select><span class="form-help">신청하지 않은 경우 100%입니다. 변경 신청한 비율은 해당 과세기간 종료일까지 적용합니다.</span></div>
+    </form>
+  `, "저장", async () => {
+    const form = document.querySelector("#tax-profile-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    teacher.taxProfile = {
+      dependentCount: Number(data.dependentCount),
+      children8To20: Number(data.children8To20),
+      withholdingRatio: Number(data.withholdingRatio)
+    };
+    if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
+    showToast("원천징수 정보를 저장했습니다.");
+    renderTeachers();
+  });
+}
+
+function openPayrollAdjustmentModal(teacher) {
+  const key = `${state.month}:${teacher.id}`;
+  const current = state.data.overrides[key] || {};
+  const optionalValue = (name) => current[name] == null ? "" : e(current[name]);
+  openModal(`${teacher.name} 과세·공제 조정`, `
+    <div class="notice"><i data-lucide="circle-equal"></i><span>비과세와 학자금 지원액은 근로소득 간이세액표의 월급여에서 제외됩니다. 수동 공제액을 비워 두면 현재 세금·사회보험 정책으로 자동 계산합니다.</span></div>
+    <form id="payroll-adjustment-form" class="form-grid">
+      <div class="form-field"><label for="adjust-nontaxable">근로소득 비과세액</label><input id="adjust-nontaxable" name="employeeNonTaxableAmount" type="number" min="0" step="1" value="${e(current.employeeNonTaxableAmount || 0)}" /></div>
+      <div class="form-field"><label for="adjust-student-loan">학자금 지원액</label><input id="adjust-student-loan" name="employeeStudentLoanSupportAmount" type="number" min="0" step="1" value="${e(current.employeeStudentLoanSupportAmount || 0)}" /></div>
+      <div class="form-field"><label for="adjust-employee-tax">근로소득세 수동값</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-employee-local">근로소득 지방세 수동값</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-pension">국민연금 수동값</label><input id="adjust-pension" name="nationalPension" type="number" min="0" step="1" value="${optionalValue("nationalPension")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-health">건강보험 수동값</label><input id="adjust-health" name="healthInsurance" type="number" min="0" step="1" value="${optionalValue("healthInsurance")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-care">장기요양 수동값</label><input id="adjust-care" name="longTermCare" type="number" min="0" step="1" value="${optionalValue("longTermCare")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-employment">고용보험 수동값</label><input id="adjust-employment" name="employmentInsurance" type="number" min="0" step="1" value="${optionalValue("employmentInsurance")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-business-tax">사업소득세 수동값</label><input id="adjust-business-tax" name="businessIncomeTax" type="number" min="0" step="1" value="${optionalValue("businessIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-business-local">사업소득 지방세 수동값</label><input id="adjust-business-local" name="businessLocalTax" type="number" min="0" step="1" value="${optionalValue("businessLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-other-tax">기타소득세 수동값</label><input id="adjust-other-tax" name="otherIncomeTax" type="number" min="0" step="1" value="${optionalValue("otherIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-other-local">기타소득 지방세 수동값</label><input id="adjust-other-local" name="otherLocalTax" type="number" min="0" step="1" value="${optionalValue("otherLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field full"><label for="adjust-custom">기타 공제</label><input id="adjust-custom" name="custom" type="number" min="0" step="1" value="${optionalValue("custom")}" placeholder="0" /></div>
+    </form>
+  `, "저장", async () => {
+    const form = document.querySelector("#payroll-adjustment-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    const automaticFields = [
+      "employeeIncomeTax", "employeeLocalTax", "nationalPension", "healthInsurance",
+      "longTermCare", "employmentInsurance", "businessIncomeTax", "businessLocalTax",
+      "otherIncomeTax", "otherLocalTax", "custom"
+    ];
+    const override = {
+      id: `${state.month}_${teacher.id}`,
+      month: state.month,
+      teacherId: teacher.id,
+      employeeNonTaxableAmount: Number(data.employeeNonTaxableAmount || 0),
+      employeeStudentLoanSupportAmount: Number(data.employeeStudentLoanSupportAmount || 0)
+    };
+    automaticFields.forEach((field) => {
+      override[field] = data[field] === "" ? null : Number(data[field]);
+    });
+    state.data.overrides[key] = override;
+    if (state.store) await state.store.saveDocument("payrollOverrides", override.id, override);
+    showToast("과세 기준과 공제 조정을 저장했습니다.");
+    renderDashboard();
+  });
+}
+
+function openTaxPolicyModal() {
+  const current = taxPolicyForMonth(state.month);
+  openModal("새 세금 기준 등록", `
+    <div class="notice warning"><i data-lucide="history"></i><span>등록한 버전은 과거 명세서 재현을 위해 수정하거나 삭제하지 않습니다. 공식 자료를 확인한 뒤 새 버전과 시행일을 입력하세요.</span></div>
+    <form id="tax-policy-form" class="form-grid">
+      <div class="form-field"><label for="tax-version">버전 ID</label><input id="tax-version" name="version" pattern="[A-Za-z0-9._-]+" placeholder="예: NTS-2027-01-01" required /></div>
+      <div class="form-field"><label for="tax-name">기준명</label><input id="tax-name" name="name" value="국세청 원천징수 기준" required /></div>
+      <div class="form-field"><label for="tax-effective">시행일</label><input id="tax-effective" name="effectiveFrom" type="date" required /></div>
+      <div class="form-field"><label for="tax-table-revision">간이세액표 개정일</label><input id="tax-table-revision" name="tableRevision" type="date" value="${e(current.employment.tableRevision)}" required /></div>
+      <div class="form-field full"><label for="tax-source">공식 근거 URL</label><input id="tax-source" name="sourceUrl" type="url" value="${e(current.sources?.[0]?.url || "")}" required /><span class="form-help">국세청·홈택스·국가법령정보센터 등 go.kr 공식 주소만 등록할 수 있습니다.</span></div>
+      <div class="form-field"><label for="business-rate">사업소득 소득세율 (%)</label><input id="business-rate" name="businessIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.business.incomeTaxRate) * 100)}" required /></div>
+      <div class="form-field"><label for="local-rate">지방소득세 비율 (%)</label><input id="local-rate" name="localIncomeTaxRatio" type="number" min="0" max="100" step="0.001" value="${e(Number(current.business.localIncomeTaxRateOfIncomeTax) * 100)}" required /><span class="form-help">소득세액에 곱하는 비율</span></div>
+      <div class="form-field"><label for="other-expense">일시적 강의 필요경비율 (%)</label><input id="other-expense" name="otherExpenseRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.expenseRate) * 100)}" required /></div>
+      <div class="form-field"><label for="other-rate">기타소득 소득세율 (%)</label><input id="other-rate" name="otherIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.incomeTaxRate) * 100)}" required /></div>
+      <div class="form-field"><label for="other-minimum">기타소득 과세최저한</label><input id="other-minimum" name="otherMinimumTaxableIncome" type="number" min="0" step="1" value="${e(current.other.categories.temporaryLecture.minimumTaxableIncomeAmount)}" required /><span class="form-help">필요경비 차감 후 건별 소득금액</span></div>
+      <div class="form-field"><label for="child-one">자녀 1명 공제액</label><input id="child-one" name="childCreditOne" type="number" min="0" step="1" value="${e(current.employment.childCredits.one)}" required /></div>
+      <div class="form-field"><label for="child-two">자녀 2명 공제액</label><input id="child-two" name="childCreditTwo" type="number" min="0" step="1" value="${e(current.employment.childCredits.two)}" required /></div>
+      <div class="form-field"><label for="child-more">2명 초과 1명당 공제액</label><input id="child-more" name="childCreditAdditional" type="number" min="0" step="1" value="${e(current.employment.childCredits.additional)}" required /></div>
+      <div class="form-field full"><label for="tax-table-file">근로소득 간이세액표 CSV</label><input id="tax-table-file" name="tableFile" type="file" accept=".csv,text/csv" /><span class="form-help">비워 두면 현재 표를 복사합니다. 상단의 CSV를 내려받아 새 공식 표 값으로 수정한 뒤 업로드할 수 있습니다.</span></div>
+      <div class="form-field full"><label for="high-income-rules">월 1천만원 초과 산식 JSON</label><textarea id="high-income-rules" name="highIncomeRules" spellcheck="false" required>${e(JSON.stringify(current.employment.highIncomeBrackets, null, 2))}</textarea><span class="form-help">소득세법 시행령 별표 2의 고액 급여 구간, 가산액, 초과금액 비율과 세율입니다.</span></div>
+    </form>
+  `, "등록", async () => {
+    const form = document.querySelector("#tax-policy-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    if (state.data.taxPolicies.some((policy) => policy.version === data.version)) {
+      throw new Error("같은 버전 ID가 이미 있습니다.");
+    }
+    if (!isOfficialGovernmentUrl(data.sourceUrl)) {
+      throw new Error("공식 go.kr 자료 주소를 입력해 주세요.");
+    }
+
+    const highIncomeBrackets = JSON.parse(data.highIncomeRules);
+    validateHighIncomeBrackets(highIncomeBrackets);
+    let table = {
+      tableRows: structuredClone(current.employment.tableRows),
+      taxAtTenMillion: structuredClone(current.employment.taxAtTenMillion)
+    };
+    const tableFile = document.querySelector("#tax-table-file").files?.[0];
+    if (tableFile) table = parseEmploymentTaxTableRows(csvRowsToObjects(parseCsv(await tableFile.text())));
+
+    const localRatio = Number(data.localIncomeTaxRatio) / 100;
+    const policy = {
+      ...structuredClone(current),
+      id: data.version,
+      version: data.version,
+      name: data.name,
+      effectiveFrom: data.effectiveFrom,
+      effectiveTo: null,
+      verifiedAt: new Date().toISOString().slice(0, 10),
+      status: "published",
+      builtIn: false,
+      employment: {
+        ...structuredClone(current.employment),
+        ...table,
+        tableRevision: data.tableRevision,
+        childCredits: {
+          one: Number(data.childCreditOne),
+          two: Number(data.childCreditTwo),
+          additional: Number(data.childCreditAdditional)
+        },
+        localIncomeTaxRateOfIncomeTax: localRatio,
+        highIncomeBrackets
+      },
+      business: {
+        ...structuredClone(current.business),
+        incomeTaxRate: Number(data.businessIncomeTaxRate) / 100,
+        localIncomeTaxRateOfIncomeTax: localRatio
+      },
+      other: {
+        ...structuredClone(current.other),
+        categories: {
+          ...structuredClone(current.other.categories),
+          temporaryLecture: {
+            ...structuredClone(current.other.categories.temporaryLecture),
+            expenseRate: Number(data.otherExpenseRate) / 100,
+            incomeTaxRate: Number(data.otherIncomeTaxRate) / 100,
+            localIncomeTaxRateOfIncomeTax: localRatio,
+            minimumTaxableIncomeAmount: Number(data.otherMinimumTaxableIncome)
+          }
+        }
+      },
+      sources: [{ title: "등록 기준 공식 자료", url: data.sourceUrl }]
+    };
+    state.data.taxPolicies.push(policy);
+    if (state.store) await state.store.saveDocument("taxPolicies", policy.id, policy);
+    showToast("새 세금 기준을 등록했습니다.");
+    renderSettings();
+  });
+}
+
+function downloadTaxTableTemplate() {
+  const policy = taxPolicyForMonth(state.month);
+  const headers = ["minMonthlyPay", "maxMonthlyPay", ...Array.from({ length: 11 }, (_, index) => `dependent${index + 1}`)];
+  const rows = [headers, ...policy.employment.tableRows.map(([minimum, maximum, taxes]) => [minimum, maximum, ...taxes])];
+  rows.push([10000000, 10000000, ...policy.employment.taxAtTenMillion]);
+  downloadCsv(`employment-tax-table-${policy.employment.tableRevision}.csv`, rows);
+  showToast("현재 근로소득 간이세액표를 저장했습니다.");
+}
+
+function validateHighIncomeBrackets(brackets) {
+  if (!Array.isArray(brackets) || !brackets.length || brackets.at(-1).max !== null) {
+    throw new Error("고액 급여 산식의 마지막 구간은 max가 null이어야 합니다.");
+  }
+  const numericKeys = ["excessFrom", "excessFactor", "rate", "baseAddition"];
+  if (brackets.some((bracket) => numericKeys.some((key) => !Number.isFinite(Number(bracket[key]))))) {
+    throw new Error("고액 급여 산식 JSON의 숫자를 확인해 주세요.");
+  }
 }
 
 function openPublishModal() {
@@ -585,6 +830,8 @@ function openPublishModal() {
             teacherName: teacher.name,
             status: "published",
             policyVersion: payroll.policyVersion,
+            taxPolicyVersion: payroll.taxPolicyVersion,
+            insurancePolicyVersion: payroll.insurancePolicyVersion,
             calculation: payroll,
             publishedAt: run.publishedAt
           }
@@ -693,8 +940,11 @@ function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="em
 function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", paid: "지급 완료" })[status] || status; }
 function roleLabel(role) { return ({ admin: "관리자", teacher: "선생님" })[role] || role; }
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
+function taxProfileForTeacher(teacher) { return { dependentCount: 1, children8To20: 0, withholdingRatio: 1, ...(teacher.taxProfile || {}) }; }
 function slug(value) { return String(value).trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9가-힣-]/g, ""); }
-function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득 원천징수", custom: "기타 공제" }; }
+function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", custom: "기타 공제" }; }
+function safeHttpUrl(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; } catch { return "#"; } }
+function isOfficialGovernmentUrl(value) { try { const host = new URL(value).hostname.toLowerCase(); return host === "go.kr" || host.endsWith(".go.kr"); } catch { return false; } }
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }

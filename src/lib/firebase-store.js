@@ -66,16 +66,27 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, policies, payrollOverrides, payslipReceipts] = await Promise.all([
+      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslipReceipts] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("rateRules"),
         loadCollection("workEntries"),
         loadCollection("payrollRuns"),
+        loadCollection("taxPolicies"),
+        loadCollection("insurancePolicies"),
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
         loadCollection("payslipReceipts")
       ]);
-      return { teachers, rateRules, entries, payrollRuns, policies, payrollOverrides, payslipReceipts };
+      return {
+        teachers,
+        rateRules,
+        entries,
+        payrollRuns,
+        taxPolicies,
+        insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
+        payrollOverrides,
+        payslipReceipts
+      };
     }
 
     const payslips = await loadCollection("payslips", [

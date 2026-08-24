@@ -30,6 +30,7 @@
 - 관리자의 수신자 확인 후 Gmail PDF 첨부 발송과 불변 발송 이력
 - 기본 거부 방식 Firestore/Storage 보안 규칙
 - 급여 확정 시 명세서·월 마감·감사 로그 원자적 저장
+- 검색 가능한 관리자 사용 설명서와 개인정보 차단형 AI 도움말
 - GitHub Pages `main / (root)` 정적 배포
 
 ## 무료 요금제 범위
@@ -117,8 +118,9 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 
 설계 상세는 [`docs/architecture.md`](./docs/architecture.md), 컬렉션 구조는 [`docs/firestore-schema.md`](./docs/firestore-schema.md), 운영 점검은 [`docs/security-checklist.md`](./docs/security-checklist.md), 변경 QA는 [`docs/qa.md`](./docs/qa.md)를 참고하세요.
 
-실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md)를 따르세요.
+실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md), 화면 사용법은 [`docs/user-guide.md`](./docs/user-guide.md), Gemini 연결은 [`docs/ai-assistant-setup.md`](./docs/ai-assistant-setup.md)를 따르세요.
 
 ## 법적 유의사항
 
 이 프로젝트의 계산 엔진은 업무 도구의 기반이며 세무·노무 자문이나 신고 프로그램을 대체하지 않습니다. 4대보험과 세액은 계약 관계, 월 보수, 상·하한, 비과세 항목, 소득 종류에 따라 달라질 수 있으므로 실제 발행 전 세무사 또는 노무사의 확인이 필요합니다.
+

@@ -1,14 +1,14 @@
 export const appConfig = {
-  academyName: "샘플 학원",
-  portalUrl: "",
-  demoMode: true,
+  academyName: "학원 급여 포털",
+  portalUrl: "https://devrobertson.github.io/academy-payroll-console/",
+  demoMode: false,
   firebase: {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: "",
+    apiKey: "AIzaSyD2zMDl_mQwt2B9GrsiCNxrSkFi8LsLQ8U",
+    authDomain: "academy-payroll-console.firebaseapp.com",
+    projectId: "academy-payroll-console",
+    storageBucket: "academy-payroll-console.firebasestorage.app",
+    messagingSenderId: "438842508979",
+    appId: "1:438842508979:web:11ba0963c221600c7c92c6",
     appCheckSiteKey: ""
   }
 };

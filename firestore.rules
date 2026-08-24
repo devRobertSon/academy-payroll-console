@@ -1,0 +1,140 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function account() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function activeAccount() {
+      return signedIn() && account().status == 'active';
+    }
+
+    function hasRole(role) {
+      return activeAccount() && account().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isOwnTeacher(teacherId) {
+      return activeAccount()
+        && account().role == 'teacher'
+        && account().teacherId == teacherId;
+    }
+
+    function validPublishedPayslip() {
+      return request.resource.data.teacherId is string
+        && request.resource.data.teacherUid is string
+        && request.resource.data.month is string
+        && request.resource.data.status in ['draft', 'published'];
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /teachers/{teacherId} {
+      allow get: if isAdmin() || isOwnTeacher(teacherId);
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.status in ['active', 'inactive'];
+      allow delete: if false;
+    }
+
+    match /rateRules/{ruleId} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /workEntries/{entryId} {
+      allow read, create, update: if isAdmin();
+      allow delete: if isAdmin()
+        && !exists(/databases/$(database)/documents/payrollRuns/$(resource.data.month))
+        || (isAdmin()
+          && get(/databases/$(database)/documents/payrollRuns/$(resource.data.month)).data.status != 'published');
+    }
+
+    match /payrollPolicies/{policyId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /payrollOverrides/{overrideId} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /payrollRuns/{month} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.status in ['draft', 'ready', 'published'];
+      allow update: if isAdmin()
+        && resource.data.status != 'published'
+        && request.resource.data.status in ['draft', 'ready', 'published'];
+      allow delete: if false;
+    }
+
+    match /payslips/{payslipId} {
+      allow get, list: if isAdmin()
+        || (activeAccount()
+          && account().role == 'teacher'
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.status == 'published');
+      allow create: if isAdmin() && validPublishedPayslip();
+      allow update: if isAdmin()
+        && resource.data.status != 'published'
+        && validPublishedPayslip();
+      allow delete: if false;
+    }
+
+    match /payslipReceipts/{receiptId} {
+      allow get: if isAdmin()
+        || (activeAccount()
+          && account().role == 'teacher'
+          && receiptId.matches('.*_' + request.auth.uid));
+      allow list: if isAdmin()
+        || (activeAccount()
+          && account().role == 'teacher'
+          && resource.data.teacherUid == request.auth.uid);
+      allow create: if activeAccount()
+        && account().role == 'teacher'
+        && request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.teacherId == account().teacherId
+        && request.resource.data.viewedAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'payslipId', 'teacherId', 'teacherUid', 'month', 'viewedAt'
+        ])
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherUid == request.auth.uid
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.teacherId == request.resource.data.teacherId
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.month == request.resource.data.month
+        && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';
+      allow update, delete: if false;
+    }
+
+    match /payrollLedgers/{ledgerId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

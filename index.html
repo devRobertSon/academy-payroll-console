@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="학원 급여 계산, 명세서 발행, 월별 급여내역 관리를 위한 보안 중심 콘솔" />
+    <meta name="color-scheme" content="light" />
+    <title>Academy Payroll Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  </head>
+  <body>
+    <div id="app" aria-live="polite">
+      <section id="login-view" class="login-view">
+        <div class="login-panel">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">AP</span>
+            <div>
+              <strong>Academy Payroll Console</strong>
+              <span id="login-academy-name">샘플 학원</span>
+            </div>
+          </div>
+          <div class="login-copy">
+            <p class="eyebrow">급여 업무 포털</p>
+            <h1>이번 달 급여부터 지난 명세서까지 한곳에서 관리합니다.</h1>
+            <p>등록된 Google 계정으로 로그인하면 권한에 맞는 화면이 열립니다.</p>
+          </div>
+          <button id="google-login" class="button button-primary button-wide" type="button">
+            <span class="google-g" aria-hidden="true">G</span>
+            Google 계정으로 로그인
+          </button>
+          <div id="demo-login" class="demo-login" hidden>
+            <div class="divider"><span>데모 화면 확인</span></div>
+            <div class="demo-actions">
+              <button class="button button-secondary" type="button" data-demo-role="admin">
+                <i data-lucide="shield-check" aria-hidden="true"></i>
+                관리자 데모
+              </button>
+              <button class="button button-secondary" type="button" data-demo-role="teacher">
+                <i data-lucide="user-round" aria-hidden="true"></i>
+                선생님 데모
+              </button>
+            </div>
+          </div>
+          <p id="login-status" class="form-status" role="status"></p>
+          <p class="privacy-note"><i data-lucide="lock-keyhole" aria-hidden="true"></i> 승인된 계정만 급여 정보에 접근할 수 있습니다.</p>
+        </div>
+        <aside class="login-aside" aria-label="서비스 상태">
+          <div class="aside-content">
+            <div class="status-seal"><i data-lucide="badge-check" aria-hidden="true"></i></div>
+            <p>급여 자료는 GitHub 저장소가 아닌 Firebase의 접근 제어 영역에 보관됩니다.</p>
+            <dl>
+              <div><dt>접근</dt><dd>Google 계정</dd></div>
+              <div><dt>권한</dt><dd>관리자 · 선생님 분리</dd></div>
+              <div><dt>기록</dt><dd>월별 확정본 보존</dd></div>
+            </dl>
+          </div>
+        </aside>
+      </section>
+
+      <div id="workspace" class="workspace" hidden>
+        <aside class="sidebar">
+          <div class="sidebar-brand">
+            <span class="brand-mark brand-mark-small" aria-hidden="true">AP</span>
+            <div><strong>급여 콘솔</strong><span id="sidebar-academy-name">샘플 학원</span></div>
+          </div>
+          <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
+          <div class="sidebar-user">
+            <span id="user-avatar" class="avatar">관</span>
+            <div><strong id="user-name">관리자</strong><span id="user-role">관리자</span></div>
+            <button id="logout-button" class="icon-button" type="button" title="로그아웃" aria-label="로그아웃">
+              <i data-lucide="log-out" aria-hidden="true"></i>
+            </button>
+          </div>
+        </aside>
+
+        <main class="main-content">
+          <header class="topbar">
+            <button id="mobile-menu" class="icon-button mobile-menu" type="button" title="메뉴 열기" aria-label="메뉴 열기">
+              <i data-lucide="menu" aria-hidden="true"></i>
+            </button>
+            <div>
+              <p id="page-eyebrow" class="eyebrow">2026년 8월</p>
+              <h1 id="page-title">급여 대시보드</h1>
+            </div>
+            <div id="topbar-actions" class="topbar-actions"></div>
+          </header>
+          <div id="page-content" class="page-content"></div>
+        </main>
+      </div>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
+

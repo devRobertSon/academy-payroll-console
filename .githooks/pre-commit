@@ -1,0 +1,12 @@
+#!/bin/sh
+
+echo "Running academy-payroll-console QA..."
+
+if command -v npm >/dev/null 2>&1; then
+  npm run qa
+elif command -v node >/dev/null 2>&1; then
+  node --test && node scripts/qa.mjs
+else
+  echo "Node.js 18 or newer is required to run QA." >&2
+  exit 1
+fi

@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Spark MVP에서는 급여명세서를 브라우저에서 인쇄/PDF 저장하므로
+    // 파일 저장소는 사용하지 않고 기본적으로 전면 차단한다.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

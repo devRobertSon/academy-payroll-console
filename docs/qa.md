@@ -1,0 +1,29 @@
+# QA 절차
+
+모든 기능·설정·문서 변경은 커밋 전에 아래 명령을 실행하고 통과해야 합니다.
+
+```bash
+npm run qa
+```
+
+## 자동 검사 범위
+
+- 급여 혼합 계산, 보험 미적용, 공제 보정, 시급 규칙, CSV 파싱 단위 테스트
+- 모든 JavaScript와 MJS 파일 문법 검사
+- 필수 정적 파일과 화면 영역 존재 확인
+- `index.html`의 로컬 CSS·JavaScript 참조 확인
+- 로컬 서버의 HTML, CSS, 앱 JavaScript HTTP 응답 확인
+- 개인키·클라이언트 비밀키·비밀번호 패턴 검사
+- 데모 이메일의 `.invalid` 도메인 확인
+- GitHub Actions 워크플로가 없는지 확인
+
+## Git 커밋 전 자동 실행
+
+최초 복제 후 한 번 아래 설정을 적용하면 저장소의 pre-commit 훅이 `npm run qa`를 자동 실행합니다.
+
+```bash
+git config core.hooksPath .githooks
+```
+
+QA가 실패하면 커밋하지 않고 원인을 수정한 뒤 전체 QA를 다시 실행합니다. Firebase 실제 연결 후에는 관리자, 선생님, 미등록 계정으로 Security Rules 허용·거부 테스트도 추가해야 합니다.
+

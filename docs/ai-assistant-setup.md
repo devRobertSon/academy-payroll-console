@@ -13,7 +13,7 @@
 - 연결 방식: Firebase AI Logic JavaScript SDK
 - 인증: 기존 Firebase Authentication Google 로그인
 - 앱 보호: Firebase App Check 적용 강제
-- 모델: `gemini-2.5-flash-lite`
+- 모델: `gemini-3.5-flash-lite`
 - 요금제: 초기 시험은 Spark 무료 등급
 
 ## Firebase Console 설정
@@ -25,7 +25,8 @@
 5. 현재 등록된 웹 앱 `academy-payroll-web`을 선택합니다.
 6. App Check가 Firebase AI Logic API에 적용 강제로 표시되는지 확인합니다.
 7. `AI Logic > 설정`에서 인증된 사용자 모드를 적용 강제로 설정합니다.
-8. GitHub Pages에서 관리자 테스트 계정으로 요청 지표와 정상 응답을 확인합니다.
+8. AI Monitoring은 프롬프트와 응답 저장을 피하기 위해 사용 중지 상태로 둡니다.
+9. GitHub Pages에서 관리자 테스트 계정으로 정상 응답을 확인합니다.
 
 콘솔 안내에서 웹용 reCAPTCHA Enterprise 전환을 요구하면 기존 설정을 임의로 삭제하지 말고 안내 절차에 따라 새 공급자를 등록한 뒤 GitHub Pages 로그인을 다시 시험합니다.
 
@@ -37,7 +38,7 @@ Firebase Console 설정과 App Check 확인이 끝난 뒤 `src/config.js`에서 
 assistant: {
   provider: "gemini",
   enabled: true,
-  model: "gemini-2.5-flash-lite"
+  model: "gemini-3.5-flash-lite"
 }
 ```
 
@@ -82,6 +83,7 @@ Gemini Developer API 무료 등급에서는 입력 내용이 Google 제품 개�
 - [Firebase AI Logic](https://firebase.google.com/docs/ai-logic)
 - [웹 앱 시작하기](https://firebase.google.com/docs/ai-logic/get-started?platform=web)
 - [인증된 사용자 모드](https://firebase.google.com/docs/ai-logic/auth-mode)
+- [지원되는 모델](https://firebase.google.com/docs/ai-logic/models?hl=ko)
 - [프로덕션 체크리스트](https://firebase.google.com/docs/ai-logic/production-checklist)
 - [요금 안내](https://firebase.google.com/docs/ai-logic/pricing)
 

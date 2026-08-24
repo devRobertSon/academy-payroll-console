@@ -9,7 +9,6 @@ import {
 } from "./data/demo-data.js";
 import {
   createCombinedPolicy,
-  demoInsurancePolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
@@ -137,7 +136,7 @@ function loadDemoData() {
     entries: structuredClone(demoEntries),
     payrollRuns: structuredClone(demoPayrollRuns),
     taxPolicies: [structuredClone(ntsTaxPolicy2024)],
-    insurancePolicies: [structuredClone(demoInsurancePolicy)],
+    insurancePolicies: officialInsurancePolicies.map((policy) => structuredClone(policy)),
     overrides: structuredClone(demoOverrides),
     payslips: [],
     payslipReceipts: [],
@@ -839,14 +838,14 @@ function openInsurancePolicyModal() {
       <div class="form-field"><label for="insurance-version">버전 ID</label><input id="insurance-version" name="version" pattern="[A-Za-z0-9._-]+" placeholder="예: INSURANCE-2027-01" required /></div>
       <div class="form-field"><label for="insurance-name">기준명</label><input id="insurance-name" name="name" value="${e(current.name)}" required /></div>
       <div class="form-field"><label for="insurance-effective">시행일</label><input id="insurance-effective" name="effectiveFrom" type="date" required /></div>
-      <div class="form-field"><label for="pension-rate">국민연금 근로자 부담률 (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.nationalPension.rate) * 100)}" required /></div>
+      <div class="form-field"><label for="pension-rate">국민연금 근로자 부담률 (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.nationalPension.rate))}" required /></div>
       <div class="form-field"><label for="pension-minimum">국민연금 기준소득월액 하한</label><input id="pension-minimum" name="pensionMinimumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
       <div class="form-field"><label for="pension-maximum">국민연금 기준소득월액 상한</label><input id="pension-maximum" name="pensionMaximumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
-      <div class="form-field"><label for="health-rate">건강보험 근로자 부담률 (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.healthInsurance.rate) * 100)}" required /></div>
+      <div class="form-field"><label for="health-rate">건강보험 근로자 부담률 (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.healthInsurance.rate))}" required /></div>
       <div class="form-field"><label for="health-minimum">건강보험 근로자 부담 하한액</label><input id="health-minimum" name="healthMinimumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
       <div class="form-field"><label for="health-maximum">건강보험 근로자 부담 상한액</label><input id="health-maximum" name="healthMaximumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
-      <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.longTermCareRate) * 100)}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
-      <div class="form-field"><label for="employment-rate">고용보험 근로자 부담률 (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.employee.employmentInsurance.rate) * 100)}" required /></div>
+      <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.longTermCareRate))}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
+      <div class="form-field"><label for="employment-rate">고용보험 근로자 부담률 (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.employmentInsurance.rate))}" required /></div>
       <div class="form-field full"><label for="pension-source">국민연금 공식 근거 URL</label><input id="pension-source" name="pensionSourceUrl" type="url" value="${e(sourceUrl("nationalPension"))}" required /></div>
       <div class="form-field full"><label for="pension-bounds-source">국민연금 상·하한 공식 근거 URL</label><input id="pension-bounds-source" name="pensionBoundsSourceUrl" type="url" value="${e(sourceUrl("nationalPensionBounds"))}" required /></div>
       <div class="form-field full"><label for="health-source">건강보험 공식 근거 URL</label><input id="health-source" name="healthSourceUrl" type="url" value="${e(sourceUrl("healthInsurance"))}" required /></div>
@@ -1190,6 +1189,7 @@ function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="em
 function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", paid: "지급 완료" })[status] || status; }
 function roleLabel(role) { return ({ admin: "관리자", teacher: "선생님" })[role] || role; }
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
+function policyPercentInput(rate) { return Number(((Number(rate) || 0) * 100).toFixed(3)); }
 function taxProfileForTeacher(teacher) { return { dependentCount: 1, children8To20: 0, withholdingRatio: 1, ...(teacher.taxProfile || {}) }; }
 function slug(value) { return String(value).trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9가-힣-]/g, ""); }
 function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", custom: "기타 공제" }; }

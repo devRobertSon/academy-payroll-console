@@ -85,6 +85,15 @@ export async function createFirebaseStore(config) {
     return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
   }
 
+  async function loadOptionalCollection(path) {
+    try {
+      return await loadCollection(path);
+    } catch (error) {
+      console.warn(`${path} 컬렉션을 아직 사용할 수 없습니다. 최신 Firestore 규칙을 게시해 주세요.`, error);
+      return [];
+    }
+  }
+
   async function loadWorkspace(user) {
     if (user.role === "admin") {
       const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
@@ -97,11 +106,11 @@ export async function createFirebaseStore(config) {
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
         loadCollection("payslips"),
-        loadCollection("payslipVersions"),
+        loadOptionalCollection("payslipVersions"),
         loadCollection("payslipReceipts"),
         loadCollection("payslipDeliveries"),
-        loadCollection("payrollCancellations"),
-        loadCollection("accessRequests")
+        loadOptionalCollection("payrollCancellations"),
+        loadOptionalCollection("accessRequests")
       ]);
       return {
         teachers,
@@ -340,3 +349,4 @@ export async function createFirebaseStore(config) {
     recordPayslipDelivery
   };
 }
+

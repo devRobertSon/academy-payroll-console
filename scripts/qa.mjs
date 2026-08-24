@@ -14,6 +14,7 @@ await checkHtmlAssets();
 await checkRepositorySafety();
 await checkDeliverySecurity();
 await checkLifecycleSecurity();
+await checkHelpAssistantSafety();
 if (!staticOnly) await checkLocalPage();
 
 if (failures.length) {
@@ -32,6 +33,10 @@ async function checkRequiredFiles() {
     "src/config.js",
     "firestore.rules",
     "storage.rules",
+    "docs/user-guide.md",
+    "docs/ai-assistant-setup.md",
+    "src/data/help-content.js",
+    "src/lib/help-assistant.js",
     ".nojekyll"
   ];
   for (const path of required) {
@@ -124,6 +129,29 @@ async function checkLifecycleSecurity() {
   }
 }
 
+async function checkHelpAssistantSafety() {
+  const html = await readFile(join(root, "index.html"), "utf8");
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
+  const helper = await readFile(join(root, "src", "lib", "help-assistant.js"), "utf8");
+  const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  const config = await readFile(join(root, "src", "config.js"), "utf8");
+
+  for (const id of ["assistant-entry", "assistant-panel", "assistant-messages", "assistant-form"]) {
+    if (!html.includes(`id="${id}"`)) failures.push(`AI help surface is missing: #${id}`);
+  }
+  for (const safeguard of ["detectSensitiveInput", "buildGeminiPrompt", "buildLocalHelpAnswer"]) {
+    if (!app.includes(safeguard)) failures.push(`AI help safeguard is not connected: ${safeguard}`);
+  }
+  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "계좌번호"]) {
+    if (!helper.includes(label)) failures.push(`Sensitive input detector is missing: ${label}`);
+  }
+  if (!store.includes('import(sdk("ai"))') || !store.includes("GoogleAIBackend")) {
+    failures.push("Firebase AI Logic must be loaded through the Firebase SDK proxy.");
+  }
+  if (/gemini(?:Api)?Key\s*:/i.test(config)) failures.push("A Gemini API key must not be stored in public client configuration.");
+  if (app.includes("askHelpAssistant(state.data")) failures.push("Payroll workspace data must not be passed to the AI assistant.");
+}
+
 async function checkLocalPage() {
   const port = await reservePort();
   const server = spawn(process.execPath, [join(root, "scripts", "serve.mjs")], {
@@ -190,3 +218,4 @@ async function exists(path) {
     return false;
   }
 }
+

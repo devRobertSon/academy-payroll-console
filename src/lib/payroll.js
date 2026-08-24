@@ -203,7 +203,11 @@ function applyRateWithBounds(base, rule) {
     Number(rule.minimumBase || 0),
     Math.min(base, Number(rule.maximumBase || Number.MAX_SAFE_INTEGER))
   );
-  return won(boundedBase * Number(rule.rate));
+  const amount = won(boundedBase * Number(rule.rate));
+  return Math.max(
+    Number(rule.minimumAmount || 0),
+    Math.min(amount, Number(rule.maximumAmount || Number.MAX_SAFE_INTEGER))
+  );
 }
 
 export function summarizePayroll(payrolls) {
@@ -276,3 +280,4 @@ export function resolveRateRule(rules, entry) {
 function specificity(rule) {
   return Number(Boolean(rule.teacherId)) + Number(Boolean(rule.subjectId)) + Number(Boolean(rule.classId));
 }
+

@@ -15,6 +15,7 @@ await checkRepositorySafety();
 await checkDeliverySecurity();
 await checkLifecycleSecurity();
 await checkTeacherMonthlyPayroll();
+await checkTeacherSelfService();
 await checkHelpAssistantSafety();
 await checkAuthenticationCompatibility();
 if (!staticOnly) await checkLocalPage();
@@ -39,6 +40,7 @@ async function checkRequiredFiles() {
     "docs/ai-assistant-setup.md",
     "src/data/help-content.js",
     "src/lib/help-assistant.js",
+    "src/lib/teacher-self-service.js",
     ".nojekyll"
   ];
   for (const path of required) {
@@ -180,6 +182,35 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");
+  }
+}
+
+async function checkTeacherSelfService() {
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
+  const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  const rules = await readFile(join(root, "firestore.rules"), "utf8");
+  const guide = await readFile(join(root, "docs", "user-guide.md"), "utf8");
+
+  for (const surface of ["workHours", "renderWorkHours", "openTeacherSelfProfileModal", "teacherMonthlyInputs"]) {
+    if (!app.includes(surface)) failures.push(`Teacher self-service surface is missing: ${surface}`);
+  }
+  for (const operation of ["saveTeacherProfile", "saveTeacherMonthlyInput", "saveAdminMonthlyPayroll"]) {
+    if (!store.includes(`async function ${operation}`)) failures.push(`Teacher self-service store operation is missing: ${operation}`);
+  }
+  for (const safeguard of [
+    "match /teacherMonthlyInputs/{inputId}",
+    "request.resource.data.businessHours is map",
+    "monthIsEditable(request.resource.data.month)",
+    "request.resource.data.diff(resource.data).affectedKeys().hasOnly"
+  ]) {
+    if (!rules.includes(safeguard)) failures.push(`Teacher self-service security rule is missing: ${safeguard}`);
+  }
+  for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "businessRates", "insuranceSettings", "taxProfile"]) {
+    const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
+    if (teacherUpdateRule.includes(`'${adminOnlyField}'`)) failures.push(`Teacher self-update rule exposes admin-only field: ${adminOnlyField}`);
+  }
+  if (!guide.includes("선생님 정보와 수업시간 직접 입력")) {
+    failures.push("User guide is missing the teacher self-service workflow.");
   }
 }
 

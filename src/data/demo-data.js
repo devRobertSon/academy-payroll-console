@@ -202,6 +202,22 @@ export const demoOverrides = Object.fromEntries([
   }];
 }));
 
+export const demoTeacherMonthlyInputs = Object.fromEntries(Object.values(demoOverrides).map((override) => {
+  const teacher = demoTeachers.find((item) => item.id === override.teacherId);
+  const input = {
+    id: `${override.month}_${override.teacherId}`,
+    month: override.month,
+    teacherId: override.teacherId,
+    teacherUid: teacher?.authUid || "",
+    employeeWorkHours: override.teacherId === "teacher-03" ? 30 : 0,
+    businessHours: Object.fromEntries((override.businessWorkLines || [])
+      .filter((line) => line.rateId)
+      .map((line) => [line.rateId, line.hours])),
+    submittedAt: `${override.month}-25T09:00:00Z`
+  };
+  return [`${override.month}:${override.teacherId}`, input];
+}));
+
 function monthEntries(month, rows) {
   return rows.map((row, index) => ({
     id: `${month}-entry-${index + 1}`,

@@ -42,6 +42,13 @@ export function validateTeacherIdentity(birthDateCode, genderCode) {
   };
 }
 
+export function validateOptionalTeacherIdentity(birthDateCode, genderCode) {
+  const normalizedBirthDateCode = String(birthDateCode || "").trim();
+  const normalizedGenderCode = String(genderCode || "").trim();
+  if (!normalizedBirthDateCode && !normalizedGenderCode) return {};
+  return validateTeacherIdentity(normalizedBirthDateCode, normalizedGenderCode);
+}
+
 export function formatTeacherIdentity(teacher) {
   if (!/^\d{6}$/.test(String(teacher?.birthDateCode || ""))) return "";
   if (!/^[1-8]$/.test(String(teacher?.genderCode || ""))) return "";

@@ -286,6 +286,15 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .delivery-summary strong { display: block; margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; }
 .email-fallback { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.teacher-work-hours-form { display: grid; }
+.teacher-work-hour-row { min-height: 76px; display: grid; grid-template-columns: minmax(0, 1fr) 180px; align-items: center; gap: 20px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.teacher-work-hour-row:last-child { border-bottom: 0; }
+.teacher-work-hour-row > div:first-child { min-width: 0; }
+.teacher-work-hour-row strong, .teacher-work-hour-row > div:first-child span { display: block; }
+.teacher-work-hour-row strong { margin-bottom: 4px; font-size: 12px; }
+.teacher-work-hour-row > div:first-child span { color: var(--muted); font-size: 10px; }
+.teacher-work-hour-row .input-suffix { width: 180px; }
+.teacher-work-hour-row input { width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px; border: 0; background: transparent; }
 .form-field { display: grid; gap: 6px; }
 .form-field.full { grid-column: 1 / -1; }
 .form-field label { font-size: 11px; font-weight: 600; }
@@ -373,6 +382,8 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .metric { border-right: 0; border-bottom: 1px solid var(--line); }
   .metric:last-child { border-bottom: 0; }
   .demo-actions, .form-grid { grid-template-columns: 1fr; }
+  .teacher-work-hour-row { grid-template-columns: 1fr; gap: 10px; }
+  .teacher-work-hour-row .input-suffix { width: 100%; }
   .form-field.full { grid-column: auto; }
   .business-line-row.rate-row, .business-line-row.work-row { grid-template-columns: 1fr 36px; }
   .business-line-row > input, .business-line-row .input-suffix, .business-line-row .business-line-amount { grid-column: 1; }

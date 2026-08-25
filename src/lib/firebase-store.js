@@ -102,9 +102,9 @@ export async function createFirebaseStore(config) {
     return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
   }
 
-  async function loadOptionalCollection(path) {
+  async function loadOptionalCollection(path, constraints = []) {
     try {
-      return await loadCollection(path);
+      return await loadCollection(path, constraints);
     } catch (error) {
       console.warn(`${path} 컬렉션을 아직 사용할 수 없습니다. 최신 Firestore 규칙을 게시해 주세요.`, error);
       return [];
@@ -113,7 +113,7 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
+      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("rateRules"),
         loadCollection("workEntries"),
@@ -122,6 +122,7 @@ export async function createFirebaseStore(config) {
         loadCollection("insurancePolicies"),
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
+        loadOptionalCollection("teacherMonthlyInputs"),
         loadCollection("payslips"),
         loadOptionalCollection("payslipVersions"),
         loadCollection("payslipReceipts"),
@@ -137,6 +138,7 @@ export async function createFirebaseStore(config) {
         taxPolicies,
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
         payrollOverrides,
+        teacherMonthlyInputs,
         payslips,
         payslipVersions,
         payslipReceipts,
@@ -146,15 +148,23 @@ export async function createFirebaseStore(config) {
       };
     }
 
-    const payslips = await loadCollection("payslips", [
-      firestoreSdk.where("teacherUid", "==", user.uid),
-      firestoreSdk.where("status", "==", "published")
+    const [payslips, teacherMonthlyInputs, payrollRuns] = await Promise.all([
+      loadCollection("payslips", [
+        firestoreSdk.where("teacherUid", "==", user.uid),
+        firestoreSdk.where("status", "==", "published")
+      ]),
+      loadOptionalCollection("teacherMonthlyInputs", [
+        firestoreSdk.where("teacherUid", "==", user.uid)
+      ]),
+      loadOptionalCollection("payrollRuns")
     ]);
     const teacherSnap = user.teacherId
       ? await firestoreSdk.getDoc(firestoreSdk.doc(db, "teachers", user.teacherId))
       : null;
     return {
       payslips,
+      teacherMonthlyInputs,
+      payrollRuns,
       teachers: teacherSnap?.exists() ? [{ id: teacherSnap.id, ...teacherSnap.data() }] : []
     };
   }
@@ -232,6 +242,59 @@ export async function createFirebaseStore(config) {
       actorUid: auth.currentUser.uid,
       createdAt: updatedAt
     });
+    await batch.commit();
+  }
+
+  async function saveTeacherProfile(teacherId, profile) {
+    const batch = firestoreSdk.writeBatch(db);
+    const updatedAt = firestoreSdk.serverTimestamp();
+    batch.update(firestoreSdk.doc(db, "teachers", teacherId), {
+      ...profile,
+      updatedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    batch.update(firestoreSdk.doc(db, "users", auth.currentUser.uid), {
+      displayName: profile.name,
+      updatedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    await batch.commit();
+  }
+
+  async function saveTeacherMonthlyInput(input) {
+    const submittedAt = firestoreSdk.serverTimestamp();
+    await firestoreSdk.setDoc(firestoreSdk.doc(db, "teacherMonthlyInputs", input.id), {
+      teacherId: input.teacherId,
+      teacherUid: input.teacherUid,
+      month: input.month,
+      employeeWorkHours: input.employeeWorkHours,
+      businessHours: input.businessHours,
+      submittedAt,
+      updatedAt: submittedAt,
+      updatedBy: auth.currentUser.uid
+    }, { merge: true });
+  }
+
+  async function saveAdminMonthlyPayroll(override, monthlyInput = null) {
+    const batch = firestoreSdk.writeBatch(db);
+    const updatedAt = firestoreSdk.serverTimestamp();
+    batch.set(firestoreSdk.doc(db, "payrollOverrides", override.id), {
+      ...override,
+      updatedAt,
+      updatedBy: auth.currentUser.uid
+    }, { merge: true });
+    if (monthlyInput) {
+      batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", monthlyInput.id), {
+        teacherId: monthlyInput.teacherId,
+        teacherUid: monthlyInput.teacherUid,
+        month: monthlyInput.month,
+        employeeWorkHours: monthlyInput.employeeWorkHours,
+        businessHours: monthlyInput.businessHours,
+        submittedAt: updatedAt,
+        updatedAt,
+        updatedBy: auth.currentUser.uid
+      }, { merge: true });
+    }
     await batch.commit();
   }
 
@@ -378,6 +441,9 @@ export async function createFirebaseStore(config) {
     saveDocument,
     approveTeacherAccess,
     updateTeacher,
+    saveTeacherProfile,
+    saveTeacherMonthlyInput,
+    saveAdminMonthlyPayroll,
     publishPayrollRun,
     cancelPayrollRun,
     recordPayslipView,

@@ -9,7 +9,7 @@ GitHub Pages (공개 정적 파일)
   ├─ Gmail API: 관리자가 승인한 계정으로 PDF 첨부 발송
   └─ Cloud Firestore
        ├─ 관리자: 인사·4대보험·근로소득 월급·사업소득 시급과 시수 관리
-       └─ 선생님: 본인의 published 명세서만 조회
+       └─ 선생님: 기본 정보·월별 수업시간 입력, 본인의 published 명세서 조회
 ```
 
 GitHub에는 HTML, CSS, JavaScript, 보안 규칙과 가상 데이터만 둡니다. 급여 원본과 결과는 브라우저가 Firebase Web SDK로 Firestore에 직접 저장하며, 모든 요청은 Authentication UID와 Security Rules로 다시 검사합니다.
@@ -17,7 +17,7 @@ GitHub에는 HTML, CSS, JavaScript, 보안 규칙과 가상 데이터만 둡니�
 ## 월 급여 흐름
 
 1. 선생님의 보험별 가입·신고 기준액·적용 기간, 기본 근로소득 월급과 과목별 사업소득 시급을 저장합니다.
-2. 월 급여 입력에서 이번 달 근로소득과 사업소득 과목별 수업 시수를 확인하거나 수정합니다.
+2. 선생님이 별도 문서에 이번 달 근로소득과 사업소득 과목별 수업 시수만 입력하고, 관리자가 월 급여 입력에서 검토하거나 수정합니다.
 3. 사업소득은 각 과목의 시급 × 수업 시수를 합산하고 소득세 3%와 지방소득세 0.3%를 공제합니다.
 4. 한 선생님에게 두 소득을 모두 입력할 수 있으며, 사회보험은 가입 선생님의 근로소득 부분에만 적용합니다.
 5. 수업 여부와 관계없이 근로소득 월급을 포함해 세금과 사회보험 예상액을 계산합니다.
@@ -31,7 +31,9 @@ GitHub에는 HTML, CSS, JavaScript, 보안 규칙과 가상 데이터만 둡니�
 
 ## 보험과 소득 구분 처리
 
-선생님 문서의 `insuranceSettings`는 국민연금·건강보험·고용보험별 가입, 신고 기준액과 기간을 저장합니다. `insuranceEnrolled`는 과거 문서 호환용 요약값입니다. `defaultEmployeePay`는 수업 여부와 무관한 근로소득 월급이고, `businessRates`는 과목별 사업소득 시급입니다. 매월의 수업시간, 교통비·주차료·기타 지급과 계산 당시 기준은 `payrollOverrides`에 스냅샷으로 저장합니다. 기존 `employmentType`, `baseMonthlyPay`, `grossPay`, `businessGrossPay` 문서는 화면에서 자동 호환해 읽습니다.
+선생님 문서의 `insuranceSettings`는 국민연금·건강보험·고용보험별 가입, 신고 기준액과 기간을 저장합니다. `insuranceEnrolled`는 과거 문서 호환용 요약값입니다. `defaultEmployeePay`는 수업 여부와 무관한 근로소득 월급이고, `businessRates`는 과목별 사업소득 시급입니다. 선생님이 쓰는 `teacherMonthlyInputs`에는 시수만 저장하며, 급여 계산 때 관리자 시급과 결합합니다. 교통비·주차료·기타 지급과 계산 당시 관리자 기준은 `payrollOverrides`에 저장합니다. 기존 `employmentType`, `baseMonthlyPay`, `grossPay`, `businessGrossPay` 문서는 화면에서 자동 호환해 읽습니다.
+
+선생님 자기정보 수정은 `name`, `phone`, 생년월일 6자리, 성별번호 1자리와 담당 과목만 허용합니다. 이메일, UID, 계정 상태, 급여·보험·세금 필드는 브라우저 UI와 Firestore Security Rules 양쪽에서 관리자 전용입니다. 월별 시수 문서는 본인 UID와 teacherId가 일치하고 급여월이 확정 전일 때만 쓸 수 있습니다.
 
 세금과 사회보험 정책도 분리합니다. `taxPolicies`는 국세청 원천징수 기준과 근로소득 간이세액표를, `insurancePolicies`는 관련 공단의 사회보험 기준을 시행일별 버전으로 보관합니다. 월 계산 시 유효한 최신 버전을 선택하고 확정본에는 두 버전과 계산 결과를 함께 스냅샷으로 저장합니다.
 

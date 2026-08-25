@@ -6,7 +6,8 @@
 |---|---|---|
 | `users` | 전체 관리 | 본인 문서 조회 |
 | `accessRequests` | 승인 요청 조회·처리 | 미등록 본인 요청 생성·조회 |
-| `teachers` | 관리 | 연결된 본인 조회 |
+| `teachers` | 관리 | 연결된 본인 조회, 허용된 기본 정보 수정 |
+| `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간 조회·수정 |
 | `rateRules` | 관리 | 차단 |
 | `workEntries` | 관리 | 차단 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
@@ -44,8 +45,8 @@
   "name": "성명",
   "email": "이메일",
   "phone": "연락처",
-  "birthDateCode": "주민등록번호 앞 생년월일 6자리",
-  "genderCode": "주민등록번호 뒷자리 첫 숫자 1자리",
+  "birthDateCode": "주민등록번호 앞 생년월일 6자리, 최초 등록 때 생략 가능",
+  "genderCode": "주민등록번호 뒷자리 첫 숫자 1자리, 최초 등록 때 생략 가능",
   "status": "active",
   "insuranceEnrolled": true,
   "insuranceSettings": {
@@ -76,6 +77,28 @@
 계좌, 전체 주민등록번호, 주소는 현재 앱에 저장하지 않습니다. 회계 확인에는 `birthDateCode` 6자리와 `genderCode` 1자리만 사용합니다. 이 두 필드도 개인정보이므로 관리자와 본인 외에는 읽을 수 없도록 Firestore 규칙을 유지하고, CSV는 안전한 채널로 전달합니다. Firestore 규칙은 신규 선생님 문서에서 두 필드의 형식을 검사하며 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 같은 전체 번호 필드의 저장을 거부합니다.
 
 `insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험을 각각 가입 여부, 기본 신고 기준액과 적용 기간으로 관리합니다. `insuranceEnrolled`는 과거 데이터 호환용 요약값입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 같은 선생님에게 두 소득을 함께 둘 수 있습니다. 기존 `employmentType`, `baseMonthlyPay`, 단일 `insuranceEnrolled` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
+
+선생님 본인은 `name`, `phone`, `birthDateCode`, `genderCode`, `subjects`만 수정할 수 있습니다. `email`, `authUid`, `status`, 보험 가입·신고 기준액, 월급, 시급, 교통비 기준, 계약·지급일과 원천징수 정보는 관리자만 수정할 수 있습니다.
+
+### `teacherMonthlyInputs/{yyyy-mm_teacherId}`
+
+```json
+{
+  "month": "2026-08",
+  "teacherId": "teacherId",
+  "teacherUid": "Firebase Authentication UID",
+  "employeeWorkHours": 40,
+  "businessHours": {
+    "essay": 10,
+    "english": 24
+  },
+  "submittedAt": "server timestamp",
+  "updatedAt": "server timestamp",
+  "updatedBy": "teacher or admin UID"
+}
+```
+
+이 문서에는 급여액, 시급, 소득 구분이나 보험 정보가 없습니다. `businessHours`의 키는 관리자가 `teachers.businessRates`에 등록한 시급 항목 ID이고 값만 선생님이 입력합니다. 계산 시 등록된 ID의 시수만 사용하며 알 수 없는 키는 무시합니다. 선생님은 본인 UID·teacherId의 문서만 읽고 쓸 수 있고, `payrollRuns/{month}`가 `published`이면 쓰기가 거부됩니다.
 
 ### `accessRequests/{uid}`
 
@@ -165,7 +188,7 @@
 
 ### `payrollOverrides/{yyyy-mm_teacherId}`
 
-선생님별 이번 달 근로소득 월급, 사업소득 과목·시급·수업 시수 스냅샷, 변경 메모, 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
+선생님별 이번 달 근로소득 월급, 사업소득 과목·시급 스냅샷, 변경 메모, 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 새 입력 흐름의 수업 시수는 `teacherMonthlyInputs`에서 가져오며 기존 문서의 수업 시수는 호환용으로 계속 읽습니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
 
 ```json
 {

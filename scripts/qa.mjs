@@ -71,6 +71,12 @@ async function checkHtmlAssets() {
   if (!css.includes("--login-brand: #2563a6") || !css.includes("background: #173f6b")) {
     failures.push("Login page must use the blue color treatment.");
   }
+  if (!css.includes("--brand: #2563a6") || !css.includes("--brand-pale: #e4effb")) {
+    failures.push("Admin workspace must use the blue color treatment.");
+  }
+  for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
+    if (css.includes(legacyGreen)) failures.push(`Legacy green workspace color remains: ${legacyGreen}`);
+  }
 }
 
 async function checkRepositorySafety() {

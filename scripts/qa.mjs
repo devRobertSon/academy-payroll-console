@@ -192,6 +192,7 @@ async function checkTeacherMonthlyPayroll() {
     if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
   }
   if (app.includes("사업 시수")) failures.push("Use '수업 시수' instead of the incorrect '사업 시수' label.");
+  if (app.includes("수업료")) failures.push("Use '강사료' for teacher compensation instead of '수업료'.");
   if (!app.includes('<th class="numeric">수업 시수</th>')) failures.push("Monthly payroll table is missing the class-hours label.");
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   if (!rules.includes("excludesResidentRegistrationNumber")) {

@@ -41,6 +41,7 @@ import {
   TREATMENT_LABELS
 } from "./lib/payroll.js";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
+import { formatTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js";
 
 const state = {
   user: null,
@@ -428,7 +429,7 @@ function renderTeachers() {
       </section>
       ${selected ? `<aside class="detail-panel">
         <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><button class="icon-button" type="button" title="선생님 정보 수정" aria-label="${e(selected.name)} 정보 수정" data-edit-teacher><i data-lucide="pencil"></i></button></div>
-        <div class="detail-block"><h3>연락·회계 정보</h3><dl class="definition-list"><div><dt>연락처</dt><dd>${e(selected.phone || "미등록")}</dd></div><div><dt>회계사 식별번호</dt><dd>${e(selected.accountingReference || "미등록")}</dd></div><div><dt>주민등록번호</dt><dd>앱에 저장하지 않음</dd></div></dl></div>
+        <div class="detail-block"><h3>연락·식별 정보</h3><dl class="definition-list"><div><dt>연락처</dt><dd>${e(selected.phone || "미등록")}</dd></div><div><dt>생년월일·성별번호</dt><dd>${e(formatTeacherIdentity(selected) || "미등록")}</dd></div><div><dt>전체 주민등록번호</dt><dd>저장하지 않음</dd></div></dl></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
         ${teacherPaySettings(selected).insuranceEnrolled || teacherPaySettings(selected).defaultEmployeePay > 0 ? `<div class="detail-block"><div class="detail-title-row"><h3>근로소득 원천징수 정보</h3><button class="icon-button" type="button" title="원천징수 정보 수정" aria-label="${e(selected.name)} 원천징수 정보 수정" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>공제대상가족</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}명</dd></div><div><dt>8~20세 자녀</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}명</dd></div><div><dt>원천징수 비율</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>` : `<div class="detail-block"><h3>원천징수</h3><p class="form-help">사업소득 지급액에는 사업소득 원천징수 기준이 적용됩니다.</p></div>`}
@@ -476,7 +477,7 @@ function renderLedger() {
     <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" /></div>
     <section class="content-section"><div class="section-heading"><div><h2>${e(appConfig.academyName)} 급여내역서</h2><p>기장 전달용 · ${formatMonth(state.month)}</p></div></div>
     <div class="data-surface table-scroll">${ledgerTable(payrolls, summary)}</div></section>
-    <div class="notice warning"><i data-lucide="shield-alert"></i><span>CSV 파일에는 급여와 연락처가 포함되지만 주민등록번호는 포함되지 않습니다. 주민등록번호는 회계사의 별도 보안 명부에서 식별번호로 결합하고, 이 파일도 공개 저장소나 개인 메일에 올리지 마세요.</span></div>
+    <div class="notice warning"><i data-lucide="shield-alert"></i><span>CSV 파일에는 급여, 연락처와 생년월일·성별번호가 포함됩니다. 전체 주민등록번호는 포함되지 않지만 개인정보이므로 공개 저장소나 개인 메일에 올리지 마세요.</span></div>
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='print']").addEventListener("click", () => window.print());
@@ -855,11 +856,11 @@ function payrollTable(items) {
 }
 
 function ledgerTable(items, summary) {
-  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>연락처</th><th>회계사 식별번호</th><th class="numeric">신고액</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 세액공제</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">주차료</th><th class="numeric">기타</th><th class="numeric">추가 지급 원천징수</th><th class="numeric">세액공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">지급액</th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
+  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>연락처</th><th>생년월일·성별번호</th><th class="numeric">신고액</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 세액공제</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">주차료</th><th class="numeric">기타</th><th class="numeric">추가 지급 원천징수</th><th class="numeric">세액공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">지급액</th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     const withholdingTotal = report.lectureWithholding + report.additionalPaymentWithholding;
-    return `<tr><td>${e(teacher.name)}</td><td>${e(teacher.phone || "")}</td><td>${e(teacher.accountingReference || "")}</td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
+    return `<tr><td>${e(teacher.name)}</td><td>${e(teacher.phone || "")}</td><td>${e(formatTeacherIdentity(teacher))}</td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
   }).join("")}<tr class="ledger-total"><td colspan="3"><strong>합계</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="18"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
 }
 
@@ -1023,14 +1024,6 @@ function readAdditionalEarnings(containerSelector) {
       insuranceCovered: row.querySelector("[data-additional-insurance]").checked
     };
   }).filter(Boolean);
-}
-
-function validateAccountingReference(value) {
-  const normalized = String(value || "").trim();
-  if (/^\d{6}-?\d{7}$/.test(normalized)) {
-    throw new Error("주민등록번호는 저장하지 마세요. 회계사와 공유하는 내부 식별번호만 입력해 주세요.");
-  }
-  return normalized;
 }
 
 function businessRateEditorHtml(rates, containerId) {
@@ -1197,7 +1190,8 @@ function openTeacherModal() {
       <div class="form-field"><label for="teacher-name">이름</label><input id="teacher-name" name="name" required /></div>
       <div class="form-field"><label for="teacher-email">Google 이메일</label><input id="teacher-email" name="email" type="email" required /></div>
       <div class="form-field"><label for="teacher-phone">연락처</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-accounting-reference">회계사 식별번호</label><input id="teacher-accounting-reference" name="accountingReference" maxlength="30" placeholder="예: T-001" /><span class="form-help">주민등록번호가 아닌 회계용 내부 번호만 입력합니다.</span></div>
+      <div class="form-field"><label for="teacher-birth-date-code">생년월일 6자리</label><input id="teacher-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="예: 900101" required /><span class="form-help">주민등록번호 앞 6자리만 입력합니다.</span></div>
+      <div class="form-field"><label for="teacher-gender-code">성별번호 1자리</label><input id="teacher-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" placeholder="예: 1" required /><span class="form-help">뒷자리의 첫 숫자만 입력합니다. 나머지 6자리는 입력하지 않습니다.</span></div>
       ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
       <div class="form-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="0" required /></div>
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
@@ -1218,12 +1212,13 @@ function openTeacherModal() {
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((teacher) => normalizeEmail(teacher.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
     const insuranceSettings = readInsuranceSettings(form, "teacher");
+    const identity = validateTeacherIdentity(data.birthDateCode, data.genderCode);
     const teacher = {
       id: crypto.randomUUID(),
       name: data.name.trim(),
       email,
       phone: data.phone.trim(),
-      accountingReference: validateAccountingReference(data.accountingReference),
+      ...identity,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
       defaultEmployeePay: Number(data.defaultEmployeePay),
@@ -1335,7 +1330,8 @@ function openTeacherEditModal(teacher) {
       <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
       <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
       <div class="form-field"><label for="teacher-edit-phone">연락처</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-edit-accounting-reference">회계사 식별번호</label><input id="teacher-edit-accounting-reference" name="accountingReference" maxlength="30" value="${e(teacher.accountingReference || "")}" placeholder="예: T-001" /><span class="form-help">주민등록번호가 아닌 회계용 내부 번호만 입력합니다.</span></div>
+      <div class="form-field"><label for="teacher-edit-birth-date-code">생년월일 6자리</label><input id="teacher-edit-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" placeholder="예: 900101" required /><span class="form-help">주민등록번호 앞 6자리만 입력합니다.</span></div>
+      <div class="form-field"><label for="teacher-edit-gender-code">성별번호 1자리</label><input id="teacher-edit-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" placeholder="예: 1" required /><span class="form-help">뒷자리의 첫 숫자만 입력합니다. 나머지 6자리는 저장하지 않습니다.</span></div>
       ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="${e(paySettings.defaultEmployeePay)}" required /></div>
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
@@ -1357,12 +1353,14 @@ function openTeacherEditModal(teacher) {
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((item) => item.id !== teacher.id && normalizeEmail(item.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
     const insuranceSettings = readInsuranceSettings(form, "teacher-edit");
+    const identity = validateTeacherIdentity(data.birthDateCode, data.genderCode);
+    const { accountingReference: _legacyAccountingReference, ...teacherWithoutLegacyReference } = teacher;
     const updated = {
-      ...teacher,
+      ...teacherWithoutLegacyReference,
       name: data.name.trim(),
       email,
       phone: data.phone.trim(),
-      accountingReference: validateAccountingReference(data.accountingReference),
+      ...identity,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
       defaultEmployeePay: Number(data.defaultEmployeePay),
@@ -1380,6 +1378,7 @@ function openTeacherEditModal(teacher) {
       taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
     };
     if (state.store) await state.store.updateTeacher(updated);
+    delete teacher.accountingReference;
     Object.assign(teacher, updated);
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
     renderTeachers();
@@ -1876,12 +1875,12 @@ function openModal(title, body, submitLabel, onSubmit) {
 function closeModal() { elements.modalRoot.innerHTML = ""; }
 
 function exportLedger() {
-  const rows = [["급여월", "성명", "연락처", "회계사 식별번호", "신고액", "수업시간", "강사료", "강사료 세액공제", "교통 횟수", "교통비", "주차료", "기타", "추가 지급 원천징수", "세액공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "지급액"]];
+  const rows = [["급여월", "성명", "연락처", "생년월일·성별번호", "신고액", "수업시간", "강사료", "강사료 세액공제", "교통 횟수", "교통비", "주차료", "기타", "추가 지급 원천징수", "세액공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "지급액"]];
   payrollsForMonth(state.month).forEach(({ teacher, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     rows.push([
-      state.month, teacher.name, teacher.phone || "", teacher.accountingReference || "",
+      state.month, teacher.name, teacher.phone || "", formatTeacherIdentity(teacher),
       report.reportedGross, report.classHours, report.lectureFeeGross, report.lectureWithholding,
       report.transportTrips, report.transportAmount, report.parkingAmount, report.otherPaymentAmount,
       report.additionalPaymentWithholding, report.lectureWithholding + report.additionalPaymentWithholding,

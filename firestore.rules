@@ -43,6 +43,24 @@ service cloud.firestore {
       ]);
     }
 
+    function hasValidTeacherIdentity(data) {
+      return data.birthDateCode is string
+        && data.birthDateCode.matches('^[0-9]{6}$')
+        && data.genderCode is string
+        && data.genderCode.matches('^[1-8]$');
+    }
+
+    function preservesLegacyTeacherIdentity(data) {
+      return !resource.data.keys().hasAny(['birthDateCode', 'genderCode'])
+        && !data.keys().hasAny(['birthDateCode', 'genderCode']);
+    }
+
+    function doesNotAddAccountingReference(data) {
+      return !data.keys().hasAny(['accountingReference'])
+        || (resource.data.keys().hasAny(['accountingReference'])
+          && data.accountingReference == resource.data.accountingReference);
+    }
+
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
@@ -77,9 +95,18 @@ service cloud.firestore {
     match /teachers/{teacherId} {
       allow get: if isAdmin() || isOwnTeacher(teacherId);
       allow list: if isAdmin();
-      allow create, update: if isAdmin()
+      allow create: if isAdmin()
         && request.resource.data.name is string
         && request.resource.data.status in ['active', 'inactive']
+        && hasValidTeacherIdentity(request.resource.data)
+        && !request.resource.data.keys().hasAny(['accountingReference'])
+        && excludesResidentRegistrationNumber(request.resource.data);
+      allow update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.status in ['active', 'inactive']
+        && (hasValidTeacherIdentity(request.resource.data)
+          || preservesLegacyTeacherIdentity(request.resource.data))
+        && doesNotAddAccountingReference(request.resource.data)
         && excludesResidentRegistrationNumber(request.resource.data);
       allow delete: if false;
     }

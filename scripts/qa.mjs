@@ -162,12 +162,18 @@ async function checkTeacherMonthlyPayroll() {
   for (const reportField of ["lectureWithholding", "additionalPaymentWithholding", "healthAndLongTermCare", "insuranceBases", "unconfirmedEarningLines"]) {
     if (!payroll.includes(reportField)) failures.push(`Accounting payroll report field is missing: ${reportField}`);
   }
-  for (const heading of ["회계사 식별번호", "강사료 세액공제", "건강+요양", "보험료 합계"]) {
+  for (const heading of ["생년월일·성별번호", "강사료 세액공제", "건강+요양", "보험료 합계"]) {
     if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
   }
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   if (!rules.includes("excludesResidentRegistrationNumber")) {
     failures.push("Firestore rules must reject resident-registration-number fields.");
+  }
+  if (!rules.includes("hasValidTeacherIdentity") || !app.includes("validateTeacherIdentity")) {
+    failures.push("Teacher birth-date and gender-code validation must be enforced in UI and Firestore rules.");
+  }
+  if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
+    failures.push("Legacy accountant reference input must not remain in the admin UI.");
   }
 }
 
@@ -184,7 +190,7 @@ async function checkHelpAssistantSafety() {
   for (const safeguard of ["detectSensitiveInput", "buildGeminiPrompt", "buildLocalHelpAnswer"]) {
     if (!app.includes(safeguard)) failures.push(`AI help safeguard is not connected: ${safeguard}`);
   }
-  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "계좌번호"]) {
+  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "생년월일·성별번호", "계좌번호"]) {
     if (!helper.includes(label)) failures.push(`Sensitive input detector is missing: ${label}`);
   }
   if (!store.includes('import(sdk("ai"))') || !store.includes("GoogleAIBackend")) {

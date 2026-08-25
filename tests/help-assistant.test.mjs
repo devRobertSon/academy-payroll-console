@@ -17,6 +17,10 @@ test("이메일과 주민등록번호 형태를 외부 AI 전송 전에 감지�
   assert.deepEqual(detected, ["이메일 주소", "주민등록번호"]);
 });
 
+test("생년월일과 성별번호 조합도 외부 AI 전송 전에 감지한다", () => {
+  assert.deepEqual(detectSensitiveInput("선생님 정보는 900101-1입니다"), ["생년월일·성별번호"]);
+});
+
 test("개인정보가 포함된 질문에는 로컬에서도 삭제 안내를 반환한다", () => {
   const answer = buildLocalHelpAnswer("010-1234-5678로 명세서를 보내 줘", helpArticles);
   assert.match(answer, /AI 도움말로 보내지 않았습니다/);
@@ -28,3 +32,4 @@ test("Gemini 프롬프트에는 현재 화면과 관련 설명서만 포함한�
   assert.match(prompt, /선생님별 월 급여 입력/);
   assert.doesNotMatch(prompt, /teacher@example.com/);
 });
+

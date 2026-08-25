@@ -44,7 +44,8 @@
   "name": "성명",
   "email": "이메일",
   "phone": "연락처",
-  "accountingReference": "회계사 보안 명부와 결합할 내부 식별번호",
+  "birthDateCode": "주민등록번호 앞 생년월일 6자리",
+  "genderCode": "주민등록번호 뒷자리 첫 숫자 1자리",
   "status": "active",
   "insuranceEnrolled": true,
   "insuranceSettings": {
@@ -72,7 +73,7 @@
 }
 ```
 
-계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. Firestore 규칙도 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 필드의 저장을 거부합니다. 회계사는 별도의 암호화된 주민등록번호 명부에서 `accountingReference`로 결합해야 합니다.
+계좌, 전체 주민등록번호, 주소는 현재 앱에 저장하지 않습니다. 회계 확인에는 `birthDateCode` 6자리와 `genderCode` 1자리만 사용합니다. 이 두 필드도 개인정보이므로 관리자와 본인 외에는 읽을 수 없도록 Firestore 규칙을 유지하고, CSV는 안전한 채널로 전달합니다. Firestore 규칙은 신규 선생님 문서에서 두 필드의 형식을 검사하며 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 같은 전체 번호 필드의 저장을 거부합니다.
 
 `insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험을 각각 가입 여부, 기본 신고 기준액과 적용 기간으로 관리합니다. `insuranceEnrolled`는 과거 데이터 호환용 요약값입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 같은 선생님에게 두 소득을 함께 둘 수 있습니다. 기존 `employmentType`, `baseMonthlyPay`, 단일 `insuranceEnrolled` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
 

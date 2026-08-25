@@ -207,8 +207,10 @@ export async function createFirebaseStore(config) {
   async function updateTeacher(teacher) {
     const batch = firestoreSdk.writeBatch(db);
     const updatedAt = firestoreSdk.serverTimestamp();
+    const { accountingReference: _legacyAccountingReference, ...teacherData } = teacher;
     batch.set(firestoreSdk.doc(db, "teachers", teacher.id), {
-      ...teacher,
+      ...teacherData,
+      accountingReference: firestoreSdk.deleteField(),
       updatedAt,
       updatedBy: auth.currentUser.uid
     }, { merge: true });

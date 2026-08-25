@@ -1,4 +1,5 @@
 import { GMAIL_SEND_SCOPE } from "./gmail.js";
+import { WORK_HOURS_NOTIFICATION_TYPE, workHoursNotificationId } from "./admin-notifications.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -113,7 +114,7 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
+      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("rateRules"),
         loadCollection("workEntries"),
@@ -123,6 +124,7 @@ export async function createFirebaseStore(config) {
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
         loadOptionalCollection("teacherMonthlyInputs"),
+        loadOptionalCollection("adminNotifications"),
         loadCollection("payslips"),
         loadOptionalCollection("payslipVersions"),
         loadCollection("payslipReceipts"),
@@ -139,6 +141,7 @@ export async function createFirebaseStore(config) {
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
         payrollOverrides,
         teacherMonthlyInputs,
+        adminNotifications,
         payslips,
         payslipVersions,
         payslipReceipts,
@@ -262,8 +265,9 @@ export async function createFirebaseStore(config) {
   }
 
   async function saveTeacherMonthlyInput(input) {
+    const batch = firestoreSdk.writeBatch(db);
     const submittedAt = firestoreSdk.serverTimestamp();
-    await firestoreSdk.setDoc(firestoreSdk.doc(db, "teacherMonthlyInputs", input.id), {
+    batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", input.id), {
       teacherId: input.teacherId,
       teacherUid: input.teacherUid,
       month: input.month,
@@ -273,6 +277,25 @@ export async function createFirebaseStore(config) {
       updatedAt: submittedAt,
       updatedBy: auth.currentUser.uid
     }, { merge: true });
+    batch.set(firestoreSdk.doc(db, "adminNotifications", workHoursNotificationId(input.month, input.teacherId)), {
+      type: WORK_HOURS_NOTIFICATION_TYPE,
+      teacherId: input.teacherId,
+      teacherUid: input.teacherUid,
+      month: input.month,
+      status: "unread",
+      submittedAt,
+      readAt: null,
+      readBy: null
+    }, { merge: true });
+    await batch.commit();
+  }
+
+  async function markAdminNotificationRead(notificationId) {
+    await firestoreSdk.updateDoc(firestoreSdk.doc(db, "adminNotifications", notificationId), {
+      status: "read",
+      readAt: firestoreSdk.serverTimestamp(),
+      readBy: auth.currentUser.uid
+    });
   }
 
   async function saveAdminMonthlyPayroll(override, monthlyInput = null) {
@@ -443,6 +466,7 @@ export async function createFirebaseStore(config) {
     updateTeacher,
     saveTeacherProfile,
     saveTeacherMonthlyInput,
+    markAdminNotificationRead,
     saveAdminMonthlyPayroll,
     publishPayrollRun,
     cancelPayrollRun,
@@ -453,4 +477,3 @@ export async function createFirebaseStore(config) {
     askHelpAssistant
   };
 }
-

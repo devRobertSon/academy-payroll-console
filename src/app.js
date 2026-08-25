@@ -1,2251 +1,765 @@
-import { appConfig } from "./config.js?v=20260826-ledger-r5";
-import { helpArticles } from "./data/help-content.js?v=20260826-ledger-r5";
-import {
-  demoAccessRequests,
-  demoEntries,
-  demoOverrides,
-  demoPayrollRuns,
-  demoRateRules,
-  demoTeacherMonthlyInputs,
-  demoTeachers,
-  demoUsers
-} from "./data/demo-data.js?v=20260826-ledger-r5";
-import {
-  createCombinedPolicy,
-  ntsTaxPolicy2024,
-  officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-ledger-r5";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-ledger-r5";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
-import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
-import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js";
-import {
-  artifactRevision,
-  currentArtifactForRevision,
-  matchingTeachersForAccessRequest,
-  nextPayrollRevision,
-  normalizeEmail,
-  payslipId,
-  payslipVersionId,
-  validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js";
-import {
-  calculatePayroll,
-  createMonthlyEarningLines,
-  getMonthlyPayAmounts,
-  getTeacherPaySettings,
-  INSURANCE_LABELS,
-  parseEmploymentTaxTableRows,
-  resolveEffectivePolicy,
-  summarizePayroll,
-  TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-ledger-r5";
-import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-ledger-r5";
-import {
-  buildBusinessHours,
-  businessHoursFromWorkLines,
-  mergeMonthlyWorkInput,
-  monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-ledger-r5";
-
-const state = {
-  user: null,
-  view: "dashboard",
-  month: currentCalendarMonth(),
-  search: "",
-  selectedTeacherId: null,
-  selectedPayslipMonth: currentCalendarMonth(),
-  helpSearch: "",
-  assistantMessages: [],
-  assistantBusy: false,
-  store: null,
-  data: {
-    teachers: [],
-    rateRules: [],
-    entries: [],
-    payrollRuns: [],
-    taxPolicies: [],
-    insurancePolicies: [],
-    overrides: {},
-    monthlyWorkInputs: {},
-    payslips: [],
-    payslipVersions: [],
-    payslipReceipts: [],
-    payslipDeliveries: [],
-    payrollCancellations: [],
-    accessRequests: []
-  }
-};
-
-const elements = {
-  login: document.querySelector("#login-view"),
-  workspace: document.querySelector("#workspace"),
-  loginStatus: document.querySelector("#login-status"),
-  demoLogin: document.querySelector("#demo-login"),
-  nav: document.querySelector("#main-nav"),
-  pageTitle: document.querySelector("#page-title"),
-  pageEyebrow: document.querySelector("#page-eyebrow"),
-  topbarActions: document.querySelector("#topbar-actions"),
-  content: document.querySelector("#page-content"),
-  assistantEntry: document.querySelector("#assistant-entry"),
-  helpNavButton: document.querySelector("#help-nav-button"),
-  assistantToggle: document.querySelector("#assistant-toggle"),
-  assistantPanel: document.querySelector("#assistant-panel"),
-  assistantClose: document.querySelector("#assistant-close"),
-  assistantMessages: document.querySelector("#assistant-messages"),
-  assistantStatus: document.querySelector("#assistant-status"),
-  assistantForm: document.querySelector("#assistant-form"),
-  assistantInput: document.querySelector("#assistant-input"),
-  modalRoot: document.querySelector("#modal-root"),
-  toastRoot: document.querySelector("#toast-root")
-};
-
-const adminNav = [
-  ["ì—…ë¬´", "dashboard", "layout-dashboard", "ê¸‰ì—¬ ëŒ€ì‹œë³´ë“œ"],
-  ["ì—…ë¬´", "payrollInputs", "wallet-cards", "ì›” ê¸‰ì—¬ ì…ë ¥"],
-  ["ê´€ë¦¬", "teachers", "users-round", "ì„ ìƒë‹˜ ê´€ë¦¬"],
-  ["ë³´ê³ ", "ledger", "notebook-tabs", "ì›”ë³„ ê¸‰ì—¬ë‚´ì—­ì„œ"],
-  ["ì‹œìŠ¤í…œ", "settings", "settings", "ê³„ì‚° Â· ë³´ì•ˆ ì„¤ì •"]
-];
-
-const teacherNav = [
-  ["ë‚´ ì—…ë¬´", "workHours", "calendar-clock", "ìˆ˜ì—…ì‹œê°„ ì…ë ¥"],
-  ["ë‚´ ê¸‰ì—¬", "payslips", "file-text", "ê¸‰ì—¬ëª…ì„¸ì„œ"],
-  ["ë‚´ ì •ë³´", "profile", "circle-user-round", "ë“±ë¡ ì •ë³´"]
-];
-
-await bootstrap();
-
-async function bootstrap() {
-  document.querySelectorAll("#login-academy-name, #sidebar-academy-name").forEach((node) => {
-    node.textContent = appConfig.academyName;
-  });
-
-  bindStaticEvents();
-  if (appConfig.demoMode) {
-    loadDemoData();
-    elements.demoLogin.hidden = false;
-  } else {
-    try {
-      state.store = await createFirebaseStore(appConfig.firebase);
-      const restored = await state.store.restoreSession();
-      if (restored) await openWorkspace(restored);
-    } catch (error) {
-      setLoginStatus(error.message || "Firebase ì—°ê²°ì„ í™•ì¸í•´ ì£¼ì„¸ìš”.");
-    }
-  }
-  refreshIcons();
-}
-
-function bindStaticEvents() {
-  document.querySelector("#google-login").addEventListener("click", async () => {
-    if (appConfig.demoMode) {
-      setLoginStatus("í˜„ì¬ ë°ëª¨ ëª¨ë“œì…ë‹ˆë‹¤. ì•„ë˜ ê´€ë¦¬ì ë˜ëŠ” ì„ ìƒë‹˜ ë°ëª¨ë¥¼ ì„ íƒí•´ ì£¼ì„¸ìš”.");
-      return;
-    }
-    try {
-      setLoginStatus("Google ê³„ì •ì„ í™•ì¸í•˜ê³  ìˆìŠµë‹ˆë‹¤.", false);
-      await openWorkspace(await state.store.signIn());
-    } catch (error) {
-      setLoginStatus(error.message || "ë¡œê·¸ì¸í•˜ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-    }
-  });
-
-  document.querySelectorAll("[data-demo-role]").forEach((button) => {
-    button.addEventListener("click", () => openWorkspace(demoUsers[button.dataset.demoRole]));
-  });
-  document.querySelector("#logout-button").addEventListener("click", logout);
-  document.querySelector("#mobile-menu").addEventListener("click", () => elements.workspace.classList.toggle("menu-open"));
-  elements.assistantToggle.addEventListener("click", openAssistant);
-  elements.helpNavButton.addEventListener("click", () => {
-    state.view = "help";
-    elements.workspace.classList.remove("menu-open");
-    render();
-    window.scrollTo({ top: 0, left: 0 });
-  });
-  elements.assistantClose.addEventListener("click", closeAssistant);
-  elements.assistantForm.addEventListener("submit", submitAssistantQuestion);
-  elements.assistantMessages.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-assistant-question]");
-    if (!button) return;
-    elements.assistantInput.value = button.dataset.assistantQuestion;
-    elements.assistantForm.requestSubmit();
-  });
-  elements.nav.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-view]");
-    if (!button) return;
-    state.view = button.dataset.view;
-    elements.workspace.classList.remove("menu-open");
-    render();
-    window.scrollTo({ top: 0, left: 0 });
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    if (!elements.assistantPanel.hidden) closeAssistant();
-    else closeModal();
-  });
-}
-
-function loadDemoData() {
-  state.data = {
-    teachers: structuredClone(demoTeachers),
-    rateRules: structuredClone(demoRateRules),
-    entries: structuredClone(demoEntries),
-    payrollRuns: structuredClone(demoPayrollRuns),
-    taxPolicies: [structuredClone(ntsTaxPolicy2024)],
-    insurancePolicies: officialInsurancePolicies.map((policy) => structuredClone(policy)),
-    overrides: structuredClone(demoOverrides),
-    monthlyWorkInputs: structuredClone(demoTeacherMonthlyInputs),
-    payslips: [],
-    payslipVersions: [],
-    payslipReceipts: [],
-    payslipDeliveries: [],
-    payrollCancellations: [],
-    accessRequests: structuredClone(demoAccessRequests)
-  };
-}
-
-async function openWorkspace(user) {
-  if (!user) return;
-  state.user = user;
-  state.view = user.role === "teacher" ? "workHours" : "dashboard";
-  state.selectedTeacherId = user.teacherId || state.data.teachers[0]?.id || null;
-  if (!appConfig.demoMode) {
-    const loaded = await state.store.loadWorkspace(user);
-    hydrateFirebaseData(loaded);
-  }
-  elements.login.hidden = true;
-  elements.workspace.hidden = false;
-  elements.assistantEntry.hidden = user.role !== "admin";
-  if (user.role === "admin") initializeAssistant();
-  else closeAssistant();
-  document.querySelector("#user-name").textContent = user.name;
-  document.querySelector("#user-role").textContent = roleLabel(user.role);
-  document.querySelector("#user-avatar").textContent = user.name.slice(0, 1);
-  render();
-}
-
-function hydrateFirebaseData(loaded) {
-  state.data.teachers = loaded.teachers || [];
-  state.data.rateRules = loaded.rateRules || [];
-  state.data.entries = loaded.entries || [];
-  state.data.payrollRuns = loaded.payrollRuns || [];
-  state.data.taxPolicies = mergeBuiltInTaxPolicies(loaded.taxPolicies || []);
-  state.data.insurancePolicies = mergeBuiltInInsurancePolicies(loaded.insurancePolicies || []);
-  state.data.payslips = loaded.payslips || [];
-  state.data.payslipVersions = loaded.payslipVersions || [];
-  state.data.payslipReceipts = loaded.payslipReceipts || [];
-  state.data.payslipDeliveries = loaded.payslipDeliveries || [];
-  state.data.payrollCancellations = loaded.payrollCancellations || [];
-  state.data.accessRequests = loaded.accessRequests || [];
-  state.data.overrides = Object.fromEntries((loaded.payrollOverrides || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
-  state.data.monthlyWorkInputs = Object.fromEntries((loaded.teacherMonthlyInputs || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
-  const latestRunMonth = state.data.payrollRuns.map((run) => run.month).sort().at(-1);
-  const latestInputMonth = Object.values(state.data.monthlyWorkInputs).map((input) => input.month).sort().at(-1);
-  if (state.user?.role === "teacher") {
-    state.month = [currentCalendarMonth(), latestInputMonth].filter(Boolean).sort().at(-1);
-  } else if (latestRunMonth) {
-    state.month = latestRunMonth;
-  }
-}
-
-async function logout() {
-  if (state.store) await state.store.signOut();
-  state.user = null;
-  state.assistantMessages = [];
-  closeAssistant();
-  elements.assistantEntry.hidden = true;
-  elements.workspace.hidden = true;
-  elements.login.hidden = false;
-  setLoginStatus("");
-}
-
-function render() {
-  renderNav();
-  const renderers = {
-    dashboard: renderDashboard,
-    payrollInputs: renderPayrollInputs,
-    teachers: renderTeachers,
-    ledger: renderLedger,
-    settings: renderSettings,
-    help: renderHelp,
-    workHours: renderWorkHours,
-    payslips: renderPayslips,
-    profile: renderProfile,
-    adminPayslip: renderPayslips
-  };
-  (renderers[state.view] || renderDashboard)();
-  refreshIcons();
-}
-
-function renderNav() {
-  const items = state.user.role === "teacher" ? teacherNav : adminNav;
-  let section = null;
-  elements.nav.innerHTML = items.map(([group, view, icon, label]) => {
-    const sectionMarkup = group !== section ? `<div class="nav-section-label">${e(group)}</div>` : "";
-    section = group;
-    return `${sectionMarkup}<button class="nav-button ${state.view === view || (view === "payslips" && state.view === "adminPayslip") ? "active" : ""}" type="button" data-view="${view}"><i data-lucide="${icon}" aria-hidden="true"></i>${e(label)}</button>`;
-  }).join("");
-  elements.helpNavButton.classList.toggle("active", state.view === "help");
-}
-
-function setPage(title, eyebrow, actions = "") {
-  elements.pageTitle.textContent = title;
-  elements.pageEyebrow.textContent = eyebrow;
-  elements.topbarActions.innerHTML = actions;
-}
-
-function renderDashboard() {
-  const payrolls = payrollsForMonth(state.month);
-  const summary = summarizePayroll(payrolls.map((item) => item.payroll));
-  const run = runForMonth(state.month);
-  const cancellations = cancellationsForMonth(state.month);
-  const unconfirmedItems = payrolls.flatMap(({ teacher, payroll }) => (payroll.unconfirmedEarningLines || []).map((line) => `${teacher.name} ${line.subjectName}`));
-  setPage("ê¸‰ì—¬ ëŒ€ì‹œë³´ë“œ", formatMonth(state.month), `
-    <button class="button button-secondary" type="button" data-action="copy-notice" ${run.status !== "published" ? "disabled" : ""}><i data-lucide="send"></i><span>ì•ˆë‚´ë¬¸ ë³µì‚¬</span></button>
-    <button class="button button-secondary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>ë‚´ì—­ì„œ ì €ì¥</span></button>
-    ${run.status === "published"
-      ? `<button class="button button-danger" type="button" data-action="cancel-run"><i data-lucide="rotate-ccw"></i><span>í™•ì • ì·¨ì†Œ</span></button>`
-      : `<button class="button button-primary" type="button" data-action="publish-run"><i data-lucide="check-check"></i><span>${run.status === "cancelled" ? "ìˆ˜ì •ë³¸ ì¬ë°œí–‰" : "ê¸‰ì—¬ í™•ì •"}</span></button>`}
-  `);
-  elements.content.innerHTML = `
-    ${run.status === "cancelled"
-      ? `<div class="notice warning"><i data-lucide="history"></i><span>${formatMonth(state.month)} ${e(run.revision || 1)}ì°¨ í™•ì •ë³¸ì´ ì·¨ì†ŒëìŠµë‹ˆë‹¤. ì›” ì§€ê¸‰ì•¡ê³¼ ê³µì œì•¡ì„ ìˆ˜ì •í•œ ë’¤ ìƒˆ ì°¨ìˆ˜ë¡œ ì¬ë°œí–‰í•˜ì„¸ìš”. ê¸°ì¡´ í™•ì •ë³¸ê³¼ ì·¨ì†Œ ì‚¬ìœ ëŠ” ë³´ì¡´ë©ë‹ˆë‹¤.</span></div>`
-      : run.status !== "published" ? `<div class="notice warning"><i data-lucide="triangle-alert"></i><span>í˜„ì¬ ê³„ì‚° ê²°ê³¼ëŠ” ì´ˆì•ˆì…ë‹ˆë‹¤. ì„ ìƒë‹˜ë³„ ì›” ì§€ê¸‰ì•¡ê³¼ ê³µì œì•¡ì„ ê²€í† í•œ ë’¤ í™•ì •í•´ ì£¼ì„¸ìš”. ì‚¬íšŒë³´í—˜Â·ì„¸ì•¡ì€ ê¸°ì¥ íšŒê³„ì‚¬ì˜ ìµœì¢… í™•ì¸ì´ í•„ìš”í•©ë‹ˆë‹¤.</span></div>` : ""}
-    ${unconfirmedItems.length ? `<div class="notice warning"><i data-lucide="badge-help"></i><span>ê³¼ì„¸ ì²˜ë¦¬ê°€ í™•ì¸ë˜ì§€ ì•Šì€ ì§€ê¸‰ í•­ëª©ì´ ìˆìŠµë‹ˆë‹¤: ${e(unconfirmedItems.join(", "))}. ì›” ê¸‰ì—¬ ì…ë ¥ì—ì„œ ì²˜ë¦¬ ë°©ì‹ì„ ì„ íƒí•´ì•¼ í™•ì •í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>` : ""}
-    <div class="toolbar">
-      <input class="month-control" type="month" value="${e(state.month)}" aria-label="ê¸‰ì—¬ ì›”" data-control="month" />
-      <span class="status-chip ${e(run.status)}">${statusLabel(run.status)}</span>
-      <span class="toolbar-spacer"></span>
-      <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="ì„ ìƒë‹˜ ê²€ìƒ‰" aria-label="ì„ ìƒë‹˜ ê²€ìƒ‰" data-control="search" /></div>
-    </div>
-    <section class="metrics" aria-label="ê¸‰ì—¬ ìš”ì•½">
-      ${metric("users-round", "ëŒ€ìƒ ì„ ìƒë‹˜", `${payrolls.length}ëª…`, `í™œì„± ì„ ìƒë‹˜ ${activeTeachers().length}ëª…`)}
-      ${metric("circle-dollar-sign", "ì´ ì§€ê¸‰ì•¡", formatWon(summary.gross), "ê³µì œ ì „ ê¸ˆì•¡")}
-      ${metric("receipt-text", "ì´ ê³µì œì•¡", formatWon(summary.deductions), `ë³´í—˜ ì ìš© ê¸°ì¤€ ${formatWon(summary.insuredBase)}`)}
-      ${metric("wallet-cards", "ì‹¤ ì§€ê¸‰ì•¡", formatWon(summary.net), "ì„ ìƒë‹˜ ì§€ê¸‰ ì˜ˆì • í•©ê³„")}
-    </section>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>ì„ ìƒë‹˜ë³„ ê¸‰ì—¬</h2><p>ì„ ìƒë‹˜ë³„ ì†Œë“ êµ¬ì„±ê³¼ ë³´í—˜ë³„ ì‹ ê³  ê¸°ì¤€ì•¡ìœ¼ë¡œ ê³„ì‚°í•œ ì´ë²ˆ ë‹¬ ì´ˆì•ˆ</p></div></div>
-      <div class="data-surface table-scroll">${payrollTable(payrolls)}</div>
-    </section>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>ì²˜ë¦¬ ì§„í–‰ ìƒí™©</h2><p>ì…ë ¥ë¶€í„° ëª…ì„¸ì„œ ê³µê°œê¹Œì§€ì˜ ì›”ë³„ ìƒíƒœ</p></div></div>
-      <div class="progress-strip">
-        ${progressStep("1", "ì›” ê¸‰ì—¬ ì…ë ¥", `${payrolls.length}ëª…`, true, payrolls.length > 0)}
-        ${progressStep("2", "ê³„ì‚° ê²€í† ", `${payrolls.length}ëª…`, true, run.status !== "draft")}
-        ${progressStep("3", "ê¸‰ì—¬ í™•ì •", statusLabel(run.status), run.status !== "draft", run.status === "published")}
-        ${progressStep("4", "ëª…ì„¸ì„œ ê³µê°œ", run.status === "published" ? "ì„ ìƒë‹˜ ì—´ëŒ ê°€ëŠ¥" : run.status === "cancelled" ? "ì¬ë°œí–‰ í›„ ê³µê°œ" : "í™•ì • í›„ ê³µê°œ", run.status === "published", false)}
-      </div>
-    </section>
-    ${cancellations.length ? `<section class="content-section"><div class="section-heading"><div><h2>ì·¨ì†ŒÂ·ì¬ë°œí–‰ ì´ë ¥</h2><p>ê¸°ì¡´ í™•ì •ë³¸ì„ ì‚­ì œí•˜ì§€ ì•Šê³  ë³€ê²½ ì‚¬ìœ ë¥¼ ë³´ì¡´í•©ë‹ˆë‹¤.</p></div></div><div class="data-surface table-scroll"><table><thead><tr><th>ì·¨ì†Œ ì°¨ìˆ˜</th><th>ì‚¬ìœ </th><th>ì²˜ë¦¬ ì‹œê°</th><th>ì²˜ë¦¬ì</th></tr></thead><tbody>${cancellations.map((item) => `<tr><td>${e(item.revision)}ì°¨</td><td>${e(item.reason)}</td><td>${e(formatDateTime(item.createdAt))}</td><td>${e(item.actorUid || "ê´€ë¦¬ì")}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
-  `;
-  bindCommonControls();
-  elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
-  elements.topbarActions.querySelector("[data-action='publish-run']")?.addEventListener("click", openPublishModal);
-  elements.topbarActions.querySelector("[data-action='cancel-run']")?.addEventListener("click", openCancelPayrollModal);
-  if (run.status === "published") elements.topbarActions.querySelector("[data-action='copy-notice']").addEventListener("click", copyPayslipNotice);
-  bindPayrollRows();
-}
-
-function renderPayrollInputs() {
-  const run = runForMonth(state.month);
-  const locked = run.status === "published";
-  const teachers = activeTeachers().filter((teacher) => !state.search || teacher.name.includes(state.search));
-  const missingInsuredSalary = teachers.filter((teacher) => {
-    const settings = teacherPaySettings(teacher);
-    return settings.insuranceEnrolled && monthlyPayAmounts(teacher, state.month).employeeGrossPay <= 0;
-  });
-  setPage("ì›” ê¸‰ì—¬ ì…ë ¥", formatMonth(state.month));
-  elements.content.innerHTML = `
-    <div class="toolbar">
-      <input class="month-control" type="month" value="${e(state.month)}" aria-label="ê¸‰ì—¬ ì›”" data-control="month" />
-      <span class="status-chip ${e(run.status)}">${statusLabel(run.status)}</span>
-      <span class="toolbar-spacer"></span>
-      <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="ì„ ìƒë‹˜ ê²€ìƒ‰" aria-label="ì„ ìƒë‹˜ ê²€ìƒ‰" data-control="search" /></div>
-    </div>
-    <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `ê·¼ë¡œì†Œë“ ì›”ê¸‰ì´ ì…ë ¥ë˜ì§€ ì•Šì€ ë³´í—˜ ê°€ì… ì„ ìƒë‹˜ì´ ${missingInsuredSalary.length}ëª… ìˆìŠµë‹ˆë‹¤.` : "ê·¼ë¡œì†Œë“ì€ ì›”ê¸‰ìœ¼ë¡œ, ì‚¬ì—…ì†Œë“ì€ ê³¼ëª©ë³„ ì‹œê¸‰ Ã— ìˆ˜ì—… ì‹œìˆ˜ë¡œ ê³„ì‚°í•œ ë’¤ 3.3%ë¥¼ ì›ì²œì§•ìˆ˜í•©ë‹ˆë‹¤. í•œ ì„ ìƒë‹˜ì—ê²Œ ë‘ ì†Œë“ì„ í•¨ê»˜ ì ìš©í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤."}</span></div>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} ì§€ê¸‰ì•¡</h2><p>ê·¼ë¡œì†Œë“Â·ê°•ì‚¬ë£ŒÂ·êµí†µë¹„Â·ì£¼ì°¨ë£ŒÂ·ê¸°íƒ€ ì§€ê¸‰ê³¼ ë³´í—˜ ì‹ ê³  ê¸°ì¤€ì•¡ì„ ì„ ìƒë‹˜ë³„ë¡œ ì…ë ¥í•©ë‹ˆë‹¤.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>ì„ ìƒë‹˜</th><th>ê°€ì… ë³´í—˜</th><th class="numeric">ì´ë²ˆ ë‹¬ ê·¼ë¡œì†Œë“</th><th class="numeric">ê·¼ë¡œ ìˆ˜ì—…ì‹œê°„</th><th class="numeric">ìˆ˜ì—… ì‹œìˆ˜</th><th class="numeric">ê°•ì‚¬ë£Œ</th><th class="numeric">ê°•ì‚¬ë£Œ 3.3%</th><th class="numeric">êµí†µÂ·ì£¼ì°¨Â·ê¸°íƒ€</th><th class="numeric">ì‹ ê³ ì•¡</th><th>ì…ë ¥ ìƒíƒœ</th><th aria-label="ì‘ì—…"></th></tr></thead><tbody>
-        ${teachers.map((teacher) => {
-          const override = state.data.overrides[`${state.month}:${teacher.id}`];
-          const settings = teacherPaySettings(teacher);
-          const amounts = monthlyPayAmounts(teacher, state.month);
-          const total = amounts.totalGrossPay;
-          const custom = override?.employeeGrossPay != null || Array.isArray(override?.businessWorkLines) || override?.businessGrossPay != null || override?.grossPay != null || amounts.additionalGrossPay > 0;
-          const missingSalary = settings.insuranceEnrolled && amounts.employeeGrossPay <= 0;
-          const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length;
-          const statusText = missingSalary ? "ê·¼ë¡œì†Œë“ í•„ìš”" : amounts.unconfirmedCount ? `ì²˜ë¦¬ í™•ì¸ ${amounts.unconfirmedCount}ê±´` : total > 0 ? "ì…ë ¥ ì™„ë£Œ" : "ê¸ˆì•¡ ë¯¸ì…ë ¥";
-          const statusClass = total > 0 && !missingSalary && !amounts.unconfirmedCount ? "paid" : "pending";
-          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}ì¢… ê°€ì…` : "ë¯¸ê°€ì…"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.additionalGrossPay)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "ì´ë²ˆ ë‹¬ ì…ë ¥" : "ê¸°ë³¸ê°’"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="ì´ë²ˆ ë‹¬ ì§€ê¸‰ì•¡ ìˆ˜ì •" aria-label="${e(teacher.name)} ì´ë²ˆ ë‹¬ ì§€ê¸‰ì•¡ ìˆ˜ì •" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
-        }).join("") || emptyRow(11)}
-      </tbody></table></div>
-    </section>
-  `;
-  bindCommonControls();
-  elements.content.querySelectorAll("[data-edit-monthly-pay]").forEach((button) => button.addEventListener("click", () => {
-    const teacher = teacherById(button.dataset.editMonthlyPay);
-    if (teacher) openMonthlyPayModal(teacher);
-  }));
-}
-
-function renderEntries() {
-  const locked = runForMonth(state.month).status === "published";
-  setPage("ìˆ˜ì—… ë‚´ì—­", formatMonth(state.month), `
-    <button class="button button-secondary" type="button" data-action="csv-help" ${locked ? "disabled" : ""}><i data-lucide="file-up"></i><span>CSV ì—…ë¡œë“œ</span></button>
-    <button class="button button-primary" type="button" data-action="add-entry" ${locked ? "disabled" : ""}><i data-lucide="plus"></i><span>ìˆ˜ì—… ì¶”ê°€</span></button>
-  `);
-  const entries = entriesForMonth(state.month).filter((entry) => teacherById(entry.teacherId)?.name.includes(state.search));
-  elements.content.innerHTML = `
-    <div class="toolbar">
-      <input class="month-control" type="month" value="${e(state.month)}" aria-label="ìˆ˜ì—… ì›”" data-control="month" />
-      <span class="toolbar-spacer"></span>
-      <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="ì„ ìƒë‹˜ ê²€ìƒ‰" aria-label="ì„ ìƒë‹˜ ê²€ìƒ‰" data-control="search" /></div>
-    </div>
-    <div class="notice"><i data-lucide="info"></i><span>ê° ìˆ˜ì—… ë‚´ì—­ì— ì‹œê¸‰, ì†Œë“ êµ¬ë¶„, ë³´í—˜ ì ìš© ì—¬ë¶€ê°€ ìŠ¤ëƒ…ìƒ·ìœ¼ë¡œ ì €ì¥ë©ë‹ˆë‹¤. ê³„ì•½ ì¡°ê±´ì´ ë‚˜ì¤‘ì— ë°”ë€Œì–´ë„ í™•ì •ëœ ê³¼ê±° ê¸‰ì—¬ëŠ” ìœ ì§€ë©ë‹ˆë‹¤.</span></div>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} ìˆ˜ì—…</h2><p>${entries.length}ê±´ Â· ì´ ${formatHours(entries.reduce((sum, item) => sum + Number(item.hours), 0))}</p></div></div>
-      <div class="data-surface table-scroll">
-        <table><thead><tr><th>ìˆ˜ì—…ì¼</th><th>ì„ ìƒë‹˜</th><th>ê³¼ëª©</th><th class="numeric">ì‹œê°„</th><th class="numeric">ì‹œê¸‰</th><th>ì†Œë“ êµ¬ë¶„</th><th>ë³´í—˜</th><th class="numeric">ê¸ˆì•¡</th></tr></thead>
-        <tbody>${entries.map((entry) => `<tr><td>${e(entry.workedOn)}</td><td>${e(teacherById(entry.teacherId)?.name)}</td><td>${e(entry.subjectName)}</td><td class="numeric">${e(entry.hours)}</td><td class="numeric">${formatWon(entry.hourlyRate)}</td><td>${e(TREATMENT_LABELS[entry.treatment])}</td><td>${entry.insuranceCovered ? "ì ìš©" : "ë¯¸ì ìš©"}</td><td class="numeric">${formatWon(entry.hours * entry.hourlyRate)}</td></tr>`).join("") || emptyRow(8)}</tbody></table>
-      </div>
-    </section>
-  `;
-  bindCommonControls();
-  if (!locked) {
-    elements.topbarActions.querySelector("[data-action='add-entry']").addEventListener("click", openEntryModal);
-    elements.topbarActions.querySelector("[data-action='csv-help']").addEventListener("click", openCsvHelpModal);
-  }
-}
-
-function renderTeachers() {
-  setPage("ì„ ìƒë‹˜ ê´€ë¦¬", "ì¸ì‚¬ Â· ì ‘ê·¼ ê¶Œí•œ", `<button class="button button-secondary" type="button" data-action="copy-portal"><i data-lucide="link"></i><span>í¬í„¸ ë§í¬ ë³µì‚¬</span></button><button class="button button-primary" type="button" data-action="add-teacher"><i data-lucide="user-plus"></i><span>ì„ ìƒë‹˜ ë“±ë¡</span></button>`);
-  const selected = teacherById(state.selectedTeacherId) || state.data.teachers[0];
-  if (selected) state.selectedTeacherId = selected.id;
-  const filtered = state.data.teachers.filter((teacher) => teacher.name.includes(state.search));
-  const pendingRequests = state.data.accessRequests.filter((request) => request.status === "pending");
-  elements.content.innerHTML = `
-    <div class="toolbar"><div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="ì´ë¦„ ê²€ìƒ‰" aria-label="ì´ë¦„ ê²€ìƒ‰" data-control="search" /></div></div>
-    <section class="content-section account-requests">
-      <div class="section-heading"><div><h2>Google ê³„ì • ìŠ¹ì¸ ìš”ì²­</h2><p>ì„ ìƒë‹˜ì´ í¬í„¸ì—ì„œ ì²˜ìŒ ë¡œê·¸ì¸í•˜ë©´ ì—¬ê¸°ì— í‘œì‹œë©ë‹ˆë‹¤.</p></div><span class="status-chip ${pendingRequests.length ? "draft" : "published"}">${pendingRequests.length ? `${pendingRequests.length}ê±´ ëŒ€ê¸°` : "ëŒ€ê¸° ì—†ìŒ"}</span></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>ìš”ì²­ì</th><th>Google ì´ë©”ì¼</th><th>ìš”ì²­ ì‹œê°</th><th>ì—°ê²° ê°€ëŠ¥</th><th aria-label="ì‘ì—…"></th></tr></thead><tbody>
-        ${pendingRequests.map((request) => {
-          const matches = matchingTeachersForAccessRequest(request, state.data.teachers);
-          return `<tr><td><strong>${e(request.displayName || "ì´ë¦„ ë¯¸í™•ì¸")}</strong></td><td>${e(request.email)}</td><td>${e(formatDateTime(request.requestedAt))}</td><td>${matches.length === 1 ? `<span class="status-chip ready">${e(matches[0].name)}</span>` : `<span class="status-chip pending">ì´ë©”ì¼ í™•ì¸ í•„ìš”</span>`}</td><td><div class="row-actions"><button class="button button-secondary button-compact" type="button" data-approve-access="${e(request.uid || request.id)}"><i data-lucide="user-check"></i><span>ê³„ì • ì—°ê²°</span></button></div></td></tr>`;
-        }).join("") || emptyRow(5)}
-      </tbody></table></div>
-    </section>
-    <div class="split-layout">
-      <section class="data-surface table-scroll">
-        <table><thead><tr><th>ì„ ìƒë‹˜</th><th>ê°€ì… ë³´í—˜</th><th>ê¸‰ì—¬ êµ¬ì„±</th><th class="numeric">ê¸°ë³¸ ê·¼ë¡œì†Œë“</th><th>ì‚¬ì—… ì‹œê¸‰</th><th>ìƒíƒœ</th></tr></thead><tbody>
-          ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const hasBusiness = settings.businessRates.length > 0 || settings.defaultBusinessPay > 0; const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}ì¢… ê°€ì…` : "ë¯¸ê°€ì…"}</td><td>${e(payCompositionLabel(settings.defaultEmployeePay, hasBusiness ? 1 : 0))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${settings.businessRates.length ? `${settings.businessRates.length}ê°œ ê³¼ëª©` : settings.defaultBusinessPay > 0 ? "ê¸°ì¡´ ì›”ì•¡" : "ë¯¸ë“±ë¡"}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "í™œì„±" : "ë¹„í™œì„±"}</span></td></tr>`; }).join("") || emptyRow(6)}
-        </tbody></table>
-      </section>
-      ${selected ? `<aside class="detail-panel">
-        <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><button class="icon-button" type="button" title="ì„ ìƒë‹˜ ì •ë³´ ìˆ˜ì •" aria-label="${e(selected.name)} ì •ë³´ ìˆ˜ì •" data-edit-teacher><i data-lucide="pencil"></i></button></div>
-        <div class="detail-block"><h3>ì—°ë½Â·ì‹ë³„ ì •ë³´</h3><dl class="definition-list"><div><dt>ì—°ë½ì²˜</dt><dd>${e(selected.phone || "ë¯¸ë“±ë¡")}</dd></div><div><dt>ìƒë…„ì›”ì¼Â·ì„±ë³„ë²ˆí˜¸</dt><dd>${e(formatTeacherIdentity(selected) || "ë¯¸ë“±ë¡")}</dd></div><div><dt>ì „ì²´ ì£¼ë¯¼ë“±ë¡ë²ˆí˜¸</dt><dd>ì €ì¥í•˜ì§€ ì•ŠìŒ</dd></div></dl></div>
-        <div class="detail-block"><h3>ì ‘ê·¼ ì—°ê²°</h3><dl class="definition-list"><div><dt>ë¡œê·¸ì¸ UID</dt><dd>${e(selected.authUid || "ìŠ¹ì¸ ëŒ€ê¸°")}</dd></div><div><dt>ìƒíƒœ</dt><dd>${selected.status === "active" ? "í™œì„±" : "ë¹„í™œì„±"}</dd></div></dl></div>
-        ${teacherPayDetails(selected)}
-        ${teacherPaySettings(selected).insuranceEnrolled || teacherPaySettings(selected).defaultEmployeePay > 0 ? `<div class="detail-block"><div class="detail-title-row"><h3>ê·¼ë¡œì†Œë“ ì›ì²œì§•ìˆ˜ ì •ë³´</h3><button class="icon-button" type="button" title="ì›ì²œì§•ìˆ˜ ì •ë³´ ìˆ˜ì •" aria-label="${e(selected.name)} ì›ì²œì§•ìˆ˜ ì •ë³´ ìˆ˜ì •" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>ê³µì œëŒ€ìƒê°€ì¡±</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}ëª…</dd></div><div><dt>8~20ì„¸ ìë…€</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}ëª…</dd></div><div><dt>ì›ì²œì§•ìˆ˜ ë¹„ìœ¨</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>` : `<div class="detail-block"><h3>ì›ì²œì§•ìˆ˜</h3><p class="form-help">ì‚¬ì—…ì†Œë“ ì§€ê¸‰ì•¡ì—ëŠ” ì‚¬ì—…ì†Œë“ ì›ì²œì§•ìˆ˜ ê¸°ì¤€ì´ ì ìš©ë©ë‹ˆë‹¤.</p></div>`}
-        <div class="detail-block"><h3>ë‹´ë‹¹ ê³¼ëª©</h3><div class="tag-list">${selected.subjects.map((subject) => `<span class="tag">${e(subject)}</span>`).join("")}</div></div>
-      </aside>` : ""}
-    </div>
-  `;
-  bindCommonControls();
-  elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
-  elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
-  elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
-  elements.content.querySelector("[data-edit-tax-profile]")?.addEventListener("click", () => openTaxProfileModal(selected));
-  elements.content.querySelectorAll("[data-approve-access]").forEach((button) => button.addEventListener("click", () => {
-    const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.approveAccess);
-    if (request) openAccessApprovalModal(request);
-  }));
-  elements.content.querySelectorAll("[data-select-teacher]").forEach((row) => row.addEventListener("click", () => {
-    state.selectedTeacherId = row.dataset.selectTeacher;
-    renderTeachers();
-  }));
-}
-
-function renderRates() {
-  setPage("ì‹œê¸‰ Â· ê³„ì•½ ì¡°ê±´", "ì ìš© ê¸°ê°„ë³„ ê·œì¹™", `<button class="button button-primary" type="button" data-action="add-rate"><i data-lucide="plus"></i><span>ì¡°ê±´ ì¶”ê°€</span></button>`);
-  elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="layers-3"></i><span>í•œ ì„ ìƒë‹˜ì—ê²Œ ê³¼ëª©ë³„ ì‹œê¸‰ê³¼ ì„œë¡œ ë‹¤ë¥¸ ì†Œë“ êµ¬ë¶„ì„ ë™ì‹œì— ì§€ì •í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤. ê³ ìš©ê´€ê³„ê°€ ìˆìœ¼ë©´ ê·¼ë¡œì†Œë“, ë…ë¦½ì ìœ¼ë¡œ ê³„ì†Â·ë°˜ë³µí•˜ëŠ” ê°•ì˜ëŠ” ì‚¬ì—…ì†Œë“, ì¼ì‹œì  ê°•ì˜ëŠ” ê¸°íƒ€ì†Œë“ìœ¼ë¡œ ê²€í† í•˜ë©° ì•±ì´ ê³„ì•½ ì‹¤ì§ˆì„ ìë™ íŒì •í•˜ì§€ëŠ” ì•ŠìŠµë‹ˆë‹¤.</span></div>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>í˜„ì¬ ì ìš© ì¡°ê±´</h2><p>ì„ ìƒë‹˜ + ê³¼ëª© + ì ìš© ê¸°ê°„ ê¸°ì¤€</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>ì„ ìƒë‹˜</th><th>ê³¼ëª©</th><th class="numeric">ì‹œê¸‰</th><th>ì†Œë“ êµ¬ë¶„</th><th>4ëŒ€ë³´í—˜</th><th>ì ìš© ì‹œì‘</th></tr></thead><tbody>
-        ${state.data.rateRules.map((rule) => `<tr><td>${e(teacherById(rule.teacherId)?.name)}</td><td>${e(rule.subjectName)}</td><td class="numeric">${formatWon(rule.hourlyRate)}</td><td>${e(TREATMENT_LABELS[rule.treatment])}</td><td>${rule.insuranceCovered ? "ì ìš©" : "ë¯¸ì ìš©"}</td><td>${e(rule.effectiveFrom)}</td></tr>`).join("") || emptyRow(6)}
-      </tbody></table></div>
-    </section>
-  `;
-  elements.topbarActions.querySelector("[data-action='add-rate']").addEventListener("click", openRateModal);
-}
-
-function renderLedger() {
-  const payrolls = payrollsForMonth(state.month);
-  const summary = summarizePayroll(payrolls.map((item) => item.payroll));
-  setPage("ì›”ë³„ ê¸‰ì—¬ë‚´ì—­ì„œ", formatMonth(state.month), `
-    <button class="button button-secondary" type="button" data-action="print"><i data-lucide="printer"></i><span>ì¸ì‡„</span></button>
-    <button class="button button-primary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>CSV ì €ì¥</span></button>
-  `);
-  elements.content.innerHTML = `
-    <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="ê¸‰ì—¬ ì›”" data-control="month" /></div>
-    <section class="content-section"><div class="section-heading"><div><h2>${e(appConfig.academyName)} ê¸‰ì—¬ë‚´ì—­ì„œ</h2><p>ê¸°ì¥ ì „ë‹¬ìš© Â· ${formatMonth(state.month)}</p></div></div>
-    <div class="data-surface table-scroll">${ledgerTable(payrolls, summary)}</div></section>
-  `;
-  bindCommonControls();
-  elements.topbarActions.querySelector("[data-action='print']").addEventListener("click", () => window.print());
-  elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
-}
-
-function renderSettings() {
-  const taxPolicy = taxPolicyForMonth(state.month);
-  const insurancePolicy = insurancePolicyForMonth(state.month);
-  const lectureRule = taxPolicy.other?.categories?.temporaryLecture || {};
-  setPage("ê³„ì‚° Â· ë³´ì•ˆ ì„¤ì •", "ê´€ë¦¬ì ì „ìš©", `
-    <button class="button button-secondary" type="button" data-action="export-tax-table"><i data-lucide="file-down"></i><span>ê°„ì´ì„¸ì•¡í‘œ CSV</span></button>
-    <button class="button button-primary" type="button" data-action="add-tax-policy"><i data-lucide="plus"></i><span>ìƒˆ ì„¸ê¸ˆ ê¸°ì¤€</span></button>
-  `);
-  elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="landmark"></i><span>ì›ì²œì§•ìˆ˜ëŠ” êµ­ì„¸ì²­ ì•ˆë‚´ì™€ ì†Œë“ì„¸ë²• ì‹œí–‰ë ¹ ë³„í‘œ 2ë¥¼ ê¸°ì¤€ìœ¼ë¡œ ê³„ì‚°í•©ë‹ˆë‹¤. ë²•ë ¹ì´ ë°”ë€Œë©´ ê¸°ì¡´ ê¸°ì¤€ì„ ìˆ˜ì •í•˜ì§€ ì•Šê³  ìƒˆ ì‹œí–‰ì¼ì˜ ë²„ì „ì„ ì¶”ê°€í•˜ì„¸ìš”. í™•ì • ëª…ì„¸ì„œì—ëŠ” ì ìš© ë²„ì „ì´ ê·¸ëŒ€ë¡œ ë³´ì¡´ë©ë‹ˆë‹¤.</span></div>
-    <div class="split-layout">
-      <section class="detail-panel">
-        <div class="detail-panel-header"><h2>${e(taxPolicy.name || "ì„¸ê¸ˆ ê¸°ì¤€")}</h2><p>${e(taxPolicy.version)} Â· ${e(taxPolicy.effectiveFrom)}ë¶€í„° ì ìš©</p></div>
-        <div class="detail-block"><h3>ê·¼ë¡œì†Œë“</h3><dl class="definition-list"><div><dt>ê°„ì´ì„¸ì•¡í‘œ</dt><dd>${e(taxPolicy.employment?.tableRevision)} ê°œì •</dd></div><div><dt>ê¸‰ì—¬ êµ¬ê°„</dt><dd>${formatNumber(taxPolicy.employment?.tableRows?.length)}ê°œ</dd></div><div><dt>ì›ì²œì§•ìˆ˜ ì„ íƒ</dt><dd>80% Â· 100% Â· 120%</dd></div><div><dt>8~20ì„¸ ìë…€ ê³µì œ</dt><dd>ì¸ì›ë³„ ì ìš©</dd></div></dl></div>
-        <div class="detail-block"><h3>ì‚¬ì—…ì†Œë“</h3><dl class="definition-list"><div><dt>ì†Œë“ì„¸</dt><dd>${ratePercent(taxPolicy.business?.incomeTaxRate)}</dd></div><div><dt>ì§€ë°©ì†Œë“ì„¸</dt><dd>ì†Œë“ì„¸ì˜ ${ratePercent(taxPolicy.business?.localIncomeTaxRateOfIncomeTax)}</dd></div><div><dt>í•©ê³„ íš¨ê³¼ì„¸ìœ¨</dt><dd>${ratePercent(Number(taxPolicy.business?.incomeTaxRate || 0) * (1 + Number(taxPolicy.business?.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
-        <div class="detail-block"><h3>ì¼ì‹œì  ê°•ì˜ ê¸°íƒ€ì†Œë“</h3><dl class="definition-list"><div><dt>í•„ìš”ê²½ë¹„ìœ¨</dt><dd>${ratePercent(lectureRule.expenseRate)}</dd></div><div><dt>ì†Œë“ì„¸ìœ¨</dt><dd>${ratePercent(lectureRule.incomeTaxRate)}</dd></div><div><dt>ê³¼ì„¸ìµœì €í•œ</dt><dd>ê±´ë³„ ì†Œë“ê¸ˆì•¡ ${formatWon(lectureRule.minimumTaxableIncomeAmount)} ì´í•˜</dd></div><div><dt>ìµœì €í•œ ì´ˆê³¼ íš¨ê³¼ì„¸ìœ¨</dt><dd>${ratePercent((1 - Number(lectureRule.expenseRate || 0)) * Number(lectureRule.incomeTaxRate || 0) * (1 + Number(lectureRule.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
-        <div class="detail-block"><h3>ê³µì‹ ê·¼ê±°</h3><div class="source-list">${(taxPolicy.sources || []).map((source) => `<a href="${e(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>${e(source.title)}</a>`).join("")}</div></div>
-      </section>
-      <section class="detail-panel">
-        <div class="detail-panel-header"><h2>ì‚¬íšŒë³´í—˜ ì •ì±…</h2><p>${e(insurancePolicy.version)} Â· êµ­ì„¸ì²­ ê¸°ì¤€ê³¼ ë³„ë„ ê´€ë¦¬</p></div>
-        <div class="detail-block"><h3>ê·¼ë¡œì†Œë“ ë³´í—˜</h3><dl class="definition-list"><div><dt>êµ­ë¯¼ì—°ê¸ˆ</dt><dd>${ratePercent(insurancePolicy.employee?.nationalPension?.rate)}</dd></div><div><dt>ê±´ê°•ë³´í—˜</dt><dd>${ratePercent(insurancePolicy.employee?.healthInsurance?.rate)}</dd></div><div><dt>ì¥ê¸°ìš”ì–‘</dt><dd>ê±´ê°•ë³´í—˜ë£Œì˜ ${ratePercent(insurancePolicy.employee?.longTermCareRate)}</dd></div><div><dt>ê³ ìš©ë³´í—˜</dt><dd>${ratePercent(insurancePolicy.employee?.employmentInsurance?.rate)}</dd></div></dl></div>
-        <div class="detail-block"><h3>ê³µì‹ ê·¼ê±°</h3><div class="source-list">${(insurancePolicy.sources || []).map((source) => `<a href="${e(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>${e(source.title)}</a>`).join("")}</div></div>
-        <div class="detail-block"><div class="notice warning compact"><i data-lucide="triangle-alert"></i><span>ìë™ ê³„ì‚°ì€ ì„ ìƒë‹˜ë³„ êµ­ë¯¼ì—°ê¸ˆÂ·ê±´ê°•ë³´í—˜Â·ê³ ìš©ë³´í—˜ ì‹ ê³  ê¸°ì¤€ì•¡ì„ ì‚¬ìš©í•œ ì˜ˆìƒê°’ì…ë‹ˆë‹¤. ê³µë‹¨ ê³ ì§€ì•¡, ì…Â·í‡´ì‚¬ì›”, ë‘ë£¨ëˆ„ë¦¬ ì§€ì›, íœ´ì§Â·ì •ì‚° ë“±ì€ ê¸‰ì—¬ í™•ì • ì „ì— ìˆ˜ë™ ê³µì œì•¡ìœ¼ë¡œ ë§ì¶”ì„¸ìš”.</span></div></div>
-        <div class="detail-block"><button class="button button-secondary" type="button" data-action="add-insurance-policy"><i data-lucide="plus"></i><span>ìƒˆ ì‚¬íšŒë³´í—˜ ê¸°ì¤€</span></button></div>
-        <div class="detail-block"><h3>ë³´ì•ˆ ì ê²€</h3><dl class="definition-list"><div><dt>ì €ì¥ì†Œ ê°œì¸ì •ë³´</dt><dd>í¬í•¨ ê¸ˆì§€</dd></div><div><dt>Firestore ê¸°ë³¸ ê¶Œí•œ</dt><dd>ì „ë©´ ê±°ë¶€</dd></div><div><dt>ì„ ìƒë‹˜ ëª…ì„¸ì„œ</dt><dd>ë³¸ì¸ UIDë§Œ</dd></div><div><dt>í™•ì •ë³¸ ìˆ˜ì •</dt><dd>ê¸ˆì§€</dd></div></dl></div>
-        <div class="detail-block"><h3>í˜„ì¬ ì‹¤í–‰ ëª¨ë“œ</h3><span class="status-chip ${appConfig.demoMode ? "draft" : "published"}">${appConfig.demoMode ? "ë°ëª¨ ë°ì´í„°" : "Firebase ì—°ê²°"}</span></div>
-      </section>
-    </div>
-    <section class="content-section policy-history">
-      <div class="section-heading"><div><h2>ì„¸ê¸ˆ ê¸°ì¤€ ì ìš© ì´ë ¥</h2><p>ì‹œí–‰ì¼ì´ ê°€ì¥ ìµœê·¼ì¸ ìœ íš¨ ë²„ì „ì´ ìë™ ì ìš©ë©ë‹ˆë‹¤.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>ë²„ì „</th><th>ê¸°ì¤€ëª…</th><th>ì‹œí–‰ì¼</th><th>í™•ì¸ì¼</th><th>ìƒíƒœ</th></tr></thead><tbody>${[...state.data.taxPolicies].sort((a, b) => String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))).map((policy) => `<tr><td><strong>${e(policy.version)}</strong></td><td>${e(policy.name)}</td><td>${e(policy.effectiveFrom)}</td><td>${e(policy.verifiedAt || "-")}</td><td><span class="status-chip published">${policy.builtIn ? "ë‚´ì¥ ê³µì‹ë³¸" : "ë“±ë¡ ì™„ë£Œ"}</span></td></tr>`).join("")}</tbody></table></div>
-    </section>
-    <section class="content-section policy-history">
-      <div class="section-heading"><div><h2>ì‚¬íšŒë³´í—˜ ê¸°ì¤€ ì ìš© ì´ë ¥</h2><p>êµ­ë¯¼ì—°ê¸ˆ ìƒÂ·í•˜í•œì²˜ëŸ¼ ì—°ì¤‘ ë³€ê²½ë˜ëŠ” ê¸°ì¤€ë„ ì‹œí–‰ì¼ë³„ë¡œ ë³´ì¡´í•©ë‹ˆë‹¤.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>ë²„ì „</th><th>ê¸°ì¤€ëª…</th><th>ì‹œí–‰ì¼</th><th>ì¢…ë£Œì¼</th><th>ìƒíƒœ</th></tr></thead><tbody>${[...state.data.insurancePolicies].sort((a, b) => String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))).map((policy) => `<tr><td><strong>${e(policy.version)}</strong></td><td>${e(policy.name)}</td><td>${e(policy.effectiveFrom)}</td><td>${e(policy.effectiveTo || "ê³„ì†")}</td><td><span class="status-chip published">${policy.builtIn ? "ë‚´ì¥ ê³µì‹ë³¸" : "ë“±ë¡ ì™„ë£Œ"}</span></td></tr>`).join("")}</tbody></table></div>
-    </section>
-  `;
-  elements.topbarActions.querySelector("[data-action='export-tax-table']").addEventListener("click", downloadTaxTableTemplate);
-  elements.topbarActions.querySelector("[data-action='add-tax-policy']").addEventListener("click", openTaxPolicyModal);
-  elements.content.querySelector("[data-action='add-insurance-policy']").addEventListener("click", openInsurancePolicyModal);
-}
-
-function renderHelp() {
-  const query = state.helpSearch.trim();
-  const visibleArticles = query
-    ? searchHelpArticles(query, helpArticles, helpArticles.length)
-    : helpArticles;
-  setPage("ì‚¬ìš© ì„¤ëª…ì„œ", "ê´€ë¦¬ì ë„ì›€ë§", `
-    <button class="button button-primary" type="button" title="AI ë„ì›€ë§ ì—´ê¸°" aria-label="AI ë„ì›€ë§ ì—´ê¸°" data-action="open-assistant"><i data-lucide="message-circle-question"></i><span>AI ë„ì›€ë§</span></button>
-  `);
-  elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="book-check"></i><span>ê´€ë¦¬ì ì—…ë¬´ ìˆœì„œì™€ í™”ë©´ë³„ ì‚¬ìš©ë²•ì…ë‹ˆë‹¤. ì‹¤ì œ ê°œì¸ì •ë³´ë¥¼ ë„£ê¸° ì „ì— í…ŒìŠ¤íŠ¸ ê³„ì •ê³¼ ê°€ìƒ ê¸‰ì—¬ë¡œ ì „ì²´ ì ˆì°¨ë¥¼ í™•ì¸í•˜ì„¸ìš”.</span></div>
-    <div class="help-toolbar">
-      <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.helpSearch)}" placeholder="ì„¤ëª…ì„œ ê²€ìƒ‰" aria-label="ì‚¬ìš© ì„¤ëª…ì„œ ê²€ìƒ‰" data-help-search /></div>
-      <span>${visibleArticles.length}ê°œ í•­ëª©</span>
-    </div>
-    <div class="help-layout">
-      <aside class="help-toc" aria-label="ì‚¬ìš© ì„¤ëª…ì„œ ëª©ì°¨">
-        <strong>ëª©ì°¨</strong>
-        ${helpArticles.map((article, index) => `<button type="button" data-help-jump="${e(article.id)}"><span>${index + 1}</span>${e(article.title)}</button>`).join("")}
-      </aside>
-      <section class="help-content" aria-label="ì‚¬ìš© ì„¤ëª…ì„œ ë‚´ìš©">
-        ${visibleArticles.map((article, index) => `
-          <article id="help-${e(article.id)}" class="help-article">
-            <header><span>${String(index + 1).padStart(2, "0")}</span><div><h2>${e(article.title)}</h2><p>${e(article.summary)}</p></div></header>
-            <ol>${article.steps.map((step) => `<li>${e(step)}</li>`).join("")}</ol>
-            ${article.cautions.map((caution) => `<div class="help-caution"><i data-lucide="triangle-alert"></i><span>${e(caution)}</span></div>`).join("")}
-            <button class="button button-secondary button-compact" type="button" data-help-ask="${e(article.title)}"><i data-lucide="message-circle-question"></i><span>ì´ í•­ëª© ì§ˆë¬¸í•˜ê¸°</span></button>
-          </article>
-        `).join("") || `<div class="empty-state"><strong>ì¼ì¹˜í•˜ëŠ” ì„¤ëª…ì„œê°€ ì—†ìŠµë‹ˆë‹¤.</strong><span>ê¸°ëŠ¥ ì´ë¦„ìœ¼ë¡œ ë‹¤ì‹œ ê²€ìƒ‰í•˜ê±°ë‚˜ AI ë„ì›€ë§ì— ì§ˆë¬¸í•´ ì£¼ì„¸ìš”.</span></div>`}
-      </section>
-    </div>
-  `;
-  elements.topbarActions.querySelector("[data-action='open-assistant']").addEventListener("click", openAssistant);
-  elements.content.querySelector("[data-help-search]").addEventListener("input", (event) => {
-    const caret = event.target.selectionStart;
-    state.helpSearch = event.target.value;
-    renderHelp();
-    const nextInput = elements.content.querySelector("[data-help-search]");
-    nextInput.focus();
-    nextInput.setSelectionRange(caret, caret);
-  });
-  elements.content.querySelectorAll("[data-help-jump]").forEach((button) => button.addEventListener("click", () => {
-    if (state.helpSearch) {
-      state.helpSearch = "";
-      renderHelp();
-    }
-    requestAnimationFrame(() => document.querySelector(`#help-${button.dataset.helpJump}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }));
-  elements.content.querySelectorAll("[data-help-ask]").forEach((button) => button.addEventListener("click", () => {
-    openAssistant();
-    elements.assistantInput.value = `${button.dataset.helpAsk} ì‚¬ìš© ë°©ë²•ì„ ì•Œë ¤ì¤˜`;
-    elements.assistantInput.focus();
-  }));
-}
-
-function renderWorkHours() {
-  const teacher = teacherById(state.user.teacherId);
-  const run = runForMonth(state.month);
-  const locked = run.status === "published";
-  const settings = teacher ? teacherPaySettings(teacher) : getTeacherPaySettings({});
-  const current = teacher ? monthlyWorkInput(teacher.id) : null;
-  const legacyOverride = teacher ? state.data.overrides[`${state.month}:${teacher.id}`] || {} : {};
-  const employeeWorkHours = current?.employeeWorkHours ?? legacyOverride.employeeWorkHours ?? 0;
-  const businessHours = current?.businessHours
-    || businessHoursFromWorkLines(settings.businessRates, legacyOverride.businessWorkLines);
-  const canEnterEmployeeHours = settings.defaultEmployeePay > 0 || settings.insuranceEnrolled;
-  const hasWorkTypes = canEnterEmployeeHours || settings.businessRates.length > 0;
-
-  setPage("ìˆ˜ì—…ì‹œê°„ ì…ë ¥", formatMonth(state.month), `
-    <button class="button button-primary" type="button" title="ìˆ˜ì—…ì‹œê°„ ì €ì¥" aria-label="ìˆ˜ì—…ì‹œê°„ ì €ì¥" data-action="save-work-hours" ${!teacher || locked || !hasWorkTypes ? "disabled" : ""}><i data-lucide="save"></i><span>ìˆ˜ì—…ì‹œê°„ ì €ì¥</span></button>
-  `);
-  elements.content.innerHTML = teacher ? `
-    <div class="toolbar">
-      <input class="month-control" type="month" value="${e(state.month)}" aria-label="ìˆ˜ì—… ì›”" data-control="month" />
-      <span class="status-chip ${e(run.status)}">${locked ? "ì…ë ¥ ë§ˆê°" : current ? "ì œì¶œ ì™„ë£Œ" : "ì…ë ¥ ì „"}</span>
-    </div>
-    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? `${formatMonth(state.month)} ê¸‰ì—¬ê°€ í™•ì •ë˜ì–´ ìˆ˜ì—…ì‹œê°„ì„ ìˆ˜ì •í•  ìˆ˜ ì—†ìŠµë‹ˆë‹¤.` : "ìˆ˜ì—…ì‹œê°„ë§Œ ì…ë ¥í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤. ì´ë©”ì¼, ì›”ê¸‰, ì‹œê¸‰, ë³´í—˜ê³¼ ì„¸ê¸ˆ ì •ë³´ëŠ” ê´€ë¦¬ìê°€ ë“±ë¡í•˜ê³  ê²€í† í•©ë‹ˆë‹¤."}</span></div>
-    <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} ìˆ˜ì—…ì‹œê°„</h2><p>ê´€ë¦¬ìê°€ ë“±ë¡í•œ ê¸‰ì—¬ ìœ í˜•ê³¼ ê³¼ëª©ì— í•´ë‹¹ ì›”ì˜ ì´ ìˆ˜ì—…ì‹œê°„ì„ ì…ë ¥í•©ë‹ˆë‹¤.</p></div>${current?.submittedAt ? `<span class="cell-subtext">ìµœê·¼ ì €ì¥ ${e(formatDateTime(current.submittedAt))}</span>` : ""}</div>
-      ${hasWorkTypes ? `<form id="teacher-work-hours-form" class="data-surface teacher-work-hours-form">
-        ${canEnterEmployeeHours ? `<div class="teacher-work-hour-row"><div><strong>ê·¼ë¡œì†Œë“ ìˆ˜ì—…</strong><span>ì›”ê¸‰ê³¼ ë³„ë„ë¡œ ìˆ˜ì—…ì‹œê°„ë§Œ ê¸°ë¡ë©ë‹ˆë‹¤.</span></div><div class="input-suffix"><input name="employeeWorkHours" type="number" min="0" max="744" step="0.5" value="${e(employeeWorkHours)}" ${locked ? "disabled" : ""} aria-label="ê·¼ë¡œì†Œë“ ìˆ˜ì—…ì‹œê°„" /><span>ì‹œê°„</span></div></div>` : ""}
-        ${settings.businessRates.map((rate) => `<div class="teacher-work-hour-row"><div><strong>${e(rate.subjectName)}</strong><span>ì‚¬ì—…ì†Œë“ ìˆ˜ì—…</span></div><div class="input-suffix"><input type="number" min="0" max="744" step="0.5" value="${e(businessHours[rate.id] || 0)}" data-business-hour="${e(rate.id)}" ${locked ? "disabled" : ""} aria-label="${e(rate.subjectName)} ìˆ˜ì—…ì‹œê°„" /><span>ì‹œê°„</span></div></div>`).join("")}
-      </form>` : `<div class="empty-state">ê´€ë¦¬ìê°€ ë¨¼ì € ê·¼ë¡œì†Œë“ ì›”ê¸‰ ë˜ëŠ” ì‚¬ì—…ì†Œë“ ê³¼ëª©ì„ ë“±ë¡í•´ì•¼ í•©ë‹ˆë‹¤.</div>`}
-    </section>
-  ` : `<div class="empty-state">ì—°ê²°ëœ ì„ ìƒë‹˜ ì •ë³´ê°€ ì—†ìŠµë‹ˆë‹¤.</div>`;
-  bindCommonControls();
-  elements.topbarActions.querySelector("[data-action='save-work-hours']")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const form = document.querySelector("#teacher-work-hours-form");
-    if (!form?.reportValidity()) return;
-    const hourValues = [
-      Number(form.elements.employeeWorkHours?.value || 0),
-      ...[...form.querySelectorAll("[data-business-hour]")].map((input) => Number(input.value || 0))
-    ];
-    if (hourValues.some((hours) => !Number.isFinite(hours) || hours < 0 || hours > 744)) {
-      showToast("ìˆ˜ì—…ì‹œê°„ì€ 0 ì´ìƒ 744 ì´í•˜ë¡œ ì…ë ¥í•´ ì£¼ì„¸ìš”.");
-      return;
-    }
-    const rawBusinessHours = Object.fromEntries([...form.querySelectorAll("[data-business-hour]")]
-      .map((input) => [input.dataset.businessHour, Number(input.value || 0)]));
-    const input = {
-      id: monthlyWorkInputId(state.month, teacher.id),
-      teacherId: teacher.id,
-      teacherUid: state.user.uid,
-      month: state.month,
-      employeeWorkHours: Number(form.elements.employeeWorkHours?.value || 0),
-      businessHours: buildBusinessHours(settings.businessRates, rawBusinessHours),
-      submittedAt: new Date().toISOString()
-    };
-    button.disabled = true;
-    try {
-      if (state.store) await state.store.saveTeacherMonthlyInput(input);
-      state.data.monthlyWorkInputs[`${state.month}:${teacher.id}`] = input;
-      showToast(`${formatMonth(state.month)} ìˆ˜ì—…ì‹œê°„ì„ ì €ì¥í–ˆìŠµë‹ˆë‹¤.`);
-      renderWorkHours();
-    } catch (error) {
-      showToast(error.message || "ìˆ˜ì—…ì‹œê°„ì„ ì €ì¥í•˜ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
-function renderPayslips() {
-  const teacherId = state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId;
-  const teacher = teacherById(teacherId);
-  const months = availablePayslipMonths(teacherId);
-  if (!months.includes(state.selectedPayslipMonth)) state.selectedPayslipMonth = months[0] || state.month;
-  const payroll = payrollForTeacher(teacherId, state.selectedPayslipMonth);
-  const run = { ...runForMonth(state.selectedPayslipMonth), status: payslipStatus(teacherId, state.selectedPayslipMonth) };
-  const isAdmin = state.user.role === "admin";
-  const delivery = deliveryFor(teacherId, state.selectedPayslipMonth);
-  setPage(state.user.role === "teacher" ? "ê¸‰ì—¬ëª…ì„¸ì„œ" : `${teacher?.name || "ì„ ìƒë‹˜"} ê¸‰ì—¬ëª…ì„¸ì„œ`, "ë°œí–‰ëœ ì›”ë³„ ë‚´ì—­", `
-    <button class="button button-secondary" type="button" title="PDF ë‹¤ìš´ë¡œë“œ" aria-label="ê¸‰ì—¬ëª…ì„¸ì„œ PDF ë‹¤ìš´ë¡œë“œ" data-action="download-payslip" ${payroll ? "" : "disabled"}><i data-lucide="download"></i><span>PDF ë‹¤ìš´ë¡œë“œ</span></button>
-    <button class="button button-secondary" type="button" title="ì¸ì‡„" aria-label="ê¸‰ì—¬ëª…ì„¸ì„œ ì¸ì‡„" data-action="print-payslip" ${payroll ? "" : "disabled"}><i data-lucide="printer"></i><span>ì¸ì‡„</span></button>
-    ${isAdmin ? `<button class="button button-primary" type="button" title="ì´ë©”ì¼ ë°œì†¡" aria-label="ê¸‰ì—¬ëª…ì„¸ì„œ ì´ë©”ì¼ ë°œì†¡" data-action="email-payslip" ${payroll && run.status === "published" ? "" : "disabled"}><i data-lucide="mail-plus"></i><span>ì´ë©”ì¼ ë°œì†¡</span></button>` : ""}
-  `);
-  const notice = state.user.role === "teacher"
-    ? "ë³¸ì¸ì—ê²Œ ë°œí–‰ëœ ê¸‰ì—¬ëª…ì„¸ì„œë§Œ í‘œì‹œë©ë‹ˆë‹¤. íŒŒì¼ì„ ë‚´ë ¤ë°›ì€ ê³µìš© ê¸°ê¸°ì—ì„œëŠ” ì‚¬ìš© í›„ ì‚­ì œí•´ ì£¼ì„¸ìš”."
-    : run.status !== "published"
-      ? "ê´€ë¦¬ì ë¯¸ë¦¬ë³´ê¸°ì…ë‹ˆë‹¤. ì´ë©”ì¼ ì²¨ë¶€ ë°œì†¡ì€ ê¸‰ì—¬ í™•ì • í›„ ì‚¬ìš©í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤."
-      : delivery
-        ? `${delivery.recipientEmail} ì£¼ì†Œë¡œ ${formatDeliveryAt(delivery.sentAt)}ì— ì²¨ë¶€ ë°œì†¡í–ˆìŠµë‹ˆë‹¤.`
-        : "í™•ì •ëœ ëª…ì„¸ì„œì…ë‹ˆë‹¤. ìˆ˜ì‹ ìì™€ ê¸ˆì•¡ì„ í™•ì¸í•œ ë’¤ PDF ë‹¤ìš´ë¡œë“œ ë˜ëŠ” ì´ë©”ì¼ ì²¨ë¶€ ë°œì†¡ì„ ì§„í–‰í•˜ì„¸ìš”.";
-  elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="${delivery ? "mail-check" : "lock-keyhole"}"></i><span>${e(notice)}</span></div>
-    <div class="payslip-layout">
-      <aside class="payslip-list"><div class="payslip-list-header"><h2>ëª…ì„¸ì„œ ë‚´ì—­</h2></div>
-        ${months.map((month) => { const item = payrollForTeacher(teacherId, month); return `<button class="payslip-item ${month === state.selectedPayslipMonth ? "active" : ""}" type="button" data-payslip-month="${e(month)}"><strong>${formatMonth(month)}</strong><span>${payslipStatus(teacherId, month) === "published" ? "ë°œí–‰ ì™„ë£Œ" : "ê´€ë¦¬ì ë¯¸ë¦¬ë³´ê¸°"}</span><span class="amount">${formatWon(item?.payroll.net)}</span></button>`; }).join("") || `<div class="empty-state">ë°œí–‰ëœ ëª…ì„¸ì„œê°€ ì—†ìŠµë‹ˆë‹¤.</div>`}
-      </aside>
-      ${payroll && teacher ? payslipSheet(teacher, payroll.payroll, state.selectedPayslipMonth, run) : `<div class="empty-state">í™•ì¸í•  ëª…ì„¸ì„œê°€ ì—†ìŠµë‹ˆë‹¤.</div>`}
-    </div>
-  `;
-  elements.topbarActions.querySelector("[data-action='download-payslip']")?.addEventListener("click", downloadCurrentPayslip);
-  elements.topbarActions.querySelector("[data-action='print-payslip']")?.addEventListener("click", () => window.print());
-  elements.topbarActions.querySelector("[data-action='email-payslip']")?.addEventListener("click", () => openPayslipEmailModal(teacher, payroll?.payroll, run));
-  elements.content.querySelectorAll("[data-payslip-month]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedPayslipMonth = button.dataset.payslipMonth;
-    renderPayslips();
-  }));
-  if (state.user.role === "teacher" && payroll && run.status === "published") recordPayslipViewed(teacherId, state.selectedPayslipMonth);
-}
-
-function renderProfile() {
-  const teacher = teacherById(state.user.teacherId);
-  setPage("ë“±ë¡ ì •ë³´", "ë‚´ ê³„ì •", `<button class="button button-primary" type="button" data-action="edit-my-profile" ${teacher ? "" : "disabled"}><i data-lucide="pencil"></i><span>ë‚´ ì •ë³´ ìˆ˜ì •</span></button>`);
-  elements.content.innerHTML = teacher ? `
-    <div class="split-layout"><section class="detail-panel"><div class="detail-panel-header"><h2>${e(teacher.name)}</h2><p>${e(teacher.email)}</p></div><div class="detail-block"><h3>ê°œì¸ ì •ë³´</h3><dl class="definition-list"><div><dt>ì—°ë½ì²˜</dt><dd>${e(teacher.phone || "ë¯¸ë“±ë¡")}</dd></div><div><dt>ìƒë…„ì›”ì¼Â·ì„±ë³„ë²ˆí˜¸</dt><dd>${e(formatTeacherIdentity(teacher) || "ë¯¸ë“±ë¡")}</dd></div></dl></div><div class="detail-block"><h3>ë‹´ë‹¹ ê³¼ëª©</h3><div class="tag-list">${(teacher.subjects || []).map((item) => `<span class="tag">${e(item)}</span>`).join("") || `<span class="form-help">ë¯¸ë“±ë¡</span>`}</div></div></section>
-    <section><div class="notice"><i data-lucide="user-pen"></i><span>ì´ë¦„, ì—°ë½ì²˜, ìƒë…„ì›”ì¼Â·ì„±ë³„ë²ˆí˜¸ì™€ ë‹´ë‹¹ ê³¼ëª©ì€ ì§ì ‘ ìˆ˜ì •í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div><div class="notice"><i data-lucide="lock-keyhole"></i><span>Google ì´ë©”ì¼, ê³„ì • ìƒíƒœ, ì›”ê¸‰, ì‹œê¸‰, ë³´í—˜, ì„¸ê¸ˆê³¼ ê³µì œ ì •ë³´ëŠ” ê´€ë¦¬ìë§Œ ìˆ˜ì •í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div></section></div>
-  ` : `<div class="empty-state">ì—°ê²°ëœ ì„ ìƒë‹˜ ì •ë³´ê°€ ì—†ìŠµë‹ˆë‹¤.</div>`;
-  elements.topbarActions.querySelector("[data-action='edit-my-profile']")?.addEventListener("click", () => openTeacherSelfProfileModal(teacher));
-}
-
-function initializeAssistant() {
-  if (!state.assistantMessages.length) {
-    state.assistantMessages.push({
-      role: "assistant",
-      text: "í”„ë¡œê·¸ë¨ ì‚¬ìš©ë²•ì„ ì§ˆë¬¸í•´ ì£¼ì„¸ìš”. ì‹¤ì œ ì´ë¦„, ì´ë©”ì¼, ì „í™”ë²ˆí˜¸, ê³„ì¢Œë²ˆí˜¸, ì£¼ë¯¼ë²ˆí˜¸ì™€ ê¸‰ì—¬ì•¡ì€ ì…ë ¥í•˜ì§€ ë§ˆì„¸ìš”.",
-      source: "ì‚¬ìš© ì„¤ëª…ì„œ"
-    });
-  }
-  elements.assistantStatus.textContent = appConfig.assistant?.enabled
-    ? "Gemini Â· ì‚¬ìš© ì„¤ëª…ì„œ ì „ìš©"
-    : "ë‚´ì¥ ì„¤ëª…ì„œ Â· Gemini ì—°ê²° ì „";
-  renderAssistantMessages();
-}
-
-function openAssistant() {
-  if (state.user?.role !== "admin") return;
-  initializeAssistant();
-  elements.assistantPanel.hidden = false;
-  elements.assistantToggle.setAttribute("aria-expanded", "true");
-  refreshIcons();
-  requestAnimationFrame(() => elements.assistantInput.focus());
-}
-
-function closeAssistant() {
-  elements.assistantPanel.hidden = true;
-  elements.assistantToggle.setAttribute("aria-expanded", "false");
-}
-
-async function submitAssistantQuestion(event) {
-  event.preventDefault();
-  if (state.assistantBusy || state.user?.role !== "admin") return;
-  const question = elements.assistantInput.value.trim();
-  if (!question) return;
-  elements.assistantInput.value = "";
-  state.assistantMessages.push({ role: "user", text: question });
-  state.assistantBusy = true;
-  renderAssistantMessages(true);
-
-  const localAnswer = buildLocalHelpAnswer(question, helpArticles, currentViewLabel());
-  let answer = localAnswer;
-  let source = "ì‚¬ìš© ì„¤ëª…ì„œ";
-  const canUseGemini = appConfig.assistant?.enabled
-    && appConfig.assistant?.provider === "gemini"
-    && !appConfig.demoMode
-    && state.store
-    && detectSensitiveInput(question).length === 0;
-
-  if (canUseGemini) {
-    try {
-      const prompt = buildGeminiPrompt(question, helpArticles, currentViewLabel());
-      answer = await state.store.askHelpAssistant(prompt, appConfig.assistant.model);
-      source = "Gemini Â· ì‚¬ìš© ì„¤ëª…ì„œ";
-      elements.assistantStatus.textContent = "Gemini Â· ì‚¬ìš© ì„¤ëª…ì„œ ì „ìš©";
-    } catch (error) {
-      console.warn("Gemini ë„ì›€ë§ì„ ì‚¬ìš©í•  ìˆ˜ ì—†ì–´ ë‚´ì¥ ì„¤ëª…ì„œë¡œ ë‹µí•©ë‹ˆë‹¤.", error);
-      elements.assistantStatus.textContent = "ë‚´ì¥ ì„¤ëª…ì„œ Â· Gemini ì‘ë‹µ ë¶ˆê°€";
-    }
-  }
-
-  state.assistantMessages.push({ role: "assistant", text: answer, source });
-  state.assistantBusy = false;
-  renderAssistantMessages();
-}
-
-function renderAssistantMessages(showPending = false) {
-  const suggestions = state.assistantMessages.length === 1 ? `
-    <div class="assistant-suggestions" aria-label="ì¶”ì²œ ì§ˆë¬¸">
-      ${["ê·¼ë¡œì†Œë“ê³¼ ì‚¬ì—…ì†Œë“ì„ í•¨ê»˜ ì…ë ¥í•˜ë ¤ë©´?", "ì´ë²ˆ ë‹¬ ê¸‰ì—¬ëŠ” ì–´ë””ì„œ ì…ë ¥í•´?", "ëª…ì„¸ì„œë¥¼ ì´ë©”ì¼ë¡œ ë³´ë‚´ë ¤ë©´?"].map((question) => `<button type="button" data-assistant-question="${e(question)}">${e(question)}</button>`).join("")}
-    </div>
-  ` : "";
-  elements.assistantMessages.innerHTML = state.assistantMessages.map((message) => `
-    <div class="assistant-message ${message.role}">
-      <div>${assistantMessageHtml(message.text)}</div>
-      ${message.source ? `<small>${e(message.source)}</small>` : ""}
-    </div>
-  `).join("") + suggestions + (showPending ? `<div class="assistant-message assistant pending"><div>ì„¤ëª…ì„œë¥¼ í™•ì¸í•˜ê³  ìˆìŠµë‹ˆë‹¤.</div></div>` : "");
-  const submit = elements.assistantForm.querySelector("button[type='submit']");
-  submit.disabled = state.assistantBusy;
-  elements.assistantInput.disabled = state.assistantBusy;
-  elements.assistantMessages.scrollTop = elements.assistantMessages.scrollHeight;
-  refreshIcons();
-}
-
-function currentViewLabel() {
-  if (state.view === "adminPayslip") return "ê°œì¸ ê¸‰ì—¬ëª…ì„¸ì„œ";
-  if (state.view === "help") return "ì‚¬ìš© ì„¤ëª…ì„œ";
-  return adminNav.find(([, view]) => view === state.view)?.[3] || "ê´€ë¦¬ì í™”ë©´";
-}
-
-function assistantMessageHtml(value) {
-  return e(value).replace(/\n/g, "<br>");
-}
-
-function payrollsForMonth(month) {
-  const search = state.search.trim();
-  return activeTeachers()
-    .filter((teacher) => !search || teacher.name.includes(search))
-    .map((teacher) => payrollForTeacher(teacher.id, month))
-    .filter((item) => item && item.payroll.earningLines.length);
-}
-
-function payrollForTeacher(teacherId, month) {
-  if (!appConfig.demoMode && state.data.payslips.length) {
-    const saved = state.data.payslips.find((item) => item.month === month && item.teacherId === teacherId);
-    if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
-    if (state.user?.role === "teacher") return null;
-  }
-  const teacher = teacherById(teacherId);
-  if (!teacher) return null;
-  const settings = teacherPaySettings(teacher);
-  const key = `${month}:${teacherId}`;
-  const override = mergeMonthlyWorkInput(
-    settings.businessRates,
-    state.data.overrides[key],
-    state.data.monthlyWorkInputs[key]
-  );
-  const earningLines = createMonthlyEarningLines({ ...teacher, businessRates: settings.businessRates }, month, override);
-  if (!earningLines.length) return null;
-  return {
-    teacher,
-    payroll: calculatePayroll(
-      earningLines,
-      policyForMonth(month),
-      { ...override, insuranceSettings: settings.insuranceSettings },
-      teacher.taxProfile
-    )
-  };
-}
-
-function entriesForMonth(month) { return state.data.entries.filter((entry) => entry.month === month); }
-function teacherById(id) { return state.data.teachers.find((teacher) => teacher.id === id); }
-function activeTeachers() { return state.data.teachers.filter((teacher) => teacher.status === "active"); }
-function teacherPaySettings(teacher) {
-  const settings = getTeacherPaySettings(teacher);
-  if (!Array.isArray(teacher?.businessRates)) {
-    settings.businessRates = state.data.rateRules
-      .filter((rule) => rule.teacherId === teacher?.id && rule.treatment === "business")
-      .map((rule) => ({ id: rule.id, subjectName: rule.subjectName, hourlyRate: Number(rule.hourlyRate) }));
-  }
-  return settings;
-}
-function monthlyPayAmounts(teacher, month) {
-  const key = `${month}:${teacher.id}`;
-  const settings = teacherPaySettings(teacher);
-  const override = mergeMonthlyWorkInput(
-    settings.businessRates,
-    state.data.overrides[key],
-    state.data.monthlyWorkInputs[key]
-  );
-  return getMonthlyPayAmounts({ ...teacher, businessRates: settings.businessRates }, override);
-}
-
-function monthlyWorkInput(teacherId, month = state.month) {
-  return state.data.monthlyWorkInputs[`${month}:${teacherId}`] || null;
-}
-function payCompositionLabel(employeePay, businessPay) {
-  if (employeePay > 0 && businessPay > 0) return "ê·¼ë¡œ + ì‚¬ì—…";
-  if (employeePay > 0) return "ê·¼ë¡œì†Œë“";
-  if (businessPay > 0) return "ì‚¬ì—…ì†Œë“";
-  return "ê¸ˆì•¡ ë¯¸ì„¤ì •";
-}
-function payrollCompositionLabel(payroll) {
-  const label = payCompositionLabel(payroll?.grossByTreatment?.employee || 0, payroll?.grossByTreatment?.business || 0);
-  return label === "ê¸ˆì•¡ ë¯¸ì„¤ì •" && payroll?.gross > 0 ? "ì¶”ê°€ ì§€ê¸‰" : label;
-}
-function teacherPayDetails(teacher) {
-  const settings = teacherPaySettings(teacher);
-  const rates = settings.businessRates.length
-    ? settings.businessRates.map((rate) => `<div><dt>${e(rate.subjectName)}</dt><dd>${formatWon(rate.hourlyRate)}/ì‹œê°„</dd></div>`).join("")
-    : `<div><dt>ì‚¬ì—…ì†Œë“ ì‹œê¸‰</dt><dd>${settings.defaultBusinessPay > 0 ? "ê¸°ì¡´ ê³ ì • ì›”ì•¡ ì‚¬ìš© ì¤‘" : "ë¯¸ë“±ë¡"}</dd></div>`;
-  const insuranceRows = Object.entries(INSURANCE_LABELS).map(([key, label]) => {
-    const item = settings.insuranceSettings[key];
-    const period = item.effectiveFrom || item.effectiveTo
-      ? `${item.effectiveFrom || "ì‹œì‘ì¼ ë¯¸ì •"} ~ ${item.effectiveTo || "ê³„ì†"}`
-      : "ê¸°ê°„ ë¯¸ì„¤ì •";
-    return `<div><dt>${e(label)}</dt><dd>${item.enrolled ? `ê°€ì… Â· ${item.defaultBaseAmount == null ? "ê¸°ì¤€ì•¡ ë¯¸ì…ë ¥" : formatWon(item.defaultBaseAmount)}<span class="definition-subtext">${e(period)}</span>` : "ë¯¸ê°€ì…"}</dd></div>`;
-  }).join("");
-  return `<div class="detail-block"><h3>ê¸‰ì—¬ ì¡°ê±´</h3><dl class="definition-list"><div><dt>ê¸°ë³¸ ê·¼ë¡œì†Œë“</dt><dd>${formatWon(settings.defaultEmployeePay)}</dd></div>${rates}<div><dt>êµí†µë¹„ ê¸°ë³¸ê°’</dt><dd>${settings.transportPolicy.unitAmount ? `${formatWon(settings.transportPolicy.unitAmount)}/íšŒ Â· ${e(TREATMENT_LABELS[settings.transportPolicy.treatment])}` : "ë¯¸ë“±ë¡"}</dd></div><div><dt>ê³„ì•½ ìš”ì•½</dt><dd>${e(teacher.contractSummary)}</dd></div><div><dt>ì§€ê¸‰ ì˜ˆì •ì¼</dt><dd>ë§¤ì›” ${e(teacher.paymentDay)}ì¼</dd></div></dl></div><div class="detail-block"><h3>ë³´í—˜ë³„ ê°€ì…Â·ì‹ ê³  ê¸°ì¤€</h3><dl class="definition-list">${insuranceRows}</dl></div>`;
-}
-function runForMonth(month) { return state.data.payrollRuns.find((run) => run.month === month) || { month, status: "draft", publishedAt: null }; }
-function cancellationsForMonth(month) {
-  return state.data.payrollCancellations
-    .filter((item) => item.month === month)
-    .sort((a, b) => Number(b.revision) - Number(a.revision));
-}
-function taxPolicyForMonth(month) {
-  return resolveEffectivePolicy(state.data.taxPolicies, month, ntsTaxPolicy2024);
-}
-
-function insurancePolicyForMonth(month) {
-  return resolveEffectivePolicy(state.data.insurancePolicies, month, officialInsurancePolicies.at(-1));
-}
-
-function policyForMonth(month) {
-  return createCombinedPolicy(taxPolicyForMonth(month), insurancePolicyForMonth(month));
-}
-
-function mergeBuiltInTaxPolicies(policies) {
-  const byVersion = new Map([[ntsTaxPolicy2024.version, structuredClone(ntsTaxPolicy2024)]]);
-  policies.forEach((policy) => byVersion.set(policy.version || policy.id, policy));
-  return [...byVersion.values()];
-}
-
-function mergeBuiltInInsurancePolicies(policies) {
-  const byVersion = new Map(officialInsurancePolicies.map((policy) => [policy.version, structuredClone(policy)]));
-  policies.forEach((policy) => byVersion.set(policy.version || policy.id, policy));
-  return [...byVersion.values()];
-}
-
-function availablePayslipMonths(teacherId) {
-  if (!appConfig.demoMode && state.data.payslips.length) {
-    return state.data.payslips
-      .filter((item) => item.teacherId === teacherId && (state.user.role === "admin" || item.status === "published"))
-      .map((item) => item.month)
-      .sort()
-      .reverse();
-  }
-  return [...new Set(state.data.payrollRuns.map((run) => run.month))]
-    .filter((month) => state.user.role !== "teacher" || runForMonth(month).status === "published")
-    .sort().reverse();
-}
-
-function payslipStatus(teacherId, month) {
-  const saved = state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
-  return saved?.status || runForMonth(month).status;
-}
-
-function currentPayslip(teacherId, month) {
-  return state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
-}
-
-function payrollTable(items) {
-  return `<table><thead><tr><th>ì„ ìƒë‹˜</th><th>ê¸‰ì—¬ êµ¬ì„±</th><th class="numeric">ì´ ì§€ê¸‰ì•¡</th><th class="numeric">ê³µì œì•¡</th><th class="numeric">ì‹¤ ì§€ê¸‰ì•¡</th><th>ë°œí–‰</th><th>ì—´ëŒ</th><th>ì „ë‹¬</th><th aria-label="ì‘ì—…"></th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
-    const receipt = receiptFor(teacher.id, state.month);
-    const delivery = deliveryFor(teacher.id, state.month);
-    const published = runForMonth(state.month).status === "published";
-    const insured = Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0);
-    return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${payroll.grossByTreatment.employee > 0 ? "published" : "ready"}">${e(payrollCompositionLabel(payroll))}</span><div class="cell-subtext">ì‚¬íšŒë³´í—˜ ${insured ? "ì ìš©" : "ë¯¸ì ìš©"}</div></td><td class="numeric">${formatWon(payroll.gross)}</td><td class="numeric">${formatWon(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatWon(payroll.net)}</strong></td><td><span class="status-chip ${runForMonth(state.month).status}">${statusLabel(runForMonth(state.month).status)}</span></td><td>${receipt ? `<span class="status-chip published" title="${e(formatViewedAt(receipt.viewedAt))}">ì—´ëŒ ì™„ë£Œ</span>` : `<span class="status-chip pending">${published ? "ë¯¸ì—´ëŒ" : "ë°œí–‰ ì „"}</span>`}</td><td>${delivery ? `<span class="status-chip published" title="${e(formatDeliveryAt(delivery.sentAt))}">ë©”ì¼ ë°œì†¡</span>` : `<span class="status-chip pending">${published ? "ë¯¸ë°œì†¡" : "ë°œí–‰ ì „"}</span>`}</td><td><div class="row-actions">${published ? "" : `<button class="icon-button" type="button" title="ê³¼ì„¸Â·ê³µì œ ì¡°ì •" aria-label="${e(teacher.name)} ê³¼ì„¸ ë° ê³µì œ ì¡°ì •" data-adjust-payroll="${e(teacher.id)}"><i data-lucide="calculator"></i></button>`}<button class="icon-button" type="button" title="ëª…ì„¸ì„œ ë³´ê¸°" aria-label="${e(teacher.name)} ëª…ì„¸ì„œ ë³´ê¸°" data-view-payslip="${e(teacher.id)}"><i data-lucide="file-search"></i></button></div></td></tr>`;
-  }).join("") || emptyRow(9)}</tbody></table>`;
-}
-
-function ledgerTable(items, summary) {
-  return `<table class="accounting-ledger"><thead><tr><th>ì„±ëª…</th><th>ì—°ë½ì²˜</th><th>ìƒë…„ì›”ì¼Â·ì„±ë³„ë²ˆí˜¸</th><th class="numeric">ì‹ ê³ ì•¡</th><th class="numeric">ìˆ˜ì—…ì‹œê°„</th><th class="numeric">ê°•ì‚¬ë£Œ</th><th class="numeric">ê°•ì‚¬ë£Œ ì„¸ì•¡ê³µì œ</th><th class="numeric">êµí†µ íšŸìˆ˜</th><th class="numeric">êµí†µë¹„</th><th class="numeric">ì£¼ì°¨ë£Œ</th><th class="numeric">ê¸°íƒ€</th><th class="numeric">ì¶”ê°€ ì§€ê¸‰ ì›ì²œì§•ìˆ˜</th><th class="numeric">ì„¸ì•¡ê³µì œ í•©ê³„</th><th class="numeric">ì†Œë“ì„¸</th><th class="numeric">ì§€ë°©ì†Œë“ì„¸</th><th class="numeric">ê±´ê°•+ìš”ì–‘</th><th class="numeric">êµ­ë¯¼ì—°ê¸ˆ</th><th class="numeric">ê³ ìš©ë³´í—˜</th><th class="numeric">ë³´í—˜ë£Œ í•©ê³„</th><th class="numeric">êµ­ë¯¼ì—°ê¸ˆ ê¸°ì¤€ì•¡</th><th class="numeric">ê±´ê°•ë³´í—˜ ê¸°ì¤€ì•¡</th><th class="numeric">ê³ ìš©ë³´í—˜ ê¸°ì¤€ì•¡</th><th class="numeric">ê³µì œì•¡ í•©ê³„</th><th class="numeric">ì§€ê¸‰ì•¡</th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
-    const report = accountingReportFor(payroll);
-    const bases = insuranceBasesFor(payroll);
-    const withholdingTotal = report.lectureWithholding + report.additionalPaymentWithholding;
-    return `<tr><td>${e(teacher.name)}</td><td>${e(teacher.phone || "")}</td><td>${e(formatTeacherIdentity(teacher))}</td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
-  }).join("")}<tr class="ledger-total"><td colspan="3"><strong>í•©ê³„</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="18"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
-}
-
-function insuranceBasesFor(payroll) {
-  return payroll.insuranceBases || {
-    nationalPension: payroll.insuredBase || 0,
-    healthInsurance: payroll.insuredBase || 0,
-    employmentInsurance: payroll.insuredBase || 0
-  };
-}
-
-function accountingReportFor(payroll) {
-  if (payroll.reporting) return payroll.reporting;
-  const lines = payroll.earningLines || [];
-  const deductions = payroll.deductions || {};
-  const categoryAmount = (category) => lines.filter((line) => line.earningCategory === category).reduce((sum, line) => sum + Number(line.amount || 0), 0);
-  const insuranceTotal = Number(deductions.nationalPension || 0) + Number(deductions.healthInsurance || 0) + Number(deductions.longTermCare || 0) + Number(deductions.employmentInsurance || 0);
-  return {
-    reportedGross: payroll.gross || 0,
-    classHours: lines.reduce((sum, line) => sum + Number(line.workHours ?? (line.earningCategory === "lectureFee" || line.treatment === "business" ? line.hours : 0) ?? 0), 0),
-    lectureFeeGross: categoryAmount("lectureFee") || payroll.grossByTreatment?.business || 0,
-    lectureWithholding: Number(deductions.businessIncomeTax || 0) + Number(deductions.businessLocalTax || 0),
-    additionalPaymentWithholding: Number(deductions.otherIncomeTax || 0) + Number(deductions.otherLocalTax || 0),
-    transportTrips: lines.filter((line) => line.earningCategory === "transport").reduce((sum, line) => sum + Number(line.quantity ?? line.hours ?? 0), 0),
-    transportAmount: categoryAmount("transport"),
-    parkingAmount: categoryAmount("parking"),
-    otherPaymentAmount: categoryAmount("otherPayment"),
-    employeeIncomeTax: Number(deductions.employeeIncomeTax || 0),
-    employeeLocalTax: Number(deductions.employeeLocalTax || 0),
-    healthAndLongTermCare: Number(deductions.healthInsurance || 0) + Number(deductions.longTermCare || 0),
-    nationalPension: Number(deductions.nationalPension || 0),
-    employmentInsurance: Number(deductions.employmentInsurance || 0),
-    insuranceTotal
-  };
-}
-
-function payslipSheet(teacher, payroll, month, run) {
-  const deductionRows = Object.entries(deductionLabels()).filter(([key]) => payroll.deductions[key] > 0);
-  return `<article class="payslip-sheet">
-    <header class="payslip-title"><div><h2>${formatMonth(month)} ê¸‰ì—¬ëª…ì„¸ì„œ</h2><p>${e(appConfig.academyName)} Â· ì§€ê¸‰ ì˜ˆì •ì¼ ë§¤ì›” ${e(teacher.paymentDay)}ì¼</p></div><span class="brand-mark" aria-hidden="true">AP</span></header>
-    <div class="payslip-summary"><div><span>ì„±ëª…</span><strong>${e(teacher.name)}</strong></div><div><span>ê¸‰ì—¬ êµ¬ì„±</span><strong>${e(payrollCompositionLabel(payroll))} Â· ì‚¬íšŒë³´í—˜ ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "ì ìš©" : "ë¯¸ì ìš©"}</strong></div><div><span>ë°œí–‰ ìƒíƒœ</span><strong>${run.status === "published" ? `${artifactRevision(run)}ì°¨ ë°œí–‰ ì™„ë£Œ` : "ë¯¸ë¦¬ë³´ê¸°"}</strong></div></div>
-    <h3>ì§€ê¸‰ ë‚´ì—­</h3><div class="table-scroll"><table><thead><tr><th>ì§€ê¸‰ í•­ëª©</th><th>ì†Œë“ êµ¬ë¶„</th><th>ì‚°ì • ê¸°ì¤€</th><th class="numeric">ê¸ˆì•¡</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td><td>${e(earningBasisLabel(line))}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
-    <h3>ê³µì œ ë‚´ì—­</h3><div class="table-scroll"><table><thead><tr><th>í•­ëª©</th><th class="numeric">ê¸ˆì•¡</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">ê³µì œ ë‚´ì—­ ì—†ìŒ</td></tr>`}</tbody></table></div>
-    <div class="payslip-totals"><div><span>ì´ ì§€ê¸‰ì•¡</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>ì´ ê³µì œì•¡</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>ì‹¤ ì§€ê¸‰ì•¡</span><strong>${formatWon(payroll.net)}</strong></div></div>
-    <p class="payslip-footnote">ë³¸ ëª…ì„¸ì„œëŠ” í™•ì •ëœ ì„ ìƒë‹˜ë³„ ì›” ì§€ê¸‰ì•¡ê³¼ ìœ í˜•ì„ ê¸°ì¤€ìœ¼ë¡œ ì‘ì„±ë˜ì—ˆìŠµë‹ˆë‹¤. ì„¸ê¸ˆ ê¸°ì¤€ ${e(payroll.taxPolicyVersion || payroll.policyVersion)}, ì‚¬íšŒë³´í—˜ ê¸°ì¤€ ${e(payroll.insurancePolicyVersion || "ë³„ë„ í™•ì¸")}. ì„¸ë¶€ ê³„ì•½ ë˜ëŠ” ê³µì œ ê´€ë ¨ ë¬¸ì˜ëŠ” í•™ì› ë‹´ë‹¹ìì—ê²Œ ì—°ë½í•´ ì£¼ì„¸ìš”.</p>
-  </article>`;
-}
-
-function earningBasisLabel(line) {
-  if (line.kind === "unit") return `${formatNumber(line.quantity ?? line.hours)}íšŒ Ã— ${formatNumber(line.unitRate ?? line.hourlyRate)}ì›`;
-  if (line.kind === "monthly" && Number(line.workHours) > 0) return `ì›” ì§€ê¸‰ì•¡ Â· ìˆ˜ì—… ${formatHours(line.workHours)}`;
-  if (line.kind === "monthly") return "ì„ ìƒë‹˜ë³„ ì›” ì§€ê¸‰ì•¡";
-  return `${line.hours}ì‹œê°„ Ã— ${formatNumber(line.hourlyRate)}ì›`;
-}
-
-function bindCommonControls() {
-  elements.content.querySelectorAll("[data-control='month']").forEach((input) => input.addEventListener("change", () => { state.month = input.value; render(); }));
-  elements.content.querySelectorAll("[data-control='search']").forEach((input) => input.addEventListener("input", () => { state.search = input.value; render(); }));
-}
-
-function treatmentOptions(selected = "pending") {
-  return [
-    ["pending", "ì²˜ë¦¬ ë¯¸í™•ì¸"],
-    ["business", "ì‚¬ì—…ì†Œë“ 3.3%"],
-    ["employee", "ê·¼ë¡œì†Œë“ ê³¼ì„¸"],
-    ["exempt", "ë¹„ê³¼ì„¸ ì‹¤ë¹„"],
-    ["other", "ê¸°íƒ€ì†Œë“"]
-  ].map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`).join("");
-}
-
-function insuranceEditorHtml(settings, prefix) {
-  return `<div class="form-field full insurance-editor-field">
-    <div class="editor-heading"><label>ë³´í—˜ë³„ ê°€ì…Â·ì‹ ê³  ê¸°ì¤€</label><span class="form-help">ê°€ì…í•œ ë³´í—˜ë§Œ ì„ íƒí•˜ê³  ê³µë‹¨ì— ì‹ ê³ í•œ ê¸°ì¤€ì•¡ê³¼ ì ìš© ê¸°ê°„ì„ ê°ê° ì…ë ¥í•©ë‹ˆë‹¤.</span></div>
-    <div class="insurance-editor">${Object.entries(INSURANCE_LABELS).map(([key, label]) => {
-      const item = settings?.[key] || {};
-      return `<div class="insurance-setting-row">
-        <label class="checkbox-row"><input name="${prefix}-${key}-enrolled" type="checkbox" ${item.enrolled ? "checked" : ""} /> ${e(label)} ê°€ì…</label>
-        <div class="input-suffix"><input name="${prefix}-${key}-base" type="number" min="0" step="1000" value="${item.defaultBaseAmount ?? ""}" placeholder="ì‹ ê³  ê¸°ì¤€ì•¡" aria-label="${e(label)} ê¸°ë³¸ ì‹ ê³  ê¸°ì¤€ì•¡" /><span>ì›</span></div>
-        <input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} ì ìš© ì‹œì‘ì¼" />
-        <input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} ì ìš© ì¢…ë£Œì¼" />
-      </div>`;
-    }).join("")}</div>
-    <span class="form-help">ê±´ê°•ë³´í—˜ í•­ëª©ì€ ê±´ê°•ë³´í—˜ê³¼ ì¥ê¸°ìš”ì–‘ì„ í•¨ê»˜ ê´€ë¦¬í•©ë‹ˆë‹¤. ì¢…ë£Œì¼ì´ ì—†ìœ¼ë©´ ê³„ì† ì ìš©ë©ë‹ˆë‹¤.</span>
-  </div>`;
-}
-
-function readInsuranceSettings(form, prefix) {
-  return Object.fromEntries(Object.keys(INSURANCE_LABELS).map((key) => {
-    const enrolled = form.elements[`${prefix}-${key}-enrolled`]?.checked === true;
-    const baseValue = form.elements[`${prefix}-${key}-base`]?.value ?? "";
-    const effectiveFrom = form.elements[`${prefix}-${key}-from`]?.value || null;
-    const effectiveTo = form.elements[`${prefix}-${key}-to`]?.value || null;
-    if (effectiveFrom && effectiveTo && effectiveFrom > effectiveTo) {
-      throw new Error(`${INSURANCE_LABELS[key]} ì ìš© ì¢…ë£Œì¼ì€ ì‹œì‘ì¼ë³´ë‹¤ ë¹ ë¥¼ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.`);
-    }
-    return [key, {
-      enrolled,
-      defaultBaseAmount: baseValue === "" ? null : Number(baseValue),
-      effectiveFrom,
-      effectiveTo
-    }];
-  }));
-}
-
-function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
-  const fields = {
-    nationalPension: "nationalPensionBase",
-    healthInsurance: "healthInsuranceBase",
-    employmentInsurance: "employmentInsuranceBase"
-  };
-  const rows = Object.entries(INSURANCE_LABELS).filter(([key]) => settings[key]?.enrolled).map(([key, label]) => {
-    const field = fields[key];
-    const value = current[field] ?? settings[key]?.defaultBaseAmount ?? employeeGrossPay ?? 0;
-    return `<div class="form-field"><label for="monthly-${field}">${e(label)} ì‹ ê³  ê¸°ì¤€ì•¡</label><div class="input-suffix"><input id="monthly-${field}" name="${field}" type="number" min="0" step="1000" value="${e(value)}" required /><span>ì›</span></div></div>`;
-  }).join("");
-  if (!rows) return "";
-  return `<div class="form-field full form-section-heading"><strong>ì´ë²ˆ ë‹¬ ë³´í—˜ ì‹ ê³  ê¸°ì¤€ì•¡</strong><span class="form-help">ë³´í—˜ë£Œ ìë™ ê³„ì‚°ì˜ ê¸°ì¤€ì…ë‹ˆë‹¤. ì‹¤ì œ ê³µë‹¨ ì‹ ê³ ì•¡ê³¼ ë‹¤ë¥´ë©´ ì´ë²ˆ ë‹¬ ê°’ìœ¼ë¡œ ìˆ˜ì •í•©ë‹ˆë‹¤.</span></div>${rows}`;
-}
-
-function additionalEarningsEditorHtml(lines, containerId) {
-  return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>ê¸°íƒ€ ì§€ê¸‰ í•­ëª©</label><button class="button button-secondary button-compact" type="button" data-add-additional="${e(containerId)}"><i data-lucide="plus"></i><span>í•­ëª© ì¶”ê°€</span></button></div>
-    <div id="${e(containerId)}" class="additional-line-editor">${(lines || []).map(additionalEarningRowHtml).join("")}</div>
-    <span class="form-help">êµí†µë¹„Â·ì£¼ì°¨ë£Œ ì™¸ ì§€ê¸‰ì•¡ì„ ì…ë ¥í•©ë‹ˆë‹¤. ê³¼ì„¸ ì²˜ë¦¬ê°€ í™•ì •ë˜ì§€ ì•Šì•˜ë‹¤ë©´ ì²˜ë¦¬ ë¯¸í™•ì¸ì„ ì„ íƒí•˜ì„¸ìš”.</span>
-  </div>`;
-}
-
-function additionalEarningRowHtml(line = {}) {
-  return `<div class="additional-line-row" data-additional-row data-line-id="${e(line.id || crypto.randomUUID())}">
-    <input type="text" value="${e(line.label || "")}" placeholder="í•­ëª©ëª…" aria-label="ê¸°íƒ€ ì§€ê¸‰ í•­ëª©ëª…" data-additional-label />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.amount || "")}" placeholder="ê¸ˆì•¡" aria-label="ê¸°íƒ€ ì§€ê¸‰ ê¸ˆì•¡" data-additional-amount /><span>ì›</span></div>
-    <select aria-label="ê¸°íƒ€ ì§€ê¸‰ ê³¼ì„¸ ì²˜ë¦¬" data-additional-treatment>${treatmentOptions(line.treatment)}</select>
-    <label class="checkbox-row compact"><input type="checkbox" data-additional-insurance ${line.insuranceCovered ? "checked" : ""} /> ë³´í—˜ ê¸°ì¤€ í¬í•¨</label>
-    <button class="icon-button" type="button" title="í•­ëª© ì‚­ì œ" aria-label="ê¸°íƒ€ ì§€ê¸‰ í•­ëª© ì‚­ì œ" data-remove-additional><i data-lucide="trash-2"></i></button>
-  </div>`;
-}
-
-function bindAdditionalEarningsEditor(containerSelector) {
-  const container = document.querySelector(containerSelector);
-  if (!container) return;
-  document.querySelector(`[data-add-additional='${container.id}']`)?.addEventListener("click", () => {
-    container.insertAdjacentHTML("beforeend", additionalEarningRowHtml());
-    refreshIcons();
-  });
-  container.addEventListener("click", (event) => {
-    event.target.closest("[data-remove-additional]")?.closest("[data-additional-row]")?.remove();
-  });
-}
-
-function readAdditionalEarnings(containerSelector) {
-  return [...document.querySelectorAll(`${containerSelector} [data-additional-row]`)].map((row) => {
-    const label = row.querySelector("[data-additional-label]").value.trim();
-    const amount = Number(row.querySelector("[data-additional-amount]").value);
-    if (!label && !amount) return null;
-    if (!label || !Number.isFinite(amount) || amount <= 0) throw new Error("ê¸°íƒ€ ì§€ê¸‰ í•­ëª©ëª…ê³¼ 0ì›ë³´ë‹¤ í° ê¸ˆì•¡ì„ í•¨ê»˜ ì…ë ¥í•´ ì£¼ì„¸ìš”.");
-    return {
-      id: row.dataset.lineId || crypto.randomUUID(),
-      label,
-      amount,
-      treatment: row.querySelector("[data-additional-treatment]").value,
-      insuranceCovered: row.querySelector("[data-additional-insurance]").checked
-    };
-  }).filter(Boolean);
-}
-
-function businessRateEditorHtml(rates, containerId) {
-  const rows = rates.length ? rates : [{ id: crypto.randomUUID(), subjectName: "", hourlyRate: "" }];
-  return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>ê³¼ëª©ë³„ ì‚¬ì—…ì†Œë“ ì‹œê¸‰</label><button class="button button-secondary button-compact" type="button" data-add-business-rate="${e(containerId)}"><i data-lucide="plus"></i><span>ì‹œê¸‰ ì¶”ê°€</span></button></div>
-    <div id="${e(containerId)}" class="business-line-editor">${rows.map(businessRateRowHtml).join("")}</div>
-    <span class="form-help">ê³¼ëª©ë§ˆë‹¤ ì‹œê¸‰ì´ ë‹¤ë¥´ë©´ ì¤„ì„ ì¶”ê°€í•©ë‹ˆë‹¤. ì›”ë³„ ìˆ˜ì—… ì‹œìˆ˜ëŠ” ì›” ê¸‰ì—¬ ì…ë ¥ì—ì„œ ê¸°ë¡í•©ë‹ˆë‹¤.</span>
-  </div>`;
-}
-
-function businessRateRowHtml(rate = {}) {
-  return `<div class="business-line-row rate-row" data-business-rate-row data-line-id="${e(rate.id || crypto.randomUUID())}">
-    <input type="text" value="${e(rate.subjectName || "")}" placeholder="ê³¼ëª©ëª…" aria-label="ì‚¬ì—…ì†Œë“ ê³¼ëª©ëª…" data-rate-subject />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(rate.hourlyRate || "")}" placeholder="ì‹œê¸‰" aria-label="ì‚¬ì—…ì†Œë“ ì‹œê¸‰" data-rate-hourly /><span>ì›/ì‹œê°„</span></div>
-    <button class="icon-button" type="button" title="ì‹œê¸‰ ì‚­ì œ" aria-label="ì‚¬ì—…ì†Œë“ ì‹œê¸‰ ì‚­ì œ" data-remove-business-line><i data-lucide="trash-2"></i></button>
-  </div>`;
-}
-
-function bindBusinessRateEditor(containerSelector) {
-  const container = document.querySelector(containerSelector);
-  if (!container) return;
-  document.querySelector(`[data-add-business-rate='${container.id}']`)?.addEventListener("click", () => {
-    container.insertAdjacentHTML("beforeend", businessRateRowHtml());
-    refreshIcons();
-  });
-  container.addEventListener("click", (event) => {
-    const remove = event.target.closest("[data-remove-business-line]");
-    if (remove) remove.closest("[data-business-rate-row]")?.remove();
-  });
-}
-
-function readBusinessRates(containerSelector) {
-  return [...document.querySelectorAll(`${containerSelector} [data-business-rate-row]`)].map((row) => {
-    const subjectName = row.querySelector("[data-rate-subject]").value.trim();
-    const hourlyRate = Number(row.querySelector("[data-rate-hourly]").value);
-    if (!subjectName && !hourlyRate) return null;
-    if (!subjectName || !Number.isFinite(hourlyRate) || hourlyRate <= 0) throw new Error("ì‚¬ì—…ì†Œë“ ê³¼ëª©ëª…ê³¼ 0ì›ë³´ë‹¤ í° ì‹œê¸‰ì„ í•¨ê»˜ ì…ë ¥í•´ ì£¼ì„¸ìš”.");
-    return { id: row.dataset.lineId || crypto.randomUUID(), subjectName, hourlyRate };
-  }).filter(Boolean);
-}
-
-function businessWorkEditorHtml(lines, containerId) {
-  const rows = lines.length ? lines : [{ id: crypto.randomUUID(), rateId: null, subjectName: "", hourlyRate: "", hours: "" }];
-  return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>${formatMonth(state.month)} ì‚¬ì—…ì†Œë“ ìˆ˜ì—…</label><button class="button button-secondary button-compact" type="button" data-add-business-work="${e(containerId)}"><i data-lucide="plus"></i><span>ìˆ˜ì—… ì¶”ê°€</span></button></div>
-    <div id="${e(containerId)}" class="business-line-editor">${rows.map(businessWorkRowHtml).join("")}</div>
-    <div class="business-work-summary"><div><span>ìˆ˜ì—… ì‹œìˆ˜</span><strong id="business-hours-total">0ì‹œê°„</strong></div><div><span>ì‚¬ì—…ì†Œë“ ì´ì•¡</span><strong id="business-gross-total">0ì›</strong></div><div><span>ì˜ˆìƒ 3.3%</span><strong id="business-tax-total">0ì›</strong></div><div><span>ì‚¬ì—…ì†Œë“ ì˜ˆìƒ ì§€ê¸‰ì•¡</span><strong id="business-net-total">0ì›</strong></div></div>
-  </div>`;
-}
-
-function businessWorkRowHtml(line = {}) {
-  return `<div class="business-line-row work-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}">
-    <input type="text" value="${e(line.subjectName || "")}" placeholder="ê³¼ëª©ëª…" aria-label="ì‚¬ì—…ì†Œë“ ìˆ˜ì—… ê³¼ëª©ëª…" data-work-subject />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.hourlyRate || "")}" placeholder="ì‹œê¸‰" aria-label="ì‚¬ì—…ì†Œë“ ìˆ˜ì—… ì‹œê¸‰" data-work-hourly /><span>ì›</span></div>
-    <div class="input-suffix"><input type="number" min="0" step="0.5" value="${e(line.hours || "")}" placeholder="ì‹œìˆ˜" aria-label="ì‚¬ì—…ì†Œë“ ìˆ˜ì—… ì‹œìˆ˜" data-work-hours /><span>ì‹œê°„</span></div>
-    <strong class="business-line-amount" data-work-amount>0ì›</strong>
-    <button class="icon-button" type="button" title="ìˆ˜ì—… ì‚­ì œ" aria-label="ì‚¬ì—…ì†Œë“ ìˆ˜ì—… ì‚­ì œ" data-remove-business-line><i data-lucide="trash-2"></i></button>
-  </div>`;
-}
-
-function bindBusinessWorkEditor(containerSelector) {
-  const container = document.querySelector(containerSelector);
-  if (!container) return;
-  document.querySelector(`[data-add-business-work='${container.id}']`)?.addEventListener("click", () => {
-    container.insertAdjacentHTML("beforeend", businessWorkRowHtml());
-    refreshIcons();
-    updateBusinessWorkSummary(containerSelector);
-  });
-  container.addEventListener("input", () => updateBusinessWorkSummary(containerSelector));
-  container.addEventListener("click", (event) => {
-    const remove = event.target.closest("[data-remove-business-line]");
-    if (!remove) return;
-    remove.closest("[data-business-work-row]")?.remove();
-    updateBusinessWorkSummary(containerSelector);
-  });
-  updateBusinessWorkSummary(containerSelector);
-}
-
-function readBusinessWorkLines(containerSelector) {
-  return [...document.querySelectorAll(`${containerSelector} [data-business-work-row]`)].map((row) => {
-    const subjectName = row.querySelector("[data-work-subject]").value.trim();
-    const hourlyRate = Number(row.querySelector("[data-work-hourly]").value);
-    const hours = Number(row.querySelector("[data-work-hours]").value);
-    if (!subjectName && !hourlyRate && !hours) return null;
-    if (!subjectName || !Number.isFinite(hourlyRate) || hourlyRate <= 0 || !Number.isFinite(hours) || hours < 0) throw new Error("ì‚¬ì—…ì†Œë“ ê³¼ëª©ëª…, ì‹œê¸‰ê³¼ 0 ì´ìƒì˜ ìˆ˜ì—… ì‹œìˆ˜ë¥¼ í™•ì¸í•´ ì£¼ì„¸ìš”.");
-    return { id: row.dataset.lineId || crypto.randomUUID(), rateId: row.dataset.rateId || null, subjectName, hourlyRate, hours };
-  }).filter(Boolean);
-}
-
-function updateBusinessWorkSummary(containerSelector) {
-  let gross = 0;
-  let hours = 0;
-  document.querySelectorAll(`${containerSelector} [data-business-work-row]`).forEach((row) => {
-    const rowHours = Math.max(0, Number(row.querySelector("[data-work-hours]").value) || 0);
-    const hourlyRate = Math.max(0, Number(row.querySelector("[data-work-hourly]").value) || 0);
-    const amount = Math.round(rowHours * hourlyRate);
-    hours += rowHours;
-    gross += amount;
-    row.querySelector("[data-work-amount]").textContent = formatWon(amount);
-  });
-  const withholding = estimatedBusinessWithholding(gross);
-  document.querySelector("#business-hours-total").textContent = formatHours(hours);
-  document.querySelector("#business-gross-total").textContent = formatWon(gross);
-  document.querySelector("#business-tax-total").textContent = formatWon(withholding);
-  document.querySelector("#business-net-total").textContent = formatWon(gross - withholding);
-}
-
-function estimatedBusinessWithholding(gross) {
-  const incomeTax = Math.floor(Math.max(0, Number(gross) || 0) * 0.03);
-  return incomeTax + Math.round(incomeTax * 0.1);
-}
-
-function mergeBusinessWorkLines(rates, workLines) {
-  const currentByRate = new Map(workLines.filter((line) => line.rateId).map((line) => [line.rateId, line]));
-  const defaults = rates.map((rate) => currentByRate.get(rate.id) || { ...rate, rateId: rate.id, hours: 0 });
-  const custom = workLines.filter((line) => !line.rateId || !rates.some((rate) => rate.id === line.rateId));
-  return [...defaults, ...custom];
-}
-
-function bindPayrollRows() {
-  elements.content.querySelectorAll("[data-view-payslip]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedTeacherId = button.dataset.viewPayslip;
-    state.selectedPayslipMonth = state.month;
-    state.view = "adminPayslip";
-    render();
-  }));
-  elements.content.querySelectorAll("[data-adjust-payroll]").forEach((button) => button.addEventListener("click", () => {
-    const teacher = teacherById(button.dataset.adjustPayroll);
-    if (teacher) openPayrollAdjustmentModal(teacher);
-  }));
-}
-
-function openEntryModal() {
-  const teacherOptions = state.data.teachers.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)}</option>`).join("");
-  openModal("ìˆ˜ì—… ë‚´ì—­ ì¶”ê°€", `
-    <div class="notice"><i data-lucide="list-checks"></i><span>ì†Œë“ êµ¬ë¶„ì€ ê³„ì•½ì„œ ëª…ì¹­ì´ ì•„ë‹ˆë¼ ì‹¤ì œ ê³ ìš©ê´€ê³„, ê³„ì†Â·ë°˜ë³µì„±, ë…ë¦½ì„±ì„ í™•ì¸í•´ ì„ íƒí•˜ì„¸ìš”.</span></div>
-    <form id="entry-form" class="form-grid">
-      <div class="form-field"><label for="entry-date">ìˆ˜ì—…ì¼</label><input id="entry-date" name="workedOn" type="date" value="${e(state.month)}-15" required /></div>
-      <div class="form-field"><label for="entry-teacher">ì„ ìƒë‹˜</label><select id="entry-teacher" name="teacherId" required>${teacherOptions}</select></div>
-      <div class="form-field full"><label for="entry-subject">ê³¼ëª©ëª…</label><input id="entry-subject" name="subjectName" required placeholder="ì˜ˆ: ê³ ë“± ìˆ˜í•™" /></div>
-      <div class="form-field"><label for="entry-hours">ìˆ˜ì—… ì‹œê°„</label><input id="entry-hours" name="hours" type="number" min="0.5" step="0.5" required /></div>
-      <div class="form-field"><label for="entry-rate">ì‹œê¸‰</label><input id="entry-rate" name="hourlyRate" type="number" min="0" step="1000" required /></div>
-      <div class="form-field"><label for="entry-treatment">ì†Œë“ êµ¬ë¶„</label><select id="entry-treatment" name="treatment"><option value="employee">ê·¼ë¡œì†Œë“</option><option value="business">ì‚¬ì—…ì†Œë“</option><option value="other">ê¸°íƒ€ì†Œë“</option><option value="exempt">ê³µì œ ì—†ìŒ</option></select></div>
-      <div class="form-field"><label>ë³´í—˜ ì ìš©</label><label class="checkbox-row"><input name="insuranceCovered" type="checkbox" /> ì´ ìˆ˜ì—…ì„ ë³´í—˜ ê¸°ì¤€ì•¡ì— í¬í•¨</label></div>
-      <div class="form-field"><label for="entry-other-category">ê¸°íƒ€ì†Œë“ ë¶„ë¥˜</label><select id="entry-other-category" name="otherIncomeCategory"><option value="temporaryLecture">ì¼ì‹œì  ê°•ì˜Â·ì¸ì ìš©ì—­</option></select></div>
-      <div class="form-field"><label for="entry-payment-group">ê¸°íƒ€ì†Œë“ ì§€ê¸‰ ê±´ ID</label><input id="entry-payment-group" name="otherPaymentGroup" placeholder="ë¹„ìš°ë©´ ì›” ì§€ê¸‰ë¶„ í•©ì‚°" /><span class="form-help">ë³„ë„ ì§€ê¸‰ ê±´ì´ë©´ ê°™ì€ IDë¼ë¦¬ ê³¼ì„¸ìµœì €í•œì„ ê³„ì‚°í•©ë‹ˆë‹¤.</span></div>
-    </form>`, "ì¶”ê°€", async () => {
-      const form = document.querySelector("#entry-form");
-      if (!form.reportValidity()) return false;
-      const data = Object.fromEntries(new FormData(form));
-      const entry = { id: crypto.randomUUID(), month: data.workedOn.slice(0, 7), workedOn: data.workedOn, teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hours: Number(data.hours), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", otherIncomeCategory: data.treatment === "other" ? data.otherIncomeCategory : null, otherPaymentGroup: data.treatment === "other" ? data.otherPaymentGroup || null : null, source: "manual" };
-      state.data.entries.push(entry);
-      if (state.store) await state.store.saveDocument("workEntries", entry.id, entry);
-      state.month = entry.month;
-      showToast("ìˆ˜ì—… ë‚´ì—­ì„ ì¶”ê°€í–ˆìŠµë‹ˆë‹¤.");
-      renderEntries();
-    });
-}
-
-function openTeacherSelfProfileModal(teacher) {
-  openModal("ë‚´ ì •ë³´ ìˆ˜ì •", `
-    <div class="notice"><i data-lucide="shield-check"></i><span>ê¸‰ì—¬ì™€ ë¡œê·¸ì¸ ê¶Œí•œì— ì˜í–¥ì„ ì£¼ëŠ” ì •ë³´ëŠ” ë³€ê²½ë˜ì§€ ì•ŠìŠµë‹ˆë‹¤.</span></div>
-    <form id="teacher-self-profile-form" class="form-grid">
-      <div class="form-field"><label for="self-profile-name">ì´ë¦„</label><input id="self-profile-name" name="name" value="${e(teacher.name)}" required /></div>
-      <div class="form-field"><label for="self-profile-phone">ì—°ë½ì²˜</label><input id="self-profile-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="self-profile-birth">ìƒë…„ì›”ì¼ 6ìë¦¬</label><input id="self-profile-birth" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" required /><span class="form-help">ì£¼ë¯¼ë“±ë¡ë²ˆí˜¸ ì• 6ìë¦¬ë§Œ ì €ì¥í•©ë‹ˆë‹¤.</span></div>
-      <div class="form-field"><label for="self-profile-gender">ì„±ë³„ë²ˆí˜¸ 1ìë¦¬</label><input id="self-profile-gender" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" required /><span class="form-help">ì£¼ë¯¼ë“±ë¡ë²ˆí˜¸ ë’·ìë¦¬ì˜ ì²« ìˆ«ìë§Œ ì €ì¥í•©ë‹ˆë‹¤.</span></div>
-      <div class="form-field full"><label for="self-profile-subjects">ë‹´ë‹¹ ê³¼ëª©</label><input id="self-profile-subjects" name="subjects" value="${e((teacher.subjects || []).join(", "))}" placeholder="ì‰¼í‘œë¡œ êµ¬ë¶„" /></div>
-      <div class="form-field full"><label for="self-profile-email">Google ì´ë©”ì¼</label><input id="self-profile-email" type="email" value="${e(teacher.email)}" readonly /><span class="form-help">ë¡œê·¸ì¸ ì´ë©”ì¼ì€ ê´€ë¦¬ìë§Œ ë³€ê²½í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-    </form>
-  `, "ì €ì¥", async () => {
-    const form = document.querySelector("#teacher-self-profile-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    const profile = {
-      name: data.name.trim(),
-      phone: data.phone.trim(),
-      ...validateTeacherIdentity(data.birthDateCode, data.genderCode),
-      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean)
-    };
-    if (state.store) await state.store.saveTeacherProfile(teacher.id, profile);
-    Object.assign(teacher, profile);
-    state.user.name = profile.name;
-    document.querySelector("#user-name").textContent = profile.name;
-    document.querySelector("#user-avatar").textContent = profile.name.slice(0, 1);
-    showToast("ë‚´ ì •ë³´ë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-    renderProfile();
-  });
-}
-
-function openTeacherModal() {
-  openModal("ì„ ìƒë‹˜ ë“±ë¡", `
-    <form id="teacher-form" class="form-grid">
-      <div class="form-field"><label for="teacher-name">ì´ë¦„</label><input id="teacher-name" name="name" required /></div>
-      <div class="form-field"><label for="teacher-email">Google ì´ë©”ì¼</label><input id="teacher-email" name="email" type="email" required /></div>
-      <div class="form-field"><label for="teacher-phone">ì—°ë½ì²˜</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-birth-date-code">ìƒë…„ì›”ì¼ 6ìë¦¬</label><input id="teacher-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="ì˜ˆ: 900101" /><span class="form-help">ë¹„ì›Œ ë‘ë©´ ì„ ìƒë‹˜ì´ ë¡œê·¸ì¸ í›„ ì§ì ‘ ì…ë ¥í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-      <div class="form-field"><label for="teacher-gender-code">ì„±ë³„ë²ˆí˜¸ 1ìë¦¬</label><input id="teacher-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" placeholder="ì˜ˆ: 1" /><span class="form-help">ìƒë…„ì›”ì¼ê³¼ í•¨ê»˜ ì…ë ¥í•˜ê±°ë‚˜ ë‘ í•­ëª©ì„ ëª¨ë‘ ë¹„ì›Œ ë‘ì„¸ìš”.</span></div>
-      ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
-      <div class="form-field"><label for="teacher-employee-pay">ê¸°ë³¸ ê·¼ë¡œì†Œë“ ì›” ì§€ê¸‰ì•¡</label><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="0" required /></div>
-      <div class="form-field"><label for="teacher-transport-region">êµí†µë¹„ ì ìš© ì§€ì—­Â·ê¸°ì¤€</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="ì˜ˆ: ì„œìš¸ ì‹œë‚´" /></div>
-      <div class="form-field"><label for="teacher-transport-unit">êµí†µ 1íšŒ ê¸ˆì•¡</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="0" /><span>ì›</span></div></div>
-      <div class="form-field"><label for="teacher-transport-treatment">êµí†µë¹„ ê¸°ë³¸ ì²˜ë¦¬</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
-      ${businessRateEditorHtml([], "teacher-business-rates")}
-      <div class="form-field full"><label for="teacher-subjects">ë‹´ë‹¹ ê³¼ëª©</label><input id="teacher-subjects" name="subjects" placeholder="ì‰¼í‘œë¡œ êµ¬ë¶„" /></div>
-      <div class="form-field"><label for="teacher-contract">ê³„ì•½ ìš”ì•½</label><input id="teacher-contract" name="contractSummary" placeholder="ì˜ˆ: ì •ê·œ ì›”ê¸‰ì œ" /></div>
-      <div class="form-field"><label for="teacher-payday">ì§€ê¸‰ì¼</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" /></div>
-      <div class="form-field"><label for="teacher-dependents">ê³µì œëŒ€ìƒê°€ì¡± ìˆ˜</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
-      <div class="form-field"><label for="teacher-children">8~20ì„¸ ìë…€ ìˆ˜</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
-      <div class="form-field"><label for="teacher-tax-ratio">ì›ì²œì§•ìˆ˜ ë¹„ìœ¨</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
-      <p class="form-help full">ì‹¤ì œ ê³„ì • ì—°ê²°ì€ ì‚¬ìš©ìê°€ ì²˜ìŒ ë¡œê·¸ì¸í•œ ë’¤ ê´€ë¦¬ì ìŠ¹ì¸ ì ˆì°¨ì—ì„œ UIDë¥¼ í™•ì¸í•˜ë„ë¡ ìš´ì˜í•˜ì„¸ìš”.</p>
-    </form>`, "ë“±ë¡", async () => {
-    const form = document.querySelector("#teacher-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    const email = normalizeEmail(data.email);
-    if (state.data.teachers.some((teacher) => normalizeEmail(teacher.email) === email)) throw new Error("ê°™ì€ Google ì´ë©”ì¼ë¡œ ë“±ë¡ëœ ì„ ìƒë‹˜ì´ ìˆìŠµë‹ˆë‹¤.");
-    const insuranceSettings = readInsuranceSettings(form, "teacher");
-    const identity = validateOptionalTeacherIdentity(data.birthDateCode, data.genderCode);
-    const teacher = {
-      id: crypto.randomUUID(),
-      name: data.name.trim(),
-      email,
-      phone: data.phone.trim(),
-      ...identity,
-      insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
-      insuranceSettings,
-      defaultEmployeePay: Number(data.defaultEmployeePay),
-      defaultBusinessPay: 0,
-      businessRates: readBusinessRates("#teacher-business-rates"),
-      transportPolicy: {
-        regionLabel: data.transportRegionLabel.trim(),
-        unitAmount: Number(data.transportUnitAmount || 0),
-        treatment: data.transportTreatment
-      },
-      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
-      contractSummary: data.contractSummary.trim() || "ì›” ì§€ê¸‰ ì¡°ê±´",
-      paymentDay: Number(data.paymentDay),
-      status: "active",
-      authUid: null,
-      taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
-    };
-      state.data.teachers.push(teacher);
-      if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
-      state.selectedTeacherId = teacher.id;
-      showToast("ì„ ìƒë‹˜ì„ ë“±ë¡í–ˆìŠµë‹ˆë‹¤.");
-      renderTeachers();
-    });
-  bindBusinessRateEditor("#teacher-business-rates");
-}
-
-function openRateModal() {
-  openModal("ì‹œê¸‰ Â· ê³„ì•½ ì¡°ê±´ ì¶”ê°€", `
-    <form id="rate-form" class="form-grid">
-      <div class="form-field"><label for="rate-teacher">ì„ ìƒë‹˜</label><select id="rate-teacher" name="teacherId">${state.data.teachers.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)}</option>`).join("")}</select></div>
-      <div class="form-field"><label for="rate-subject">ê³¼ëª©</label><input id="rate-subject" name="subjectName" required /></div>
-      <div class="form-field"><label for="rate-amount">ì‹œê¸‰</label><input id="rate-amount" name="hourlyRate" type="number" min="0" step="1000" required /></div>
-      <div class="form-field"><label for="rate-treatment">ì†Œë“ êµ¬ë¶„</label><select id="rate-treatment" name="treatment"><option value="employee">ê·¼ë¡œì†Œë“</option><option value="business">ì‚¬ì—…ì†Œë“</option><option value="other">ê¸°íƒ€ì†Œë“</option><option value="exempt">ê³µì œ ì—†ìŒ</option></select></div>
-      <div class="form-field"><label for="rate-other-category">ê¸°íƒ€ì†Œë“ ë¶„ë¥˜</label><select id="rate-other-category" name="otherIncomeCategory"><option value="temporaryLecture">ì¼ì‹œì  ê°•ì˜Â·ì¸ì ìš©ì—­</option></select></div>
-      <div class="form-field"><label for="rate-start">ì ìš© ì‹œì‘ì¼</label><input id="rate-start" name="effectiveFrom" type="date" value="${e(state.month)}-01" required /></div>
-      <div class="form-field"><label>ë³´í—˜ ì ìš©</label><label class="checkbox-row"><input name="insuranceCovered" type="checkbox" /> ë³´í—˜ ì ìš© ìˆ˜ì—…</label></div>
-    </form>`, "ì¶”ê°€", async () => {
-      const form = document.querySelector("#rate-form");
-      if (!form.reportValidity()) return false;
-      const data = Object.fromEntries(new FormData(form));
-      const rule = { id: crypto.randomUUID(), teacherId: data.teacherId, subjectName: data.subjectName, subjectId: slug(data.subjectName), hourlyRate: Number(data.hourlyRate), treatment: data.treatment, insuranceCovered: data.insuranceCovered === "on", otherIncomeCategory: data.treatment === "other" ? data.otherIncomeCategory : null, effectiveFrom: data.effectiveFrom };
-      state.data.rateRules.push(rule);
-      if (state.store) await state.store.saveDocument("rateRules", rule.id, rule);
-      showToast("ê³„ì•½ ì¡°ê±´ì„ ì¶”ê°€í–ˆìŠµë‹ˆë‹¤.");
-      renderRates();
-    });
-}
-
-function openCsvHelpModal() {
-  openModal("CSV ìˆ˜ì—… ë‚´ì—­ ì—…ë¡œë“œ", `
-    <div class="notice"><i data-lucide="file-spreadsheet"></i><span>ì²« ì¤„ì˜ ì—´ ì´ë¦„ì„ ì•„ë˜ í˜•ì‹ê³¼ ê°™ê²Œ ë§Œë“  UTF-8 CSVë¥¼ ì„ íƒí•´ ì£¼ì„¸ìš”.</span></div>
-    <div class="data-surface table-scroll"><table><thead><tr><th>workedOn</th><th>teacherId</th><th>subjectName</th><th>hours</th><th>hourlyRate</th><th>treatment</th><th>insuranceCovered</th><th>otherIncomeCategory</th><th>otherPaymentGroup</th></tr></thead><tbody><tr><td>2026-08-05</td><td>teacher-id</td><td>ì¤‘ë“± ìˆ˜í•™</td><td>2</td><td>42000</td><td>employee</td><td>true</td><td></td><td></td></tr></tbody></table></div>
-    <form id="csv-form" class="form-grid" style="margin-top:16px"><div class="form-field full"><label for="csv-file">CSV íŒŒì¼</label><input id="csv-file" name="file" type="file" accept=".csv,text/csv" required /><span class="form-help">treatment ê°’: employee, business, other, exempt. ê¸°íƒ€ì†Œë“ì€ ì„ íƒ ì—´ì— temporaryLectureì™€ ì§€ê¸‰ ê±´ IDë¥¼ ë„£ì„ ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div></form>
-  `, "ì—…ë¡œë“œ", async () => {
-    const input = document.querySelector("#csv-file");
-    if (!input.files?.[0]) { showToast("CSV íŒŒì¼ì„ ì„ íƒí•´ ì£¼ì„¸ìš”."); return false; }
-    const objects = csvRowsToObjects(parseCsv(await input.files[0].text()));
-    const required = ["workedOn", "teacherId", "subjectName", "hours", "hourlyRate", "treatment", "insuranceCovered"];
-    if (!objects.length || required.some((key) => !(key in objects[0]))) throw new Error("CSV ì—´ ì´ë¦„ì„ í™•ì¸í•´ ì£¼ì„¸ìš”.");
-    const allowedTreatments = new Set(["employee", "business", "other", "exempt"]);
-    const entries = objects.map((item, index) => {
-      if (!teacherById(item.teacherId)) throw new Error(`${index + 2}í–‰ì˜ teacherIdê°€ ë“±ë¡ë˜ì–´ ìˆì§€ ì•ŠìŠµë‹ˆë‹¤.`);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(item.workedOn)) throw new Error(`${index + 2}í–‰ì˜ workedOn í˜•ì‹ì„ í™•ì¸í•´ ì£¼ì„¸ìš”.`);
-      if (!allowedTreatments.has(item.treatment)) throw new Error(`${index + 2}í–‰ì˜ treatment ê°’ì„ í™•ì¸í•´ ì£¼ì„¸ìš”.`);
-      return { id: crypto.randomUUID(), month: item.workedOn.slice(0, 7), workedOn: item.workedOn, teacherId: item.teacherId, subjectName: item.subjectName, subjectId: slug(item.subjectName), hours: Number(item.hours), hourlyRate: Number(item.hourlyRate), treatment: item.treatment, insuranceCovered: item.insuranceCovered.toLowerCase() === "true", otherIncomeCategory: item.treatment === "other" ? item.otherIncomeCategory || "temporaryLecture" : null, otherPaymentGroup: item.treatment === "other" ? item.otherPaymentGroup || null : null, source: "csv" };
-    });
-    if (entries.some((entry) => !Number.isFinite(entry.hours) || !Number.isFinite(entry.hourlyRate))) throw new Error("ì‹œê°„ ë˜ëŠ” ì‹œê¸‰ì— ìˆ«ìê°€ ì•„ë‹Œ ê°’ì´ ìˆìŠµë‹ˆë‹¤.");
-    state.data.entries.push(...entries);
-    if (state.store) await Promise.all(entries.map((entry) => state.store.saveDocument("workEntries", entry.id, entry)));
-    state.month = entries[0].month;
-    showToast(`${entries.length}ê±´ì˜ ìˆ˜ì—… ë‚´ì—­ì„ ì¶”ê°€í–ˆìŠµë‹ˆë‹¤.`);
-    renderEntries();
-  });
-}
-
-function openAccessApprovalModal(request) {
-  const matches = matchingTeachersForAccessRequest(request, state.data.teachers);
-  const options = matches.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)} Â· ${e(teacher.email)}</option>`).join("");
-  openModal("Google ê³„ì • ì—°ê²° ìŠ¹ì¸", `
-    <div class="notice ${matches.length === 1 ? "" : "warning"}"><i data-lucide="shield-check"></i><span>${matches.length === 1 ? "ìš”ì²­ ì´ë©”ì¼ê³¼ ë“±ë¡ ì´ë©”ì¼ì´ ì¼ì¹˜í•©ë‹ˆë‹¤. ìŠ¹ì¸í•˜ë©´ ì„ ìƒë‹˜ì´ ë‹¤ì‹œ ë¡œê·¸ì¸í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤." : "ê°™ì€ ì´ë©”ì¼ì˜ í™œì„± ì„ ìƒë‹˜ì„ ì°¾ì§€ ëª»í–ˆìŠµë‹ˆë‹¤. ì„ ìƒë‹˜ì„ ë¨¼ì € ë“±ë¡í•˜ê±°ë‚˜ ì´ë©”ì¼ì„ ìˆ˜ì •í•´ ì£¼ì„¸ìš”."}</span></div>
-    <dl class="definition-list approval-summary"><div><dt>ìš”ì²­ì</dt><dd>${e(request.displayName || "ì´ë¦„ ë¯¸í™•ì¸")}</dd></div><div><dt>Google ì´ë©”ì¼</dt><dd>${e(request.email)}</dd></div><div><dt>Firebase UID</dt><dd>${e(request.uid || request.id)}</dd></div></dl>
-    <form id="access-approval-form" class="form-grid" style="margin-top:18px">
-      <div class="form-field full"><label for="approval-teacher">ì—°ê²°í•  ì„ ìƒë‹˜</label><select id="approval-teacher" name="teacherId" required ${matches.length ? "" : "disabled"}>${options || `<option value="">ì¼ì¹˜í•˜ëŠ” ì„ ìƒë‹˜ ì—†ìŒ</option>`}</select></div>
-      <label class="checkbox-row full"><input name="confirmed" type="checkbox" ${matches.length ? "" : "disabled"} /> ì´ë©”ì¼ê³¼ ì„ ìƒë‹˜ ì •ë³´ë¥¼ í™•ì¸í–ˆìŠµë‹ˆë‹¤.</label>
-    </form>
-  `, "ìŠ¹ì¸ ë° ì—°ê²°", async () => {
-    const form = document.querySelector("#access-approval-form");
-    if (!matches.length) throw new Error("ì´ë©”ì¼ì´ ì¼ì¹˜í•˜ëŠ” ì„ ìƒë‹˜ì„ ë¨¼ì € ë“±ë¡í•´ ì£¼ì„¸ìš”.");
-    if (!form.reportValidity()) return false;
-    if (!form.elements.confirmed.checked) { showToast("ìŠ¹ì¸ í™•ì¸ì„ ì„ íƒí•´ ì£¼ì„¸ìš”."); return false; }
-    const teacher = teacherById(new FormData(form).get("teacherId"));
-    validateTeacherAccessApproval(request, teacher);
-    if (state.store) await state.store.approveTeacherAccess(request, teacher);
-    teacher.authUid = request.uid || request.id;
-    request.status = "approved";
-    request.teacherId = teacher.id;
-    request.reviewedAt = new Date().toISOString();
-    showToast(`${teacher.name} ì„ ìƒë‹˜ì˜ Google ê³„ì •ì„ ì—°ê²°í–ˆìŠµë‹ˆë‹¤.`);
-    renderTeachers();
-  });
-}
-
-function openTeacherEditModal(teacher) {
-  const profile = taxProfileForTeacher(teacher);
-  const paySettings = teacherPaySettings(teacher);
-  openModal("ì„ ìƒë‹˜ ì •ë³´ ìˆ˜ì •", `
-    <div class="notice"><i data-lucide="user-cog"></i><span>ë¹„í™œì„±í™”í•˜ë©´ ë‹¤ìŒ ë¡œê·¸ì¸ë¶€í„° ì ‘ê·¼ì´ ì°¨ë‹¨ë˜ë©° ê³¼ê±° ê¸‰ì—¬ ìë£ŒëŠ” ì‚­ì œë˜ì§€ ì•ŠìŠµë‹ˆë‹¤.</span></div>
-    <form id="teacher-edit-form" class="form-grid">
-      <div class="form-field"><label for="teacher-edit-name">ì´ë¦„</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-email">Google ì´ë©”ì¼</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "ì—°ê²°ëœ ê³„ì •ì˜ ì´ë©”ì¼ì€ ë³€ê²½í•  ìˆ˜ ì—†ìŠµë‹ˆë‹¤." : "ìŠ¹ì¸ ìš”ì²­ì˜ Google ì´ë©”ì¼ê³¼ ì •í™•íˆ ì¼ì¹˜í•´ì•¼ í•©ë‹ˆë‹¤."}</span></div>
-      <div class="form-field"><label for="teacher-edit-phone">ì—°ë½ì²˜</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-edit-birth-date-code">ìƒë…„ì›”ì¼ 6ìë¦¬</label><input id="teacher-edit-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" placeholder="ì˜ˆ: 900101" /><span class="form-help">ë¹„ì›Œ ë‘ë©´ ì„ ìƒë‹˜ì´ ë¡œê·¸ì¸ í›„ ì§ì ‘ ì…ë ¥í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-      <div class="form-field"><label for="teacher-edit-gender-code">ì„±ë³„ë²ˆí˜¸ 1ìë¦¬</label><input id="teacher-edit-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" placeholder="ì˜ˆ: 1" /><span class="form-help">ìƒë…„ì›”ì¼ê³¼ í•¨ê»˜ ì…ë ¥í•˜ê±°ë‚˜ ë‘ í•­ëª©ì„ ëª¨ë‘ ë¹„ì›Œ ë‘ì„¸ìš”.</span></div>
-      ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
-      <div class="form-field"><label for="teacher-edit-employee-pay">ê¸°ë³¸ ê·¼ë¡œì†Œë“ ì›” ì§€ê¸‰ì•¡</label><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="${e(paySettings.defaultEmployeePay)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-transport-region">êµí†µë¹„ ì ìš© ì§€ì—­Â·ê¸°ì¤€</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="ì˜ˆ: ì„œìš¸ ì‹œë‚´" /></div>
-      <div class="form-field"><label for="teacher-edit-transport-unit">êµí†µ 1íšŒ ê¸ˆì•¡</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>ì›</span></div></div>
-      <div class="form-field"><label for="teacher-edit-transport-treatment">êµí†µë¹„ ê¸°ë³¸ ì²˜ë¦¬</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
-      ${businessRateEditorHtml(paySettings.businessRates, "teacher-business-rates")}
-      <div class="form-field full"><label for="teacher-edit-subjects">ë‹´ë‹¹ ê³¼ëª©</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="ì‰¼í‘œë¡œ êµ¬ë¶„" /></div>
-      <div class="form-field"><label for="teacher-edit-contract">ê³„ì•½ ìš”ì•½</label><input id="teacher-edit-contract" name="contractSummary" value="${e(teacher.contractSummary)}" /></div>
-      <div class="form-field"><label for="teacher-edit-payday">ì§€ê¸‰ì¼</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-status">ê³„ì • ìƒíƒœ</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>í™œì„±</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>ë¹„í™œì„±</option></select></div>
-      <div class="form-field"><label for="teacher-edit-dependents">ê³µì œëŒ€ìƒê°€ì¡± ìˆ˜</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-children">8~20ì„¸ ìë…€ ìˆ˜</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
-      <div class="form-field full"><label for="teacher-edit-ratio">ì›ì²œì§•ìˆ˜ ë¹„ìœ¨</label><select id="teacher-edit-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select></div>
-    </form>
-  `, "ì €ì¥", async () => {
-    const form = document.querySelector("#teacher-edit-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    const email = normalizeEmail(data.email);
-    if (state.data.teachers.some((item) => item.id !== teacher.id && normalizeEmail(item.email) === email)) throw new Error("ê°™ì€ Google ì´ë©”ì¼ë¡œ ë“±ë¡ëœ ì„ ìƒë‹˜ì´ ìˆìŠµë‹ˆë‹¤.");
-    const insuranceSettings = readInsuranceSettings(form, "teacher-edit");
-    const identity = validateOptionalTeacherIdentity(data.birthDateCode, data.genderCode);
-    const { accountingReference: _legacyAccountingReference, ...teacherWithoutLegacyReference } = teacher;
-    const updated = {
-      ...teacherWithoutLegacyReference,
-      name: data.name.trim(),
-      email,
-      phone: data.phone.trim(),
-      ...identity,
-      insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
-      insuranceSettings,
-      defaultEmployeePay: Number(data.defaultEmployeePay),
-      defaultBusinessPay: 0,
-      businessRates: readBusinessRates("#teacher-business-rates"),
-      transportPolicy: {
-        regionLabel: data.transportRegionLabel.trim(),
-        unitAmount: Number(data.transportUnitAmount || 0),
-        treatment: data.transportTreatment
-      },
-      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
-      contractSummary: data.contractSummary.trim() || "ì¡°ê±´ ë¯¸ì„¤ì •",
-      paymentDay: Number(data.paymentDay),
-      status: data.status,
-      taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
-    };
-    if (state.store) await state.store.updateTeacher(updated);
-    delete teacher.accountingReference;
-    Object.assign(teacher, updated);
-    showToast(`${teacher.name} ì„ ìƒë‹˜ ì •ë³´ë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.`);
-    renderTeachers();
-  });
-  bindBusinessRateEditor("#teacher-business-rates");
-}
-
-function openTaxProfileModal(teacher) {
-  const profile = taxProfileForTeacher(teacher);
-  openModal("ê·¼ë¡œì†Œë“ ì›ì²œì§•ìˆ˜ ì •ë³´", `
-    <div class="notice"><i data-lucide="calculator"></i><span>ê³µì œëŒ€ìƒê°€ì¡±ì—ëŠ” ê·¼ë¡œì ë³¸ì¸ì´ í¬í•¨ë©ë‹ˆë‹¤. 8~20ì„¸ ìë…€ ìˆ˜ëŠ” ê°„ì´ì„¸ì•¡í‘œ ì„¸ì•¡ì—ì„œ ìë…€ ê³µì œë¥¼ ì ìš©í•  ë•Œ ì‚¬ìš©í•©ë‹ˆë‹¤.</span></div>
-    <form id="tax-profile-form" class="form-grid">
-      <div class="form-field"><label for="profile-dependents">ê³µì œëŒ€ìƒê°€ì¡± ìˆ˜</label><input id="profile-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
-      <div class="form-field"><label for="profile-children">8~20ì„¸ ìë…€ ìˆ˜</label><input id="profile-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
-      <div class="form-field full"><label for="profile-ratio">ì›ì²œì§•ìˆ˜ ë¹„ìœ¨</label><select id="profile-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select><span class="form-help">ì‹ ì²­í•˜ì§€ ì•Šì€ ê²½ìš° 100%ì…ë‹ˆë‹¤. ë³€ê²½ ì‹ ì²­í•œ ë¹„ìœ¨ì€ í•´ë‹¹ ê³¼ì„¸ê¸°ê°„ ì¢…ë£Œì¼ê¹Œì§€ ì ìš©í•©ë‹ˆë‹¤.</span></div>
-    </form>
-  `, "ì €ì¥", async () => {
-    const form = document.querySelector("#tax-profile-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    teacher.taxProfile = {
-      dependentCount: Number(data.dependentCount),
-      children8To20: Number(data.children8To20),
-      withholdingRatio: Number(data.withholdingRatio)
-    };
-    if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
-    showToast("ì›ì²œì§•ìˆ˜ ì •ë³´ë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-    renderTeachers();
-  });
-}
-
-function openMonthlyPayModal(teacher) {
-  const key = `${state.month}:${teacher.id}`;
-  const current = state.data.overrides[key] || {};
-  const settings = teacherPaySettings(teacher);
-  const amounts = monthlyPayAmounts(teacher, state.month);
-  const workLines = mergeBusinessWorkLines(settings.businessRates, amounts.businessWorkLines);
-  const legacyBusinessAmount = amounts.businessGrossPay > 0 && !amounts.businessWorkLines.length
-    ? amounts.businessGrossPay
-    : 0;
-  openModal(`${teacher.name} ì›” ì§€ê¸‰ì•¡`, `
-    <div class="notice"><i data-lucide="wallet-cards"></i><span>ì‹ ê³ ì•¡ì€ ì•„ë˜ ëª¨ë“  ì§€ê¸‰ í•­ëª©ì˜ í•©ê³„ì…ë‹ˆë‹¤. êµí†µë¹„Â·ì£¼ì°¨ë£ŒÂ·ê¸°íƒ€ ì§€ê¸‰ì€ ì„¸ë¬´ì‚¬ í™•ì¸ ê²°ê³¼ì— ë§ëŠ” ì²˜ë¦¬ ë°©ì‹ì„ ì„ íƒí•´ì•¼ ê¸‰ì—¬ë¥¼ í™•ì •í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-    ${legacyBusinessAmount ? `<div class="notice warning"><i data-lucide="history"></i><span>ê¸°ì¡´ ê³ ì • ì‚¬ì—…ì†Œë“ ${formatWon(legacyBusinessAmount)}ì„ ì½ì—ˆìŠµë‹ˆë‹¤. ì•„ë˜ì— ê³¼ëª©Â·ì‹œê¸‰Â·ì‹œìˆ˜ë¥¼ ì €ì¥í•˜ë©´ ìƒˆ ê³„ì‚° ë°©ì‹ìœ¼ë¡œ ì „í™˜ë©ë‹ˆë‹¤.</span></div>` : ""}
-    <form id="monthly-pay-form" class="form-grid">
-      <div class="form-field"><label for="monthly-pay-default-employee">ê¸°ë³¸ ê·¼ë¡œì†Œë“</label><input id="monthly-pay-default-employee" type="text" value="${e(formatWon(settings.defaultEmployeePay))}" readonly /></div>
-      <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} ê·¼ë¡œì†Œë“</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
-      <div class="form-field"><label for="monthly-employee-hours">ê·¼ë¡œ ìˆ˜ì—…ì‹œê°„</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>ì‹œê°„</span></div></div>
-      ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
-      ${businessWorkEditorHtml(workLines, "monthly-business-work")}
-      <div class="form-field full form-section-heading"><strong>êµí†µë¹„Â·ì£¼ì°¨ë£Œ</strong><span class="form-help">ê³¼ì„¸ ì—¬ë¶€ê°€ ì •í•´ì§€ì§€ ì•Šì•˜ë‹¤ë©´ ì²˜ë¦¬ ë¯¸í™•ì¸ìœ¼ë¡œ ì €ì¥í•œ ë’¤ ì„¸ë¬´ì‚¬ì—ê²Œ í™•ì¸í•˜ì„¸ìš”.</span></div>
-      <div class="form-field"><label for="monthly-transport-trips">ëŒ€ì¤‘êµí†µ ì´ìš© íšŸìˆ˜</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>íšŒ</span></div></div>
-      <div class="form-field"><label for="monthly-transport-unit">êµí†µ 1íšŒ ê¸ˆì•¡</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(amounts.transportUnitAmount)}" /><span>ì›</span></div></div>
-      <div class="form-field"><label for="monthly-transport-treatment">êµí†µë¹„ ì²˜ë¦¬</label><select id="monthly-transport-treatment" name="transportTreatment">${treatmentOptions(amounts.transportTreatment)}</select></div>
-      <label class="checkbox-row form-field"><input name="transportInsuranceCovered" type="checkbox" ${amounts.transportInsuranceCovered ? "checked" : ""} /> êµí†µë¹„ë¥¼ ë³´í—˜ ê¸°ì¤€ì— í¬í•¨</label>
-      <div class="form-field"><label for="monthly-parking">ì£¼ì°¨ë£Œ</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1000" value="${e(amounts.parkingAmount)}" /><span>ì›</span></div></div>
-      <div class="form-field"><label for="monthly-parking-treatment">ì£¼ì°¨ë£Œ ì²˜ë¦¬</label><select id="monthly-parking-treatment" name="parkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></div>
-      <label class="checkbox-row form-field"><input name="parkingInsuranceCovered" type="checkbox" ${amounts.parkingInsuranceCovered ? "checked" : ""} /> ì£¼ì°¨ë£Œë¥¼ ë³´í—˜ ê¸°ì¤€ì— í¬í•¨</label>
-      ${additionalEarningsEditorHtml(amounts.additionalEarnings, "monthly-additional-earnings")}
-      <div class="form-field full"><label for="monthly-pay-note">ë³€ê²½ ë©”ëª¨</label><input id="monthly-pay-note" name="grossPayNote" maxlength="200" value="${e(current.grossPayNote || "")}" placeholder="ì˜ˆ: ë³´ê°• ìˆ˜ì—… 2ì‹œê°„ í¬í•¨" /><span class="form-help">ê°œì¸ì •ë³´ë‚˜ ìƒì„¸ ê¸‰ì—¬ ë‚´ì—­ì„ ì ì§€ ë§ê³  ë³€ê²½ ì´ìœ ë§Œ ê°„ë‹¨íˆ ê¸°ë¡í•©ë‹ˆë‹¤.</span></div>
-    </form>
-  `, "ì €ì¥", async () => {
-    const form = document.querySelector("#monthly-pay-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    const businessWorkLines = readBusinessWorkLines("#monthly-business-work");
-    const override = {
-      ...current,
-      id: `${state.month}_${teacher.id}`,
-      month: state.month,
-      teacherId: teacher.id,
-      employeeGrossPay: Number(data.employeeGrossPay),
-      employeeWorkHours: Number(data.employeeWorkHours || 0),
-      businessGrossPay: null,
-      businessWorkLines,
-      transportTrips: Number(data.transportTrips || 0),
-      transportUnitAmount: Number(data.transportUnitAmount || 0),
-      transportTreatment: data.transportTreatment,
-      transportInsuranceCovered: form.elements.transportInsuranceCovered.checked,
-      parkingAmount: Number(data.parkingAmount || 0),
-      parkingTreatment: data.parkingTreatment,
-      parkingInsuranceCovered: form.elements.parkingInsuranceCovered.checked,
-      additionalEarnings: readAdditionalEarnings("#monthly-additional-earnings"),
-      grossPayNote: data.grossPayNote.trim() || null
-    };
-    ["nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"].forEach((field) => {
-      if (!form.elements[field]) return;
-      override[field] = form.elements[field].value === "" ? null : Number(form.elements[field].value);
-    });
-    state.data.overrides[key] = override;
-    const workInput = teacher.authUid ? {
-      id: monthlyWorkInputId(state.month, teacher.id),
-      teacherId: teacher.id,
-      teacherUid: teacher.authUid,
-      month: state.month,
-      employeeWorkHours: override.employeeWorkHours,
-      businessHours: businessHoursFromWorkLines(settings.businessRates, businessWorkLines),
-      submittedAt: new Date().toISOString()
-    } : null;
-    if (workInput) state.data.monthlyWorkInputs[key] = workInput;
-    if (state.store) await state.store.saveAdminMonthlyPayroll(override, workInput);
-    showToast(`${formatMonth(state.month)} ì§€ê¸‰ì•¡ì„ ì €ì¥í–ˆìŠµë‹ˆë‹¤.`);
-    renderPayrollInputs();
-  });
-  bindBusinessWorkEditor("#monthly-business-work");
-  bindAdditionalEarningsEditor("#monthly-additional-earnings");
-}
-
-function openPayrollAdjustmentModal(teacher) {
-  const key = `${state.month}:${teacher.id}`;
-  const current = state.data.overrides[key] || {};
-  const optionalValue = (name) => current[name] == null ? "" : e(current[name]);
-  const combinedHealthValue = current.healthAndLongTermCare != null
-    ? e(current.healthAndLongTermCare)
-    : current.healthInsurance != null || current.longTermCare != null
-      ? e(Number(current.healthInsurance || 0) + Number(current.longTermCare || 0))
-      : "";
-  openModal(`${teacher.name} ê³¼ì„¸Â·ê³µì œ ì¡°ì •`, `
-    <div class="notice"><i data-lucide="circle-equal"></i><span>ë¹„ê³¼ì„¸ì™€ í•™ìê¸ˆ ì§€ì›ì•¡ì€ ê·¼ë¡œì†Œë“ ê°„ì´ì„¸ì•¡í‘œì˜ ì›”ê¸‰ì—¬ì—ì„œ ì œì™¸ë©ë‹ˆë‹¤. ìˆ˜ë™ ê³µì œì•¡ì„ ë¹„ì›Œ ë‘ë©´ í˜„ì¬ ì„¸ê¸ˆÂ·ì‚¬íšŒë³´í—˜ ì •ì±…ìœ¼ë¡œ ìë™ ê³„ì‚°í•©ë‹ˆë‹¤.</span></div>
-    <form id="payroll-adjustment-form" class="form-grid">
-      <div class="form-field"><label for="adjust-nontaxable">ê·¼ë¡œì†Œë“ ë¹„ê³¼ì„¸ì•¡</label><input id="adjust-nontaxable" name="employeeNonTaxableAmount" type="number" min="0" step="1" value="${e(current.employeeNonTaxableAmount || 0)}" /></div>
-      <div class="form-field"><label for="adjust-student-loan">í•™ìê¸ˆ ì§€ì›ì•¡</label><input id="adjust-student-loan" name="employeeStudentLoanSupportAmount" type="number" min="0" step="1" value="${e(current.employeeStudentLoanSupportAmount || 0)}" /></div>
-      <div class="form-field"><label for="adjust-employee-tax">ê·¼ë¡œì†Œë“ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-employee-local">ê·¼ë¡œì†Œë“ ì§€ë°©ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-pension">êµ­ë¯¼ì—°ê¸ˆ ìˆ˜ë™ê°’</label><input id="adjust-pension" name="nationalPension" type="number" min="0" step="1" value="${optionalValue("nationalPension")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-health-care">ê±´ê°•ë³´í—˜+ì¥ê¸°ìš”ì–‘ ìˆ˜ë™ê°’</label><input id="adjust-health-care" name="healthAndLongTermCare" type="number" min="0" step="1" value="${combinedHealthValue}" placeholder="ìë™" /><span class="form-help">ê³µë‹¨ ê³ ì§€ì„œì˜ ë‘ ê·¼ë¡œì ë¶€ë‹´ì•¡ì„ í•©ì³ ì…ë ¥í•©ë‹ˆë‹¤.</span></div>
-      <div class="form-field"><label for="adjust-employment">ê³ ìš©ë³´í—˜ ìˆ˜ë™ê°’</label><input id="adjust-employment" name="employmentInsurance" type="number" min="0" step="1" value="${optionalValue("employmentInsurance")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-business-tax">ì‚¬ì—…ì†Œë“ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-business-tax" name="businessIncomeTax" type="number" min="0" step="1" value="${optionalValue("businessIncomeTax")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-business-local">ì‚¬ì—…ì†Œë“ ì§€ë°©ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-business-local" name="businessLocalTax" type="number" min="0" step="1" value="${optionalValue("businessLocalTax")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-other-tax">ê¸°íƒ€ì†Œë“ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-other-tax" name="otherIncomeTax" type="number" min="0" step="1" value="${optionalValue("otherIncomeTax")}" placeholder="ìë™" /></div>
-      <div class="form-field"><label for="adjust-other-local">ê¸°íƒ€ì†Œë“ ì§€ë°©ì„¸ ìˆ˜ë™ê°’</label><input id="adjust-other-local" name="otherLocalTax" type="number" min="0" step="1" value="${optionalValue("otherLocalTax")}" placeholder="ìë™" /></div>
-      <div class="form-field full"><label for="adjust-custom">ê¸°íƒ€ ê³µì œ</label><input id="adjust-custom" name="custom" type="number" min="0" step="1" value="${optionalValue("custom")}" placeholder="0" /></div>
-    </form>
-  `, "ì €ì¥", async () => {
-    const form = document.querySelector("#payroll-adjustment-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    const automaticFields = [
-      "employeeIncomeTax", "employeeLocalTax", "nationalPension", "healthAndLongTermCare",
-      "employmentInsurance", "businessIncomeTax", "businessLocalTax",
-      "otherIncomeTax", "otherLocalTax", "custom"
-    ];
-    const override = {
-      ...current,
-      id: `${state.month}_${teacher.id}`,
-      month: state.month,
-      teacherId: teacher.id,
-      employeeNonTaxableAmount: Number(data.employeeNonTaxableAmount || 0),
-      employeeStudentLoanSupportAmount: Number(data.employeeStudentLoanSupportAmount || 0)
-    };
-    automaticFields.forEach((field) => {
-      override[field] = data[field] === "" ? null : Number(data[field]);
-    });
-    override.healthInsurance = null;
-    override.longTermCare = null;
-    state.data.overrides[key] = override;
-    if (state.store) await state.store.saveDocument("payrollOverrides", override.id, override);
-    showToast("ê³¼ì„¸ ê¸°ì¤€ê³¼ ê³µì œ ì¡°ì •ì„ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-    renderDashboard();
-  });
-}
-
-function openTaxPolicyModal() {
-  const current = taxPolicyForMonth(state.month);
-  openModal("ìƒˆ ì„¸ê¸ˆ ê¸°ì¤€ ë“±ë¡", `
-    <div class="notice warning"><i data-lucide="history"></i><span>ë“±ë¡í•œ ë²„ì „ì€ ê³¼ê±° ëª…ì„¸ì„œ ì¬í˜„ì„ ìœ„í•´ ìˆ˜ì •í•˜ê±°ë‚˜ ì‚­ì œí•˜ì§€ ì•ŠìŠµë‹ˆë‹¤. ê³µì‹ ìë£Œë¥¼ í™•ì¸í•œ ë’¤ ìƒˆ ë²„ì „ê³¼ ì‹œí–‰ì¼ì„ ì…ë ¥í•˜ì„¸ìš”.</span></div>
-    <form id="tax-policy-form" class="form-grid">
-      <div class="form-field"><label for="tax-version">ë²„ì „ ID</label><input id="tax-version" name="version" pattern="[A-Za-z0-9._-]+" placeholder="ì˜ˆ: NTS-2027-01-01" required /></div>
-      <div class="form-field"><label for="tax-name">ê¸°ì¤€ëª…</label><input id="tax-name" name="name" value="êµ­ì„¸ì²­ ì›ì²œì§•ìˆ˜ ê¸°ì¤€" required /></div>
-      <div class="form-field"><label for="tax-effective">ì‹œí–‰ì¼</label><input id="tax-effective" name="effectiveFrom" type="date" required /></div>
-      <div class="form-field"><label for="tax-table-revision">ê°„ì´ì„¸ì•¡í‘œ ê°œì •ì¼</label><input id="tax-table-revision" name="tableRevision" type="date" value="${e(current.employment.tableRevision)}" required /></div>
-      <div class="form-field full"><label for="tax-source">ê³µì‹ ê·¼ê±° URL</label><input id="tax-source" name="sourceUrl" type="url" value="${e(current.sources?.[0]?.url || "")}" required /><span class="form-help">êµ­ì„¸ì²­Â·í™ˆíƒìŠ¤Â·êµ­ê°€ë²•ë ¹ì •ë³´ì„¼í„° ë“± go.kr ê³µì‹ ì£¼ì†Œë§Œ ë“±ë¡í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-      <div class="form-field"><label for="business-rate">ì‚¬ì—…ì†Œë“ ì†Œë“ì„¸ìœ¨ (%)</label><input id="business-rate" name="businessIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.business.incomeTaxRate) * 100)}" required /></div>
-      <div class="form-field"><label for="local-rate">ì§€ë°©ì†Œë“ì„¸ ë¹„ìœ¨ (%)</label><input id="local-rate" name="localIncomeTaxRatio" type="number" min="0" max="100" step="0.001" value="${e(Number(current.business.localIncomeTaxRateOfIncomeTax) * 100)}" required /><span class="form-help">ì†Œë“ì„¸ì•¡ì— ê³±í•˜ëŠ” ë¹„ìœ¨</span></div>
-      <div class="form-field"><label for="other-expense">ì¼ì‹œì  ê°•ì˜ í•„ìš”ê²½ë¹„ìœ¨ (%)</label><input id="other-expense" name="otherExpenseRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.expenseRate) * 100)}" required /></div>
-      <div class="form-field"><label for="other-rate">ê¸°íƒ€ì†Œë“ ì†Œë“ì„¸ìœ¨ (%)</label><input id="other-rate" name="otherIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.incomeTaxRate) * 100)}" required /></div>
-      <div class="form-field"><label for="other-minimum">ê¸°íƒ€ì†Œë“ ê³¼ì„¸ìµœì €í•œ</label><input id="other-minimum" name="otherMinimumTaxableIncome" type="number" min="0" step="1" value="${e(current.other.categories.temporaryLecture.minimumTaxableIncomeAmount)}" required /><span class="form-help">í•„ìš”ê²½ë¹„ ì°¨ê° í›„ ê±´ë³„ ì†Œë“ê¸ˆì•¡</span></div>
-      <div class="form-field"><label for="child-one">ìë…€ 1ëª… ê³µì œì•¡</label><input id="child-one" name="childCreditOne" type="number" min="0" step="1" value="${e(current.employment.childCredits.one)}" required /></div>
-      <div class="form-field"><label for="child-two">ìë…€ 2ëª… ê³µì œì•¡</label><input id="child-two" name="childCreditTwo" type="number" min="0" step="1" value="${e(current.employment.childCredits.two)}" required /></div>
-      <div class="form-field"><label for="child-more">2ëª… ì´ˆê³¼ 1ëª…ë‹¹ ê³µì œì•¡</label><input id="child-more" name="childCreditAdditional" type="number" min="0" step="1" value="${e(current.employment.childCredits.additional)}" required /></div>
-      <div class="form-field full"><label for="tax-table-file">ê·¼ë¡œì†Œë“ ê°„ì´ì„¸ì•¡í‘œ CSV</label><input id="tax-table-file" name="tableFile" type="file" accept=".csv,text/csv" /><span class="form-help">ë¹„ì›Œ ë‘ë©´ í˜„ì¬ í‘œë¥¼ ë³µì‚¬í•©ë‹ˆë‹¤. ìƒë‹¨ì˜ CSVë¥¼ ë‚´ë ¤ë°›ì•„ ìƒˆ ê³µì‹ í‘œ ê°’ìœ¼ë¡œ ìˆ˜ì •í•œ ë’¤ ì—…ë¡œë“œí•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.</span></div>
-      <div class="form-field full"><label for="high-income-rules">ì›” 1ì²œë§Œì› ì´ˆê³¼ ì‚°ì‹ JSON</label><textarea id="high-income-rules" name="highIncomeRules" spellcheck="false" required>${e(JSON.stringify(current.employment.highIncomeBrackets, null, 2))}</textarea><span class="form-help">ì†Œë“ì„¸ë²• ì‹œí–‰ë ¹ ë³„í‘œ 2ì˜ ê³ ì•¡ ê¸‰ì—¬ êµ¬ê°„, ê°€ì‚°ì•¡, ì´ˆê³¼ê¸ˆì•¡ ë¹„ìœ¨ê³¼ ì„¸ìœ¨ì…ë‹ˆë‹¤.</span></div>
-    </form>
-  `, "ë“±ë¡", async () => {
-    const form = document.querySelector("#tax-policy-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    if (state.data.taxPolicies.some((policy) => policy.version === data.version)) {
-      throw new Error("ê°™ì€ ë²„ì „ IDê°€ ì´ë¯¸ ìˆìŠµë‹ˆë‹¤.");
-    }
-    if (!isOfficialGovernmentUrl(data.sourceUrl)) {
-      throw new Error("ê³µì‹ go.kr ìë£Œ ì£¼ì†Œë¥¼ ì…ë ¥í•´ ì£¼ì„¸ìš”.");
-    }
-
-    const highIncomeBrackets = JSON.parse(data.highIncomeRules);
-    validateHighIncomeBrackets(highIncomeBrackets);
-    let table = {
-      tableRows: structuredClone(current.employment.tableRows),
-      taxAtTenMillion: structuredClone(current.employment.taxAtTenMillion)
-    };
-    const tableFile = document.querySelector("#tax-table-file").files?.[0];
-    if (tableFile) table = parseEmploymentTaxTableRows(csvRowsToObjects(parseCsv(await tableFile.text())));
-
-    const localRatio = Number(data.localIncomeTaxRatio) / 100;
-    const policy = {
-      ...structuredClone(current),
-      id: data.version,
-      version: data.version,
-      name: data.name,
-      effectiveFrom: data.effectiveFrom,
-      effectiveTo: null,
-      verifiedAt: new Date().toISOString().slice(0, 10),
-      status: "published",
-      builtIn: false,
-      employment: {
-        ...structuredClone(current.employment),
-        ...table,
-        tableRevision: data.tableRevision,
-        childCredits: {
-          one: Number(data.childCreditOne),
-          two: Number(data.childCreditTwo),
-          additional: Number(data.childCreditAdditional)
-        },
-        localIncomeTaxRateOfIncomeTax: localRatio,
-        highIncomeBrackets
-      },
-      business: {
-        ...structuredClone(current.business),
-        incomeTaxRate: Number(data.businessIncomeTaxRate) / 100,
-        localIncomeTaxRateOfIncomeTax: localRatio
-      },
-      other: {
-        ...structuredClone(current.other),
-        categories: {
-          ...structuredClone(current.other.categories),
-          temporaryLecture: {
-            ...structuredClone(current.other.categories.temporaryLecture),
-            expenseRate: Number(data.otherExpenseRate) / 100,
-            incomeTaxRate: Number(data.otherIncomeTaxRate) / 100,
-            localIncomeTaxRateOfIncomeTax: localRatio,
-            minimumTaxableIncomeAmount: Number(data.otherMinimumTaxableIncome)
-          }
-        }
-      },
-      sources: [{ title: "ë“±ë¡ ê¸°ì¤€ ê³µì‹ ìë£Œ", url: data.sourceUrl }]
-    };
-    state.data.taxPolicies.push(policy);
-    if (state.store) await state.store.saveDocument("taxPolicies", policy.id, policy);
-    showToast("ìƒˆ ì„¸ê¸ˆ ê¸°ì¤€ì„ ë“±ë¡í–ˆìŠµë‹ˆë‹¤.");
-    renderSettings();
-  });
-}
-
-function openInsurancePolicyModal() {
-  const current = insurancePolicyForMonth(state.month);
-  const sourceUrl = (kind) => current.sources?.find((source) => source.kind === kind)?.url || "";
-  openModal("ìƒˆ ì‚¬íšŒë³´í—˜ ê¸°ì¤€ ë“±ë¡", `
-    <div class="notice warning"><i data-lucide="history"></i><span>ê¸°ì¡´ ê¸°ì¤€ì€ ê³¼ê±° ëª…ì„¸ì„œ ì¬í˜„ì„ ìœ„í•´ ìˆ˜ì •í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤. ê³µë‹¨ì˜ ê³µì‹ ìš”ìœ¨ê³¼ ì‹œí–‰ì¼ì„ í™•ì¸í•œ ë’¤ ìƒˆ ë²„ì „ì„ ë“±ë¡í•˜ì„¸ìš”.</span></div>
-    <form id="insurance-policy-form" class="form-grid">
-      <div class="form-field"><label for="insurance-version">ë²„ì „ ID</label><input id="insurance-version" name="version" pattern="[A-Za-z0-9._-]+" placeholder="ì˜ˆ: INSURANCE-2027-01" required /></div>
-      <div class="form-field"><label for="insurance-name">ê¸°ì¤€ëª…</label><input id="insurance-name" name="name" value="${e(current.name)}" required /></div>
-      <div class="form-field"><label for="insurance-effective">ì‹œí–‰ì¼</label><input id="insurance-effective" name="effectiveFrom" type="date" required /></div>
-      <div class="form-field"><label for="pension-rate">êµ­ë¯¼ì—°ê¸ˆ ê·¼ë¡œì ë¶€ë‹´ë¥  (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.nationalPension.rate))}" required /></div>
-      <div class="form-field"><label for="pension-minimum">êµ­ë¯¼ì—°ê¸ˆ ê¸°ì¤€ì†Œë“ì›”ì•¡ í•˜í•œ</label><input id="pension-minimum" name="pensionMinimumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
-      <div class="form-field"><label for="pension-maximum">êµ­ë¯¼ì—°ê¸ˆ ê¸°ì¤€ì†Œë“ì›”ì•¡ ìƒí•œ</label><input id="pension-maximum" name="pensionMaximumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
-      <div class="form-field"><label for="health-rate">ê±´ê°•ë³´í—˜ ê·¼ë¡œì ë¶€ë‹´ë¥  (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.healthInsurance.rate))}" required /></div>
-      <div class="form-field"><label for="health-minimum">ê±´ê°•ë³´í—˜ ê·¼ë¡œì ë¶€ë‹´ í•˜í•œì•¡</label><input id="health-minimum" name="healthMinimumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
-      <div class="form-field"><label for="health-maximum">ê±´ê°•ë³´í—˜ ê·¼ë¡œì ë¶€ë‹´ ìƒí•œì•¡</label><input id="health-maximum" name="healthMaximumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
-      <div class="form-field"><label for="long-term-rate">ì¥ê¸°ìš”ì–‘ ë¹„ìœ¨ (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.longTermCareRate))}" required /><span class="form-help">ê±´ê°•ë³´í—˜ë£Œì— ê³±í•˜ëŠ” ë¹„ìœ¨</span></div>
-      <div class="form-field"><label for="employment-rate">ê³ ìš©ë³´í—˜ ê·¼ë¡œì ë¶€ë‹´ë¥  (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.employmentInsurance.rate))}" required /></div>
-      <div class="form-field full"><label for="pension-source">êµ­ë¯¼ì—°ê¸ˆ ê³µì‹ ê·¼ê±° URL</label><input id="pension-source" name="pensionSourceUrl" type="url" value="${e(sourceUrl("nationalPension"))}" required /></div>
-      <div class="form-field full"><label for="pension-bounds-source">êµ­ë¯¼ì—°ê¸ˆ ìƒÂ·í•˜í•œ ê³µì‹ ê·¼ê±° URL</label><input id="pension-bounds-source" name="pensionBoundsSourceUrl" type="url" value="${e(sourceUrl("nationalPensionBounds"))}" required /></div>
-      <div class="form-field full"><label for="health-source">ê±´ê°•ë³´í—˜ ê³µì‹ ê·¼ê±° URL</label><input id="health-source" name="healthSourceUrl" type="url" value="${e(sourceUrl("healthInsurance"))}" required /></div>
-      <div class="form-field full"><label for="health-bounds-source">ê±´ê°•ë³´í—˜ ìƒÂ·í•˜í•œ ê³µì‹ ê·¼ê±° URL</label><input id="health-bounds-source" name="healthBoundsSourceUrl" type="url" value="${e(sourceUrl("healthInsuranceBounds"))}" required /></div>
-      <div class="form-field full"><label for="long-term-source">ì¥ê¸°ìš”ì–‘ ê³µì‹ ê·¼ê±° URL</label><input id="long-term-source" name="longTermCareSourceUrl" type="url" value="${e(sourceUrl("longTermCare"))}" required /></div>
-      <div class="form-field full"><label for="employment-source">ê³ ìš©ë³´í—˜ ê³µì‹ ê·¼ê±° URL</label><input id="employment-source" name="employmentSourceUrl" type="url" value="${e(sourceUrl("employmentInsurance"))}" required /><span class="form-help">êµ­ë¯¼ì—°ê¸ˆê³µë‹¨Â·ê±´ê°•ë³´í—˜ê³µë‹¨Â·ê³ ìš©ë…¸ë™ë¶€Â·ë³´ê±´ë³µì§€ë¶€Â·êµ­ê°€ë²•ë ¹ì •ë³´ì„¼í„° ì£¼ì†Œë§Œ í—ˆìš©í•©ë‹ˆë‹¤.</span></div>
-    </form>
-  `, "ë“±ë¡", async () => {
-    const form = document.querySelector("#insurance-policy-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    if (state.data.insurancePolicies.some((policy) => policy.version === data.version)) {
-      throw new Error("ê°™ì€ ì‚¬íšŒë³´í—˜ ë²„ì „ IDê°€ ì´ë¯¸ ìˆìŠµë‹ˆë‹¤.");
-    }
-    const sourceUrls = [
-      data.pensionSourceUrl,
-      data.pensionBoundsSourceUrl,
-      data.healthSourceUrl,
-      data.healthBoundsSourceUrl,
-      data.longTermCareSourceUrl,
-      data.employmentSourceUrl
-    ];
-    if (sourceUrls.some((url) => !isOfficialPublicSourceUrl(url))) {
-      throw new Error("ê³µë‹¨Â·ì •ë¶€Â·êµ­ê°€ë²•ë ¹ì •ë³´ì„¼í„°ì˜ ê³µì‹ ìë£Œ ì£¼ì†Œë¥¼ ì…ë ¥í•´ ì£¼ì„¸ìš”.");
-    }
-    const pensionMinimumBase = Number(data.pensionMinimumBase);
-    const pensionMaximumBase = Number(data.pensionMaximumBase);
-    const healthMinimumAmount = Number(data.healthMinimumAmount);
-    const healthMaximumAmount = Number(data.healthMaximumAmount);
-    if (pensionMinimumBase > pensionMaximumBase || healthMinimumAmount > healthMaximumAmount) {
-      throw new Error("ì‚¬íšŒë³´í—˜ ìƒí•œì•¡ì€ í•˜í•œì•¡ë³´ë‹¤ í¬ê±°ë‚˜ ê°™ì•„ì•¼ í•©ë‹ˆë‹¤.");
-    }
-    const policy = {
-      id: data.version,
-      version: data.version,
-      name: data.name,
-      effectiveFrom: data.effectiveFrom,
-      effectiveTo: null,
-      verifiedAt: new Date().toISOString().slice(0, 10),
-      status: "published",
-      builtIn: false,
-      employee: {
-        nationalPension: {
-          rate: Number(data.pensionRate) / 100,
-          minimumBase: pensionMinimumBase,
-          maximumBase: pensionMaximumBase
-        },
-        healthInsurance: {
-          rate: Number(data.healthRate) / 100,
-          minimumBase: 0,
-          maximumBase: Number.MAX_SAFE_INTEGER,
-          minimumAmount: healthMinimumAmount,
-          maximumAmount: healthMaximumAmount
-        },
-        longTermCareRate: Number(data.longTermCareRate) / 100,
-        employmentInsurance: {
-          rate: Number(data.employmentRate) / 100,
-          minimumBase: 0,
-          maximumBase: Number.MAX_SAFE_INTEGER
-        }
-      },
-      sources: [
-        { kind: "nationalPension", title: "êµ­ë¯¼ì—°ê¸ˆ ë³´í—˜ë£Œìœ¨", url: data.pensionSourceUrl },
-        { kind: "nationalPensionBounds", title: "êµ­ë¯¼ì—°ê¸ˆ ê¸°ì¤€ì†Œë“ì›”ì•¡ ìƒÂ·í•˜í•œ", url: data.pensionBoundsSourceUrl },
-        { kind: "healthInsurance", title: "ê±´ê°•ë³´í—˜ ë³´í—˜ë£Œìœ¨", url: data.healthSourceUrl },
-        { kind: "healthInsuranceBounds", title: "ê±´ê°•ë³´í—˜ë£Œ ìƒÂ·í•˜í•œ", url: data.healthBoundsSourceUrl },
-        { kind: "longTermCare", title: "ì¥ê¸°ìš”ì–‘ë³´í—˜ë£Œìœ¨", url: data.longTermCareSourceUrl },
-        { kind: "employmentInsurance", title: "ê³ ìš©ë³´í—˜ ë³´í—˜ë£Œìœ¨", url: data.employmentSourceUrl }
-      ]
-    };
-    state.data.insurancePolicies.push(policy);
-    if (state.store) await state.store.saveDocument("insurancePolicies", policy.id, policy);
-    showToast("ìƒˆ ì‚¬íšŒë³´í—˜ ê¸°ì¤€ì„ ë“±ë¡í–ˆìŠµë‹ˆë‹¤.");
-    renderSettings();
-  });
-}
-
-function downloadTaxTableTemplate() {
-  const policy = taxPolicyForMonth(state.month);
-  const headers = ["minMonthlyPay", "maxMonthlyPay", ...Array.from({ length: 11 }, (_, index) => `dependent${index + 1}`)];
-  const rows = [headers, ...policy.employment.tableRows.map(([minimum, maximum, taxes]) => [minimum, maximum, ...taxes])];
-  rows.push([10000000, 10000000, ...policy.employment.taxAtTenMillion]);
-  downloadCsv(`employment-tax-table-${policy.employment.tableRevision}.csv`, rows);
-  showToast("í˜„ì¬ ê·¼ë¡œì†Œë“ ê°„ì´ì„¸ì•¡í‘œë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-}
-
-function validateHighIncomeBrackets(brackets) {
-  if (!Array.isArray(brackets) || !brackets.length || brackets.at(-1).max !== null) {
-    throw new Error("ê³ ì•¡ ê¸‰ì—¬ ì‚°ì‹ì˜ ë§ˆì§€ë§‰ êµ¬ê°„ì€ maxê°€ nullì´ì–´ì•¼ í•©ë‹ˆë‹¤.");
-  }
-  const numericKeys = ["excessFrom", "excessFactor", "rate", "baseAddition"];
-  if (brackets.some((bracket) => numericKeys.some((key) => !Number.isFinite(Number(bracket[key]))))) {
-    throw new Error("ê³ ì•¡ ê¸‰ì—¬ ì‚°ì‹ JSONì˜ ìˆ«ìë¥¼ í™•ì¸í•´ ì£¼ì„¸ìš”.");
-  }
-}
-
-function openPublishModal() {
-  const currentRun = runForMonth(state.month);
-  if (currentRun.status === "published") return;
-  const revision = nextPayrollRevision(currentRun);
-  const isReissue = currentRun.status === "cancelled";
-  openModal(isReissue ? "ìˆ˜ì • ê¸‰ì—¬ëª…ì„¸ì„œ ì¬ë°œí–‰" : "ê¸‰ì—¬ í™•ì • ë° ëª…ì„¸ì„œ ê³µê°œ", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} ê¸‰ì—¬ë¥¼ ${revision}ì°¨ í™•ì •ë³¸ìœ¼ë¡œ ë°œí–‰í•©ë‹ˆë‹¤. ${isReissue ? "ì·¨ì†Œëœ ì´ì „ í™•ì •ë³¸ì€ ì´ë ¥ì— ê·¸ëŒ€ë¡œ ë³´ì¡´ë©ë‹ˆë‹¤." : "í™•ì • í›„ ìˆ˜ì •í•˜ë ¤ë©´ ì·¨ì†Œ ì‚¬ìœ ë¥¼ ë‚¨ê¸°ê³  ìƒˆ ì°¨ìˆ˜ë¡œ ì¬ë°œí–‰í•´ì•¼ í•©ë‹ˆë‹¤."}</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> ê³„ì‚° ê²°ê³¼ì™€ ê³µì œì•¡, ë°œí–‰ ì°¨ìˆ˜ë¥¼ ëª¨ë‘ ê²€í† í–ˆìŠµë‹ˆë‹¤.</label>`, isReissue ? "ì¬ë°œí–‰" : "í™•ì •", async () => {
-    if (!document.querySelector("#publish-confirm").checked) { showToast("ê²€í†  í™•ì¸ì„ ì„ íƒí•´ ì£¼ì„¸ìš”."); return false; }
-    const missingInsuredSalary = activeTeachers().filter((teacher) => {
-      const settings = teacherPaySettings(teacher);
-      return settings.insuranceEnrolled && monthlyPayAmounts(teacher, state.month).employeeGrossPay <= 0;
-    });
-    if (missingInsuredSalary.length) throw new Error(`ê·¼ë¡œì†Œë“ ì›”ê¸‰ì´ ì…ë ¥ë˜ì§€ ì•Šì€ ë³´í—˜ ê°€ì… ì„ ìƒë‹˜ì´ ìˆìŠµë‹ˆë‹¤: ${missingInsuredSalary.map((teacher) => teacher.name).join(", ")}`);
-    const payrolls = payrollsForMonth(state.month);
-    if (!payrolls.length) throw new Error("ì´ë²ˆ ë‹¬ ì§€ê¸‰ì•¡ì´ ì…ë ¥ëœ ì„ ìƒë‹˜ì´ ì—†ìŠµë‹ˆë‹¤.");
-    const unconfirmedItems = payrolls.flatMap(({ teacher, payroll }) => payroll.unconfirmedEarningLines.map((line) => `${teacher.name} ${line.subjectName}`));
-    if (unconfirmedItems.length) throw new Error(`ê³¼ì„¸ ì²˜ë¦¬ê°€ í™•ì¸ë˜ì§€ ì•Šì€ ì§€ê¸‰ í•­ëª©ì´ ìˆìŠµë‹ˆë‹¤: ${unconfirmedItems.join(", ")}`);
-    const missingAccounts = payrolls.filter(({ teacher }) => !teacher.authUid);
-    if (state.store && missingAccounts.length) throw new Error(`ë¡œê·¸ì¸ UIDê°€ ì—°ê²°ë˜ì§€ ì•Šì€ ì„ ìƒë‹˜ì´ ìˆìŠµë‹ˆë‹¤: ${missingAccounts.map(({ teacher }) => teacher.name).join(", ")}`);
-    const publishedAt = new Date().toISOString();
-    const run = { ...currentRun, status: "published", revision, releaseId: `${state.month}_v${revision}`, publishedAt, cancellationId: null, cancellationReason: null, cancelledAt: null };
-    const payslips = payrolls.map(({ teacher, payroll }) => ({
-      id: payslipId(state.month, teacher.id),
-      versionId: payslipVersionId(state.month, teacher.id, revision),
-      data: {
-        month: state.month,
-        teacherId: teacher.id,
-        teacherUid: teacher.authUid,
-        teacherName: teacher.name,
-        status: "published",
-        revision,
-        releaseId: run.releaseId,
-        policyVersion: payroll.policyVersion,
-        taxPolicyVersion: payroll.taxPolicyVersion,
-        insurancePolicyVersion: payroll.insurancePolicyVersion,
-        calculation: payroll,
-        publishedAt
-      }
-    }));
-    if (state.store) {
-      await state.store.publishPayrollRun(
-        run,
-        payslips,
-        {
-          id: crypto.randomUUID(),
-          data: { action: isReissue ? "PAYROLL_REPUBLISHED" : "PAYROLL_PUBLISHED", month: state.month, revision, actorUid: state.user.uid, createdAt: run.publishedAt }
-        }
-      );
-    }
-    payslips.forEach((payslip) => {
-      const currentIndex = state.data.payslips.findIndex((item) => item.id === payslip.id);
-      const current = { id: payslip.id, ...structuredClone(payslip.data) };
-      if (currentIndex >= 0) state.data.payslips[currentIndex] = current;
-      else state.data.payslips.push(current);
-      state.data.payslipVersions.push({ id: payslip.versionId, ...structuredClone(payslip.data) });
-    });
-    const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
-    if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
-    else state.data.payrollRuns.push(run);
-    showToast(isReissue ? `${revision}ì°¨ ìˆ˜ì • ëª…ì„¸ì„œë¥¼ ì¬ë°œí–‰í–ˆìŠµë‹ˆë‹¤.` : "ê¸‰ì—¬ë¥¼ í™•ì •í•˜ê³  ëª…ì„¸ì„œë¥¼ ê³µê°œí–ˆìŠµë‹ˆë‹¤.");
-    renderDashboard();
-  });
-}
-
-function openCancelPayrollModal() {
-  const currentRun = runForMonth(state.month);
-  if (currentRun.status !== "published") return;
-  const revision = artifactRevision(currentRun);
-  openModal("ê¸‰ì—¬ í™•ì • ì·¨ì†Œ", `
-    <div class="notice warning"><i data-lucide="shield-alert"></i><span>${formatMonth(state.month)} ${revision}ì°¨ í™•ì •ë³¸ì„ ì·¨ì†Œí•©ë‹ˆë‹¤. ê¸°ì¡´ ëª…ì„¸ì„œëŠ” ì´ë ¥ìœ¼ë¡œ ë³´ì¡´ë˜ê³  ì„ ìƒë‹˜ í™”ë©´ì—ì„œëŠ” ì¦‰ì‹œ ë‚´ë ¤ê°‘ë‹ˆë‹¤.</span></div>
-    <form id="cancel-payroll-form" class="form-grid">
-      <div class="form-field full"><label for="cancel-reason">ì·¨ì†Œ ì‚¬ìœ </label><textarea id="cancel-reason" name="reason" minlength="5" maxlength="500" placeholder="ì˜ˆ: ì›” ì§€ê¸‰ì•¡ ìˆ˜ì • í•„ìš”" required></textarea><span class="form-help">ê°œì¸ì •ë³´ë¥¼ ì ì§€ ë§ê³  ë³€ê²½ì´ í•„ìš”í•œ ì´ìœ ë§Œ ê¸°ë¡í•˜ì„¸ìš”.</span></div>
-      <label class="checkbox-row full"><input name="confirmed" type="checkbox" /> ì„ ìƒë‹˜ì—ê²Œ ê³µê°œëœ ëª…ì„¸ì„œê°€ ì·¨ì†Œëœë‹¤ëŠ” ì ì„ í™•ì¸í–ˆìŠµë‹ˆë‹¤.</label>
-    </form>
-  `, "í™•ì • ì·¨ì†Œ", async () => {
-    const form = document.querySelector("#cancel-payroll-form");
-    if (!form.reportValidity()) return false;
-    if (!form.elements.confirmed.checked) { showToast("ì·¨ì†Œ í™•ì¸ì„ ì„ íƒí•´ ì£¼ì„¸ìš”."); return false; }
-    const reason = new FormData(form).get("reason").trim();
-    const cancelledAt = new Date().toISOString();
-    const cancellationId = `${state.month}_v${revision}`;
-    let currentPayslips = state.data.payslips.filter((item) => item.month === state.month && item.status === "published");
-    if (!currentPayslips.length) {
-      currentPayslips = payrollsForMonth(state.month).map(({ teacher, payroll }) => ({
-        id: payslipId(state.month, teacher.id), month: state.month, teacherId: teacher.id,
-        teacherUid: teacher.authUid, teacherName: teacher.name, status: "published",
-        revision, releaseId: currentRun.releaseId || `${state.month}_v${revision}`,
-        calculation: payroll, publishedAt: currentRun.publishedAt
-      }));
-    }
-    const archives = currentPayslips
-      .map((item) => {
-        const { id, ...data } = item;
-        return { id: payslipVersionId(state.month, item.teacherId, revision), data: { ...data, status: "published", revision } };
-      })
-      .filter((archive) => !state.data.payslipVersions.some((item) => item.id === archive.id));
-    const run = { ...currentRun, status: "cancelled", revision, cancellationId, cancellationReason: reason, cancelledAt };
-    const cancellation = {
-      id: cancellationId,
-      data: { month: state.month, revision, reason, releaseId: currentRun.releaseId || `${state.month}_v${revision}`, payslipIds: currentPayslips.map((item) => item.id), actorUid: state.user.uid }
-    };
-    if (state.store) {
-      await state.store.cancelPayrollRun(
-        run,
-        currentPayslips.map((item) => ({ id: item.id })),
-        archives,
-        cancellation,
-        { id: crypto.randomUUID(), data: { action: "PAYROLL_CANCELLED", month: state.month, revision, reason, actorUid: state.user.uid } }
-      );
-    }
-    currentPayslips.forEach((item) => Object.assign(item, { status: "cancelled", cancellationId, cancellationReason: reason, cancelledAt }));
-    archives.forEach((archive) => state.data.payslipVersions.push({ id: archive.id, ...archive.data }));
-    state.data.payrollCancellations.push({ id: cancellation.id, ...cancellation.data, createdAt: cancelledAt });
-    const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
-    if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
-    showToast("í™•ì •ë³¸ì„ ì·¨ì†Œí–ˆìŠµë‹ˆë‹¤. ìˆ˜ì • í›„ ìƒˆ ì°¨ìˆ˜ë¡œ ì¬ë°œí–‰í•˜ì„¸ìš”.");
-    renderDashboard();
-  });
-}
-
-function openModal(title, body, submitLabel, onSubmit) {
-  elements.modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-header"><h2 id="modal-title">${e(title)}</h2><button class="icon-button" type="button" aria-label="ë‹«ê¸°" data-close-modal><i data-lucide="x"></i></button></header><div class="modal-body">${body}</div><footer class="modal-footer"><button class="button button-secondary" type="button" data-close-modal>${submitLabel ? "ì·¨ì†Œ" : "ë‹«ê¸°"}</button>${submitLabel ? `<button class="button button-primary" type="button" data-submit-modal>${e(submitLabel)}</button>` : ""}</footer></section></div>`;
-  elements.modalRoot.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", closeModal));
-  elements.modalRoot.querySelector(".modal-backdrop").addEventListener("click", (event) => { if (event.target.classList.contains("modal-backdrop")) closeModal(); });
-  const submit = elements.modalRoot.querySelector("[data-submit-modal]");
-  if (submit) submit.addEventListener("click", async () => {
-    submit.disabled = true;
-    try {
-      const result = await onSubmit();
-      if (result !== false) closeModal();
-    } catch (error) {
-      showToast(error.message || "ì €ì¥í•˜ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-    } finally {
-      submit.disabled = false;
-    }
-  });
-  refreshIcons();
-  elements.modalRoot.querySelector("input, select, button")?.focus();
-}
-
-function closeModal() { elements.modalRoot.innerHTML = ""; }
-
-function exportLedger() {
-  const rows = [["ê¸‰ì—¬ì›”", "ì„±ëª…", "ì—°ë½ì²˜", "ìƒë…„ì›”ì¼Â·ì„±ë³„ë²ˆí˜¸", "ì‹ ê³ ì•¡", "ìˆ˜ì—…ì‹œê°„", "ê°•ì‚¬ë£Œ", "ê°•ì‚¬ë£Œ ì„¸ì•¡ê³µì œ", "êµí†µ íšŸìˆ˜", "êµí†µë¹„", "ì£¼ì°¨ë£Œ", "ê¸°íƒ€", "ì¶”ê°€ ì§€ê¸‰ ì›ì²œì§•ìˆ˜", "ì„¸ì•¡ê³µì œ í•©ê³„", "ì†Œë“ì„¸", "ì§€ë°©ì†Œë“ì„¸", "ê±´ê°•+ìš”ì–‘", "êµ­ë¯¼ì—°ê¸ˆ", "ê³ ìš©ë³´í—˜", "ë³´í—˜ë£Œ í•©ê³„", "êµ­ë¯¼ì—°ê¸ˆ ì‹ ê³  ê¸°ì¤€ì•¡", "ê±´ê°•ë³´í—˜ ì‹ ê³  ê¸°ì¤€ì•¡", "ê³ ìš©ë³´í—˜ ì‹ ê³  ê¸°ì¤€ì•¡", "ê¸°íƒ€ ê³µì œ", "ê³µì œì•¡ í•©ê³„", "ì§€ê¸‰ì•¡"]];
-  payrollsForMonth(state.month).forEach(({ teacher, payroll }) => {
-    const report = accountingReportFor(payroll);
-    const bases = insuranceBasesFor(payroll);
-    rows.push([
-      state.month, teacher.name, teacher.phone || "", formatTeacherIdentity(teacher),
-      report.reportedGross, report.classHours, report.lectureFeeGross, report.lectureWithholding,
-      report.transportTrips, report.transportAmount, report.parkingAmount, report.otherPaymentAmount,
-      report.additionalPaymentWithholding, report.lectureWithholding + report.additionalPaymentWithholding,
-      report.employeeIncomeTax, report.employeeLocalTax, report.healthAndLongTermCare,
-      report.nationalPension, report.employmentInsurance, report.insuranceTotal,
-      bases.nationalPension, bases.healthInsurance,
-      bases.employmentInsurance, payroll.deductions.custom,
-      payroll.totalDeductions, payroll.net
-    ]);
-  });
-  downloadCsv(`academy-payroll-${state.month}.csv`, rows);
-  showToast("ê¸‰ì—¬ë‚´ì—­ì„œ CSVë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-}
-
-async function downloadCurrentPayslip(event) {
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    const teacher = teacherById(state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId);
-    const file = await createCurrentPayslipPdf(teacher);
-    downloadFile(file);
-    showToast("ê¸‰ì—¬ëª…ì„¸ì„œ PDFë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤.");
-  } catch (error) {
-    showToast(error.message || "PDFë¥¼ ë§Œë“¤ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function createCurrentPayslipPdf(teacher) {
-  if (!teacher) throw new Error("ì„ ìƒë‹˜ ì •ë³´ë¥¼ ì°¾ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-  return createPayslipPdfFile(elements.content.querySelector(".payslip-sheet"), {
-    academyName: appConfig.academyName,
-    teacherName: teacher.name,
-    month: state.selectedPayslipMonth
-  });
-}
-
-function openPayslipEmailModal(teacher, payroll, run) {
-  if (!teacher || !payroll || run.status !== "published") {
-    showToast("í™•ì •ëœ ê¸‰ì—¬ëª…ì„¸ì„œë§Œ ì´ë©”ì¼ë¡œ ë°œì†¡í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.");
-    return;
-  }
-  const revision = artifactRevision(currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
-  const revisionLabel = revision > 1 ? ` ìˆ˜ì • ${revision}ì°¨` : "";
-  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} ê¸‰ì—¬ëª…ì„¸ì„œ${revisionLabel}`;
-  const body = `ì•ˆë…•í•˜ì„¸ìš”, ${teacher.name} ì„ ìƒë‹˜.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} ê¸‰ì—¬ëª…ì„¸ì„œ${revisionLabel}ë¥¼ ì²¨ë¶€í•©ë‹ˆë‹¤.\në“±ë¡ëœ Google ê³„ì •ìœ¼ë¡œ ë¡œê·¸ì¸í•˜ë©´ í¬í„¸ì—ì„œë„ ì§€ë‚œ ëª…ì„¸ì„œë¥¼ í™•ì¸í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.\n${portalUrl()}\n\nê°ì‚¬í•©ë‹ˆë‹¤.`;
-  const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth);
-  openModal("ê¸‰ì—¬ëª…ì„¸ì„œ ì´ë©”ì¼ ë°œì†¡", `
-    <div class="notice compact"><i data-lucide="shield-check"></i><span>ë°œì†¡í•  ë•Œ ê´€ë¦¬ì Google ê³„ì •ì— Gmail ì „ì†¡ ê¶Œí•œë§Œ ìš”ì²­í•©ë‹ˆë‹¤. ê¶Œí•œ í† í°ê³¼ ì²¨ë¶€ íŒŒì¼ì€ ì €ì¥í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤.</span></div>
-    <div class="delivery-summary">
-      <div><span>ìˆ˜ì‹ ì</span><strong>${e(teacher.name)}</strong><small>${e(teacher.email)}</small></div>
-      <div><span>ì²¨ë¶€ íŒŒì¼</span><strong>${e(filename)}</strong><small>${formatWon(payroll.net)}</small></div>
-    </div>
-    <form id="payslip-email-form" class="form-grid">
-      <div class="form-field full"><label for="payslip-email-to">ë°›ëŠ” ì£¼ì†Œ</label><input id="payslip-email-to" name="to" type="email" value="${e(teacher.email)}" readonly required /></div>
-      <div class="form-field full"><label for="payslip-email-subject">ì œëª©</label><input id="payslip-email-subject" name="subject" value="${e(subject)}" required /></div>
-      <div class="form-field full"><label for="payslip-email-body">ë³¸ë¬¸</label><textarea id="payslip-email-body" name="body" rows="7" required>${e(body)}</textarea></div>
-      <label class="checkbox-row full"><input name="confirmed" type="checkbox" /> ìˆ˜ì‹ ì, ê¸ˆì•¡, ê³µì œ ë‚´ì—­ê³¼ ì²¨ë¶€ íŒŒì¼ì„ í™•ì¸í–ˆìŠµë‹ˆë‹¤.</label>
-    </form>
-    <div class="email-fallback"><span>Gmail APIë¥¼ ì‚¬ìš©í•˜ì§€ ì•Šì„ ë•Œ</span><button class="button button-secondary" type="button" data-download-compose><i data-lucide="external-link"></i>PDF ì €ì¥ í›„ ë©”ì¼ ì•± ì—´ê¸°</button></div>
-  `, "Gmailë¡œ ë°œì†¡", async () => {
-    const form = document.querySelector("#payslip-email-form");
-    const data = Object.fromEntries(new FormData(form));
-    if (!form.elements.confirmed.checked) {
-      showToast("ë°œì†¡ ì „ í™•ì¸ í•­ëª©ì„ ì„ íƒí•´ ì£¼ì„¸ìš”.");
-      return false;
-    }
-    if (!state.store) throw new Error("ë°ëª¨ì—ì„œëŠ” ì‹¤ì œ ë©”ì¼ì„ ë°œì†¡í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤. Firebase ì—°ê²° í›„ ì‚¬ìš©í•´ ì£¼ì„¸ìš”.");
-
-    await state.store.authorizeGmailSend();
-    const file = await createCurrentPayslipPdf(teacher);
-    const raw = buildGmailMessage({
-      to: data.to,
-      subject: data.subject,
-      body: data.body,
-      attachmentName: file.name,
-      attachmentBytes: await fileToBytes(file)
-    });
-    const result = await state.store.sendGmailMessage(raw);
-    const deliveryData = {
-      payslipId: payslipId(state.selectedPayslipMonth, teacher.id),
-      teacherId: teacher.id,
-      month: state.selectedPayslipMonth,
-      revision,
-      recipientEmail: data.to,
-      channel: "gmail_attachment",
-      gmailMessageId: result.id
-    };
-    try {
-      const saved = await state.store.recordPayslipDelivery(deliveryData);
-      state.data.payslipDeliveries.push(saved);
-      showToast(`${teacher.name} ì„ ìƒë‹˜ì—ê²Œ ê¸‰ì—¬ëª…ì„¸ì„œë¥¼ ë°œì†¡í–ˆìŠµë‹ˆë‹¤.`);
-    } catch (error) {
-      console.error("ê¸‰ì—¬ëª…ì„¸ì„œ ë°œì†¡ ì´ë ¥ ì €ì¥ ì‹¤íŒ¨", error);
-      showToast("ë©”ì¼ì€ ë°œì†¡ëì§€ë§Œ ë°œì†¡ ì´ë ¥ì„ ì €ì¥í•˜ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-    }
-    renderPayslips();
-  });
-
-  elements.modalRoot.querySelector("[data-download-compose]").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const form = document.querySelector("#payslip-email-form");
-    const data = Object.fromEntries(new FormData(form));
-    button.disabled = true;
-    try {
-      downloadFile(await createCurrentPayslipPdf(teacher));
-      window.location.href = `mailto:${encodeURIComponent(data.to)}?subject=${encodeURIComponent(data.subject)}&body=${encodeURIComponent(data.body)}`;
-      showToast("PDFë¥¼ ì €ì¥í–ˆìŠµë‹ˆë‹¤. ì—´ë¦° ë©”ì¼ì— íŒŒì¼ì„ ì²¨ë¶€í•´ ì£¼ì„¸ìš”.");
-    } catch (error) {
-      showToast(error.message || "PDFë¥¼ ë§Œë“¤ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
-async function copyPortalLink() {
-  await copyText(portalUrl());
-  showToast("ì„ ìƒë‹˜ í¬í„¸ ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
-}
-
-async function copyPayslipNotice() {
-  const message = `ì•ˆë…•í•˜ì„¸ìš”. ${appConfig.academyName} ${formatMonth(state.month)} ê¸‰ì—¬ëª…ì„¸ì„œê°€ ë°œí–‰ë˜ì—ˆìŠµë‹ˆë‹¤.\nì•„ë˜ ë§í¬ì—ì„œ ë“±ë¡ëœ Google ê³„ì •ìœ¼ë¡œ ë¡œê·¸ì¸í•´ í™•ì¸í•´ ì£¼ì„¸ìš”.\n${portalUrl()}`;
-  await copyText(message);
-  showToast("ê¸‰ì—¬ëª…ì„¸ì„œ ì•ˆë‚´ë¬¸ê³¼ ë¡œê·¸ì¸ ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
-}
-
-async function copyText(value) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.append(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-}
-
-function portalUrl() {
-  return appConfig.portalUrl || new URL(".", window.location.href).href;
-}
-
-async function recordPayslipViewed(teacherId, month) {
-  if (receiptFor(teacherId, month)) return;
-  const current = currentPayslip(teacherId, month);
-  const revision = artifactRevision(current || runForMonth(month));
-  const currentPayslipId = payslipId(month, teacherId);
-  const receipt = { id: `${currentPayslipId}_v${revision}_${state.user.uid}`, payslipId: currentPayslipId, teacherId, teacherUid: state.user.uid, month, revision, viewedAt: new Date().toISOString() };
-  state.data.payslipReceipts.push(receipt);
-  if (state.store) {
-    try {
-      await state.store.recordPayslipView(currentPayslipId, teacherId, month, revision);
-    } catch (error) {
-      state.data.payslipReceipts = state.data.payslipReceipts.filter((item) => item.id !== receipt.id);
-      console.error("ê¸‰ì—¬ëª…ì„¸ì„œ ì—´ëŒ ê¸°ë¡ ì €ì¥ ì‹¤íŒ¨", error);
-    }
-  }
-}
-
-function receiptFor(teacherId, month) {
-  const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
-  return currentArtifactForRevision(state.data.payslipReceipts, teacherId, month, revision);
-}
-
-function deliveryFor(teacherId, month) {
-  const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
-  return currentArtifactForRevision(state.data.payslipDeliveries, teacherId, month, revision);
-}
-
-function formatViewedAt(value) {
-  const date = value?.toDate ? value.toDate() : new Date(value);
-  return Number.isNaN(date.getTime()) ? "ì—´ëŒ ì‹œê°„ ê¸°ë¡" : date.toLocaleString("ko-KR");
-}
-
-function formatDeliveryAt(value) {
-  const date = value?.toDate ? value.toDate() : new Date(value);
-  return Number.isNaN(date.getTime()) ? "ë°œì†¡ ì‹œê°„ ê¸°ë¡" : date.toLocaleString("ko-KR");
-}
-
-function formatDateTime(value) {
-  const date = value?.toDate ? value.toDate() : new Date(value);
-  return Number.isNaN(date.getTime()) ? "ì‹œê°„ í™•ì¸ í•„ìš”" : date.toLocaleString("ko-KR");
-}
-
-function deliveryTime(value) {
-  const date = value?.toDate ? value.toDate() : new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-}
-
-function metric(icon, label, value, helper) { return `<div class="metric"><span class="metric-label"><i data-lucide="${icon}"></i>${e(label)}</span><strong>${e(value)}</strong><small>${e(helper)}</small></div>`; }
-function progressStep(number, title, detail, active, complete) { return `<div class="progress-step ${active ? "active" : ""} ${complete ? "complete" : ""}"><strong>${e(number)}. ${e(title)}</strong><span>${e(detail)}</span></div>`; }
-function personCell(teacher) { return `<div class="person-cell"><span class="avatar">${e(teacher.name.slice(0, 1))}</span><span class="person-meta"><strong>${e(teacher.name)}</strong><span>${e(teacher.email)}</span></span></div>`; }
-function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="empty-state">í‘œì‹œí•  ë‚´ì—­ì´ ì—†ìŠµë‹ˆë‹¤.</div></td></tr>`; }
-function statusLabel(status) { return ({ draft: "ê²€í†  ì¤‘", ready: "í™•ì • ëŒ€ê¸°", published: "ë°œí–‰ ì™„ë£Œ", cancelled: "ì·¨ì†Œ í›„ ìˆ˜ì •", paid: "ì§€ê¸‰ ì™„ë£Œ" })[status] || status; }
-function roleLabel(role) { return ({ admin: "ê´€ë¦¬ì", teacher: "ì„ ìƒë‹˜" })[role] || role; }
-function currentCalendarMonth() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-}
-function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
-function policyPercentInput(rate) { return Number(((Number(rate) || 0) * 100).toFixed(3)); }
-function taxProfileForTeacher(teacher) { return { dependentCount: 1, children8To20: 0, withholdingRatio: 1, ...(teacher.taxProfile || {}) }; }
-function slug(value) { return String(value).trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9ê°€-í£-]/g, ""); }
-function deductionLabels() { return { nationalPension: "êµ­ë¯¼ì—°ê¸ˆ", healthInsurance: "ê±´ê°•ë³´í—˜", longTermCare: "ì¥ê¸°ìš”ì–‘ë³´í—˜", employmentInsurance: "ê³ ìš©ë³´í—˜", employeeIncomeTax: "ê·¼ë¡œì†Œë“ì„¸", employeeLocalTax: "ê·¼ë¡œì†Œë“ ì§€ë°©ì„¸", businessIncomeTax: "ì‚¬ì—…ì†Œë“ì„¸", businessLocalTax: "ì‚¬ì—…ì†Œë“ ì§€ë°©ì„¸", otherIncomeTax: "ê¸°íƒ€ì†Œë“ì„¸", otherLocalTax: "ê¸°íƒ€ì†Œë“ ì§€ë°©ì„¸", custom: "ê¸°íƒ€ ê³µì œ" }; }
-function safeHttpUrl(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; } catch { return "#"; } }
-function isOfficialGovernmentUrl(value) { try { const host = new URL(value).hostname.toLowerCase(); return host === "go.kr" || host.endsWith(".go.kr"); } catch { return false; } }
-function isOfficialPublicSourceUrl(value) {
-  try {
-    const host = new URL(value).hostname.toLowerCase();
-    return host === "nps.or.kr" || host.endsWith(".nps.or.kr")
-      || host === "nhis.or.kr" || host.endsWith(".nhis.or.kr")
-      || host === "law.go.kr" || host.endsWith(".law.go.kr")
-      || host === "go.kr" || host.endsWith(".go.kr");
-  } catch {
-    return false;
-  }
-}
-function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
-function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
-function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
-
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíçÏ4õ:-jZ.¶›­–)Ş³V–×÷'B²6öæf–rÒg&öÒ"âö6öæf–ræ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B²†VÇ'F–6ÆW2Òg&öÒ"âöFFö†VÇÖ6öçFVçBæ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B°¢FVÖô66W75&WVW7G2À¢FVÖôFÖ–äæ÷F–f–6F–öç2À¢FVÖôVçG&–W2À¢FVÖô÷fW'&–FW2À¢FVÖõ—&öÆÅ'Vç2À¢FVÖõ&FU'VÆW2À¢FVÖõFV6†W$ÖöçF†Ç”–çWG2À¢FVÖõFV6†W'2À¢FVÖõW6W'0§Òg&öÒ"âöFFöFVÖòÖFFæ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B°¢7&VFT6öÖ&–æVEöÆ–7’À¢çG5F…öÆ–7“##BÀ¢öff–6–Ä–ç7W&æ6UöÆ–6–W0§Òg&öÒ"âöFFöçG2×F‚×öÆ–7’æ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B²7&VFTf—&V&6U7F÷&RÒg&öÒ"âöÆ–"öf—&V&6R×7F÷&Ræ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B²'V–ÆDvVÖ–æ•&ö×BÂ'V–ÆDÆö6Ä†VÇç7vW"ÂFWFV7E6Vç6—F—fT–çWBÂ6V&6„†VÇ'F–6ÆW2Òg&öÒ"âöÆ–"ö†VÇÖ76—7FçBæ§2#°¦–×÷'B²77e&÷w5Fôö&¦V7G2Â'6T77bÒg&öÒ"âöÆ–"ö77bæ§2#°¦–×÷'B²'V–ÆDvÖ–ÄÖW76vRÂf–ÆUFô'—FW2Òg&öÒ"âöÆ–"övÖ–Âæ§2#°¦–×÷'B²7&VFU—6Æ—Fdf–ÆRÂF÷væÆöDf–ÆRÂ—6Æ—f–ÆVæÖRÒg&öÒ"âöÆ–"÷—6Æ—Öf–ÆRæ§2#°¦–×÷'B°¢'F–f7E&Wf—6–öâÀ¢7W'&VçD'F–f7Df÷%&Wf—6–öâÀ¢ÖF6†–æuFV6†W'4f÷$66W75&WVW7BÀ¢æW‡E—&öÆÅ&Wf—6–öâÀ¢æ÷&ÖÆ—¦TVÖ–ÂÀ¢—6Æ—–BÀ¢—6Æ—fW'6–öä–BÀ¢fÆ–FFUFV6†W$66W74&÷fÀ§Òg&öÒ"âöÆ–"÷—&öÆÂÖÆ–fV7–6ÆRæ§2#°¦–×÷'B°¢6Æ7VÆFU—&öÆÂÀ¢7&VFTÖöçF†Ç”V&æ–ætÆ–æW2À¢vWDÖöçF†Ç•”Ö÷VçG2À¢vWEFV6†W%•6WGF–æw2À¢”å5U$ä4UôÄ$TÅ2À¢'6TV×Æ÷–ÖVçEF…F&ÆU&÷w2À¢&W6öÇfTVffV7F—fUöÆ–7’À¢7VÖÖ&—¦U—&öÆÂÀ¢E$TDÔTåEôÄ$TÅ0§Òg&öÒ"âöÆ–"÷—&öÆÂæ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B²F÷væÆöD77bÂW66T‡FÖÂ2RÂf÷&ÖD†÷W'2Âf÷&ÖDÖöçF‚Âf÷&ÖDçVÖ&W"Âf÷&ÖEvöâÒg&öÒ"âöÆ–"öf÷&ÖBæ§2#°¦–×÷'B²f÷&ÖEFV6†W$–FVçF—G’ÂfÆ–FFT÷F–öæÅFV6†W$–FVçF—G’ÂfÆ–FFUFV6†W$–FVçF—G’Òg&öÒ"âöÆ–"÷FV6†W"Ö–FVçF—G’æ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B²tõ$µô„õU%5ôäõD”d”4D”ôåõE•RÂVç&VEv÷&´†÷W'4æ÷F–f–6F–öç2Òg&öÒ"âöÆ–"öFÖ–âÖæ÷F–f–6F–öç2æ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#°¦–×÷'B°¢'V–ÆD'W6–æW74†÷W'2À¢'W6–æW74†÷W'4g&öÕv÷&´Æ–æW2À¢ÖW&vTÖöçF†Ç•v÷&´–çWBÀ¢ÖöçF†Ç•v÷&´–çWD–@§Òg&öÒ"âöÆ–"÷FV6†W"×6VÆb×6W'f–6Ræ§3÷cÓ##cƒ#bÖæ÷F–f–6F–öç2×#b#° ¦6öç7B7FFRÒ°¢W6W#¢çVÆÂÀ¢f–Ws¢&F6†&ö&B"À¢ÖöçFƒ¢7W'&VçD6ÆVæF$ÖöçF‚‚’À¢6V&6ƒ¢""À¢6VÆV7FVEFV6†W$–C¢çVÆÂÀ¢6VÆV7FVE—6Æ—ÖöçFƒ¢7W'&VçD6ÆVæF$ÖöçF‚‚’À¢†VÇ6V&6ƒ¢""À¢76—7FçDÖW76vW3¢µÒÀ¢76—7FçD'W7“¢fÇ6RÀ¢7F÷&S¢çVÆÂÀ¢FF¢°¢FV6†W'3¢µÒÀ¢&FU'VÆW3¢µÒÀ¢VçG&–W3¢µÒÀ¢—&öÆÅ'Vç3¢µÒÀ¢F…öÆ–6–W3¢µÒÀ¢–ç7W&æ6UöÆ–6–W3¢µÒÀ¢÷fW'&–FW3¢·ÒÀ¢ÖöçF†Ç•v÷&´–çWG3¢·ÒÀ¢—6Æ—3¢µÒÀ¢—6Æ—fW'6–öç3¢µÒÀ¢—6Æ—&V6V—G3¢µÒÀ¢—6Æ—FVÆ—fW&–W3¢µÒÀ¢—&öÆÄ6æ6VÆÆF–öç3¢µÒÀ¢66W75&WVW7G3¢µÒÀ¢FÖ–äæ÷F–f–6F–öç3¢µĞ¢Ğ§Ó° ¦6öç7BVÆVÖVçG2Ò°¢Æöv–ã¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6Æöv–â×f–Wr"’À¢v÷&·76S¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7v÷&·76R"’À¢Æöv–å7FGW3¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6Æöv–â×7FGW2"’À¢FVÖôÆöv–ã¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6FVÖòÖÆöv–â"’À¢æc¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6Ö–âÖæb"’À¢vUF—FÆS¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7vR×F—FÆR"’À¢vTW–V'&÷s¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7vRÖW–V'&÷r"’À¢F÷&$7F–öç3¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7F÷&"Ö7F–öç2"’À¢6öçFVçC¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7vRÖ6öçFVçB"’À¢76—7FçDVçG'“¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçBÖVçG'’"’À¢†VÇæd'WGFöã¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6†VÇÖæbÖ'WGFöâ"’À¢76—7FçEFövvÆS¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçB×FövvÆR"’À¢76—7FçEæVÃ¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçB×æVÂ"’À¢76—7FçD6Æ÷6S¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçBÖ6Æ÷6R"’À¢76—7FçDÖW76vW3¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçBÖÖW76vW2"’À¢76—7FçE7FGW3¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçB×7FGW2"’À¢76—7FçDf÷&Ó¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçBÖf÷&Ò"’À¢76—7FçD–çWC¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"676—7FçBÖ–çWB"’À¢ÖöFÅ&ö÷C¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6ÖöFÂ×&ö÷B"’À¢Fö7E&ö÷C¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7Fö7B×&ö÷B"§Ó° ¦6öç7BFÖ–äæbÒ°¢².Éx^ºËB"Â&F6†&ö&B"Â&Æ–÷WBÖF6†&ö&B"Â.«ˆÉzÂ¸ÈÈ¹Î»;N¹9Â%ÒÀ¢².Éx^ºËB"Â'—&öÆÄ–çWG2"Â'vÆÆWBÖ6&G2"Â.É¹B«ˆÉzÂÉè^º
+R%ÒÀ¢².«HºjÂ"Â'FV6†W'2"Â'W6W'2×&÷VæB"Â.ÈJÈ9Ş¸¹‚«HºjÂ%ÒÀ¢².»;N«:"Â&ÆVFvW""Â&æ÷FV&öö²×F'2"Â.É¹N»8B«ˆÉzÎ¸+NÉzŞÈIÂ%ÒÀ¢².È¹ÎÈªNØYÂ"Â'6WGF–æw2"Â'6WGF–æw2"Â.«8NÈ++r»;NÉX‚ÈJNÊ	R%Ğ¥Ó° ¦6öç7BFV6†W$æbÒ°¢².¸+BÉx^ºËB"Â'v÷&´†÷W'2"Â&6ÆVæF"Ö6Æö6²"Â.È‰Éx^È¹Î«BÉè^º
+R%ÒÀ¢².¸+B«ˆÉzÂ"Â'—6Æ—2"Â&f–ÆR×FW‡B"Â.«ˆÉzÎº¨^ÈKÈIÂ%ÒÀ¢².¸+BÊ	^»;B"Â'&öf–ÆR"Â&6—&6ÆR×W6W"×&÷VæB"Â.¹;ºÒÊ	^»;B%Ğ¥Ó° ¦v—B&ö÷G7G&‚“° ¦7–æ2gVæ7F–öâ&ö÷G7G&‚’°¢Fö7VÖVçBçVW'•6VÆV7F÷$ÆÂ‚"6Æöv–âÖ6FV×’ÖæÖRÂ76–FV&"Ö6FV×’ÖæÖR"’æf÷$V6‚‚†æöFR’Óâ°¢æöFRçFW‡D6öçFVçBÒ6öæf–ræ6FV×”æÖS°¢Ò“° ¢&–æE7FF–4WfVçG2‚“°¢–b†6öæf–ræFVÖôÖöFR’°¢ÆöDFVÖôFF‚“°¢VÆVÖVçG2æFVÖôÆöv–âæ†–FFVâÒfÇ6S°¢ÒVÇ6R°¢G'’°¢7FFRç7F÷&RÒv—B7&VFTf—&V&6U7F÷&R†6öæf–ræf—&V&6R“°¢6öç7B&W7F÷&VBÒv—B7FFRç7F÷&Rç&W7F÷&U6W76–öâ‚“°¢–b‡&W7F÷&VB’v—B÷Våv÷&·76R‡&W7F÷&VB“°¢Ò6F6‚†W'&÷"’°¢6WDÆöv–å7FGW2†W'&÷"æÖW76vRÇÂ$f—&V&6RÉ{«+ÉØBÙ™^ÉÛÙ[BÊ;ÎÈKÉ©Bâ"“°¢Ğ¢Ğ¢&Vg&W6„–6öç2‚“°§Ğ ¦gVæ7F–öâ&–æE7FF–4WfVçG2‚’°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6vöövÆRÖÆöv–â"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â7–æ2‚’Óâ°¢–b†6öæf–ræFVÖôÖöFR’°¢6WDÆöv–å7FGW2‚.ÙˆNÉêÂ¸Ûºª‚ºª¹9ÎÉè^¸¸¸ºBâÉXN¹é‚«HºjÎÉé¹‰¸©BÈJÈ9Ş¸¹‚¸Ûºªº[ÂÈJØ9ŞÙ[BÊ;ÎÈKÉ©Bâ"“°¢&WGW&ã°¢Ğ¢G'’°¢6WDÆöv–å7FGW2‚$vöövÆR«8NÊ	^ÉØBÙ™^ÉÛÙY«:ÉèÈ«^¸¸¸ºBâ"ÂfÇ6R“°¢v—B÷Våv÷&·76R†v—B7FFRç7F÷&Rç6–vä–â‚’“°¢Ò6F6‚†W'&÷"’°¢6WDÆöv–å7FGW2†W'&÷"æÖW76vRÇÂ.ºÎ«{ÉÛÙYÊxº«¾ÙhÈ«^¸¸¸ºBâ"“°¢Ğ¢Ò“° ¢Fö7VÖVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖFVÖò×&öÆUÒ"’æf÷$V6‚‚†'WGFöâ’Óâ°¢'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ÷Våv÷&·76R†FVÖõW6W'5¶'WGFöâæFF6WBæFVÖõ&öÆUÒ’“°¢Ò“°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6Æöv÷WBÖ'WGFöâ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"ÂÆöv÷WB“°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"6Öö&–ÆRÖÖVçR"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’ÓâVÆVÖVçG2çv÷&·76Ræ6Æ74Æ—7BçFövvÆR‚&ÖVçRÖ÷Vâ"’“°¢VÆVÖVçG2æ76—7FçEFövvÆRæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vä76—7FçB“°¢VÆVÖVçG2æ†VÇæd'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢7FFRçf–WrÒ&†VÇ#°¢VÆVÖVçG2çv÷&·76Ræ6Æ74Æ—7Bç&VÖ÷fR‚&ÖVçRÖ÷Vâ"“°¢&VæFW"‚“°¢v–æF÷rç67&öÆÅFò‡²F÷¢ÂÆVgC¢Ò“°¢Ò“°¢VÆVÖVçG2æ76—7FçD6Æ÷6RæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â6Æ÷6T76—7FçB“°¢VÆVÖVçG2æ76—7FçDf÷&ÒæFDWfVçDÆ—7FVæW"‚'7V&Ö—B"Â7V&Ö—D76—7FçEVW7F–öâ“°¢VÆVÖVçG2æ76—7FçDÖW76vW2æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â†WfVçB’Óâ°¢6öç7B'WGFöâÒWfVçBçF&vWBæ6Æ÷6W7B‚%¶FFÖ76—7FçB×VW7F–öåÒ"“°¢–b‚'WGFöâ’&WGW&ã°¢VÆVÖVçG2æ76—7FçD–çWBçfÇVRÒ'WGFöâæFF6WBæ76—7FçEVW7F–öã°¢VÆVÖVçG2æ76—7FçDf÷&Òç&WVW7E7V&Ö—B‚“°¢Ò“°¢VÆVÖVçG2ææbæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â†WfVçB’Óâ°¢6öç7B'WGFöâÒWfVçBçF&vWBæ6Æ÷6W7B‚%¶FF×f–WuÒ"“°¢–b‚'WGFöâ’&WGW&ã°¢7FFRçf–WrÒ'WGFöâæFF6WBçf–Ws°¢VÆVÖVçG2çv÷&·76Ræ6Æ74Æ—7Bç&VÖ÷fR‚&ÖVçRÖ÷Vâ"“°¢&VæFW"‚“°¢v–æF÷rç67&öÆÅFò‡²F÷¢ÂÆVgC¢Ò“°¢Ò“°¢Fö7VÖVçBæFDWfVçDÆ—7FVæW"‚&¶W–F÷vâ"Â†WfVçB’Óâ°¢–b†WfVçBæ¶W’ÓÒ$W66R"’&WGW&ã°¢–b‚VÆVÖVçG2æ76—7FçEæVÂæ†–FFVâ’6Æ÷6T76—7FçB‚“°¢VÇ6R6Æ÷6TÖöFÂ‚“°¢Ò“°§Ğ ¦gVæ7F–öâÆöDFVÖôFF‚’°¢7FFRæFFÒ°¢FV6†W'3¢7G'V7GW&VD6ÆöæR†FVÖõFV6†W'2’À¢&FU'VÆW3¢7G'V7GW&VD6ÆöæR†FVÖõ&FU'VÆW2’À¢VçG&–W3¢7G'V7GW&VD6ÆöæR†FVÖôVçG&–W2’À¢—&öÆÅ'Vç3¢7G'V7GW&VD6ÆöæR†FVÖõ—&öÆÅ'Vç2’À¢F…öÆ–6–W3¢·7G'V7GW&VD6ÆöæR†çG5F…öÆ–7“##B•ÒÀ¢–ç7W&æ6UöÆ–6–W3¢öff–6–Ä–ç7W&æ6UöÆ–6–W2æÖ‚‡öÆ–7’’Óâ7G'V7GW&VD6ÆöæR‡öÆ–7’’’À¢÷fW'&–FW3¢7G'V7GW&VD6ÆöæR†FVÖô÷fW'&–FW2’À¢ÖöçF†Ç•v÷&´–çWG3¢7G'V7GW&VD6ÆöæR†FVÖõFV6†W$ÖöçF†Ç”–çWG2’À¢—6Æ—3¢µÒÀ¢—6Æ—fW'6–öç3¢µÒÀ¢—6Æ—&V6V—G3¢µÒÀ¢—6Æ—FVÆ—fW&–W3¢µÒÀ¢—&öÆÄ6æ6VÆÆF–öç3¢µÒÀ¢66W75&WVW7G3¢7G'V7GW&VD6ÆöæR†FVÖô66W75&WVW7G2’À¢FÖ–äæ÷F–f–6F–öç3¢7G'V7GW&VD6ÆöæR†FVÖôFÖ–äæ÷F–f–6F–öç2¢Ó°§Ğ ¦7–æ2gVæ7F–öâ÷Våv÷&·76R‡W6W"’°¢–b‚W6W"’&WGW&ã°¢7FFRçW6W"ÒW6W#°¢7FFRçf–WrÒW6W"ç&öÆRÓÓÒ'FV6†W""ò'v÷&´†÷W'2"¢&F6†&ö&B#°¢7FFRç6VÆV7FVEFV6†W$–BÒW6W"çFV6†W$–BÇÂ7FFRæFFçFV6†W'5³Óòæ–BÇÂçVÆÃ°¢–b‚6öæf–ræFVÖôÖöFR’°¢6öç7BÆöFVBÒv—B7FFRç7F÷&RæÆöEv÷&·76R‡W6W"“°¢‡–G&FTf—&V&6TFF†ÆöFVB“°¢Ğ¢VÆVÖVçG2æÆöv–âæ†–FFVâÒG'VS°¢VÆVÖVçG2çv÷&·76Ræ†–FFVâÒfÇ6S°¢VÆVÖVçG2æ76—7FçDVçG'’æ†–FFVâÒW6W"ç&öÆRÓÒ&FÖ–â#°¢–b‡W6W"ç&öÆRÓÓÒ&FÖ–â"’–æ—F–Æ—¦T76—7FçB‚“°¢VÇ6R6Æ÷6T76—7FçB‚“°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7W6W"ÖæÖR"’çFW‡D6öçFVçBÒW6W"ææÖS°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7W6W"×&öÆR"’çFW‡D6öçFVçBÒ&öÆTÆ&VÂ‡W6W"ç&öÆR“°¢Fö7VÖVçBçVW'•6VÆV7F÷"‚"7W6W"ÖfF""’çFW‡D6öçFVçBÒW6W"ææÖRç6Æ–6RƒÂ“°¢&VæFW"‚“°¢6öç7BVç&VD6÷VçBÒVç&VDFÖ–äæ÷F–f–6F–öä—FV×2‚’æÆVæwFƒ°¢–b‡W6W"ç&öÆRÓÓÒ&FÖ–â"bbVç&VD6÷VçB’°¢6†÷uFö7B†È8‚È‰Éx^È¹Î«BÊ	ÎËiÂÉXÎºkÎÉÛBG·Vç&VD6÷VçGŞ«BÉèÈ«^¸¸¸ºBæ“°¢Ğ§Ğ ¦gVæ7F–öâ‡–G&FTf—&V&6TFF†ÆöFVB’°¢7FFRæFFçFV6†W'2ÒÆöFVBçFV6†W'2ÇÂµÓ°¢7FFRæFFç&FU'VÆW2ÒÆöFVBç&FU'VÆW2ÇÂµÓ°¢7FFRæFFæVçG&–W2ÒÆöFVBæVçG&–W2ÇÂµÓ°¢7FFRæFFç—&öÆÅ'Vç2ÒÆöFVBç—&öÆÅ'Vç2ÇÂµÓ°¢7FFRæFFçF…öÆ–6–W2ÒÖW&vT'V–ÇD–åF…öÆ–6–W2†ÆöFVBçF…öÆ–6–W2ÇÂµÒ“°¢7FFRæFFæ–ç7W&æ6UöÆ–6–W2ÒÖW&vT'V–ÇD–ä–ç7W&æ6UöÆ–6–W2†ÆöFVBæ–ç7W&æ6UöÆ–6–W2ÇÂµÒ“°¢7FFRæFFç—6Æ—2ÒÆöFVBç—6Æ—2ÇÂµÓ°¢7FFRæFFç—6Æ—fW'6–öç2ÒÆöFVBç—6Æ—fW'6–öç2ÇÂµÓ°¢7FFRæFFç—6Æ—&V6V—G2ÒÆöFVBç—6Æ—&V6V—G2ÇÂµÓ°¢7FFRæFFç—6Æ—FVÆ—fW&–W2ÒÆöFVBç—6Æ—FVÆ—fW&–W2ÇÂµÓ°¢7FFRæFFç—&öÆÄ6æ6VÆÆF–öç2ÒÆöFVBç—&öÆÄ6æ6VÆÆF–öç2ÇÂµÓ°¢7FFRæFFæ66W75&WVW7G2ÒÆöFVBæ66W75&WVW7G2ÇÂµÓ°¢7FFRæFFæFÖ–äæ÷F–f–6F–öç2ÒÆöFVBæFÖ–äæ÷F–f–6F–öç2ÇÂµÓ°¢7FFRæFFæ÷fW'&–FW2Òö&¦V7Bæg&öÔVçG&–W2‚†ÆöFVBç—&öÆÄ÷fW'&–FW2ÇÂµÒ’æÖ‚†—FVÒ’Óâ¶G¶—FVÒæÖöçF‡Ó¢G¶—FVÒçFV6†W$–GÖÂ—FVÕÒ’“°¢7FFRæFFæÖöçF†Ç•v÷&´–çWG2Òö&¦V7Bæg&öÔVçG&–W2‚†ÆöFVBçFV6†W$ÖöçF†Ç”–çWG2ÇÂµÒ’æÖ‚†—FVÒ’Óâ¶G¶—FVÒæÖöçF‡Ó¢G¶—FVÒçFV6†W$–GÖÂ—FVÕÒ’“°¢6öç7BÆFW7E'VäÖöçF‚Ò7FFRæFFç—&öÆÅ'Vç2æÖ‚‡'Vâ’Óâ'VâæÖöçF‚’ç6÷'B‚’æB‚Ó“°¢6öç7BÆFW7D–çWDÖöçF‚Òö&¦V7BçfÇVW2‡7FFRæFFæÖöçF†Ç•v÷&´–çWG2’æÖ‚†–çWB’Óâ–çWBæÖöçF‚’ç6÷'B‚’æB‚Ó“°¢–b‡7FFRçW6W#òç&öÆRÓÓÒ'FV6†W""’°¢7FFRæÖöçF‚Ò¶7W'&VçD6ÆVæF$ÖöçF‚‚’ÂÆFW7D–çWDÖöçF…Òæf–ÇFW"„&ööÆVâ’ç6÷'B‚’æB‚Ó“°¢ÒVÇ6R–b†ÆFW7E'VäÖöçF‚’°¢7FFRæÖöçF‚ÒÆFW7E'VäÖöçFƒ°¢Ğ§Ğ ¦7–æ2gVæ7F–öâÆöv÷WB‚’°¢–b‡7FFRç7F÷&R’v—B7FFRç7F÷&Rç6–vä÷WB‚“°¢7FFRçW6W"ÒçVÆÃ°¢7FFRæ76—7FçDÖW76vW2ÒµÓ°¢6Æ÷6T76—7FçB‚“°¢VÆVÖVçG2æ76—7FçDVçG'’æ†–FFVâÒG'VS°¢VÆVÖVçG2çv÷&·76Ræ†–FFVâÒG'VS°¢VÆVÖVçG2æÆöv–âæ†–FFVâÒfÇ6S°¢6WDÆöv–å7FGW2‚""“°§Ğ ¦gVæ7F–öâ&VæFW"‚’°¢&VæFW$æb‚“°¢6öç7B&VæFW&W'2Ò°¢F6†&ö&C¢&VæFW$F6†&ö&BÀ¢—&öÆÄ–çWG3¢&VæFW%—&öÆÄ–çWG2À¢FV6†W'3¢&VæFW%FV6†W'2À¢ÆVFvW#¢&VæFW$ÆVFvW"À¢6WGF–æw3¢&VæFW%6WGF–æw2À¢†VÇ¢&VæFW$†VÇÀ¢v÷&´†÷W'3¢&VæFW%v÷&´†÷W'2À¢—6Æ—3¢&VæFW%—6Æ—2À¢&öf–ÆS¢&VæFW%&öf–ÆRÀ¢FÖ–å—6Æ—¢&VæFW%—6Æ—0¢Ó°¢‡&VæFW&W'5·7FFRçf–WuÒÇÂ&VæFW$F6†&ö&B’‚“°¢&Vg&W6„–6öç2‚“°§Ğ ¦gVæ7F–öâ&VæFW$æb‚’°¢6öç7B—FV×2Ò7FFRçW6W"ç&öÆRÓÓÒ'FV6†W""òFV6†W$æb¢FÖ–äæc°¢ÆWB6V7F–öâÒçVÆÃ°¢VÆVÖVçG2ææbæ–ææW$…DÔÂÒ—FV×2æÖ‚…¶w&÷WÂf–WrÂ–6öâÂÆ&VÅÒ’Óâ°¢6öç7B6V7F–öäÖ&·WÒw&÷WÓÒ6V7F–öâòÆF—b6Æ73Ò&æb×6V7F–öâÖÆ&VÂ#âG¶R†w&÷W—ÓÂöF—cæ¢"#°¢6V7F–öâÒw&÷W°¢&WGW&âG·6V7F–öäÖ&·WÓÆ'WGFöâ6Æ73Ò&æbÖ'WGFöâG·7FFRçf–WrÓÓÒf–WrÇÂ‡f–WrÓÓÒ'—6Æ—2"bb7FFRçf–WrÓÓÒ&FÖ–å—6Æ—"’ò&7F—fR"¢"'Ò"G—SÒ&'WGFöâ"FF×f–WsÒ"G·f–WwÒ#ãÆ’FFÖÇV6–FSÒ"G¶–6öçÒ"&–Ö†–FFVãÒ'G'VR#ãÂö“âG¶R†Æ&VÂ—ÓÂö'WGFöãæ°¢Ò’æ¦ö–â‚""“°¢VÆVÖVçG2æ†VÇæd'WGFöâæ6Æ74Æ—7BçFövvÆR‚&7F—fR"Â7FFRçf–WrÓÓÒ&†VÇ"“°§Ğ ¦gVæ7F–öâ6WEvR‡F—FÆRÂW–V'&÷rÂ7F–öç2Ò""’°¢VÆVÖVçG2çvUF—FÆRçFW‡D6öçFVçBÒF—FÆS°¢VÆVÖVçG2çvTW–V'&÷rçFW‡D6öçFVçBÒW–V'&÷s°¢6öç7BVç&VD6÷VçBÒVç&VDFÖ–äæ÷F–f–6F–öä—FV×2‚’æÆVæwFƒ°¢6öç7Bæ÷F–f–6F–öä7F–öâÒ7FFRçW6W#òç&öÆRÓÓÒ&FÖ–â ¢òÆ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâæ÷F–f–6F–öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.È‰Éx^È¹Î«BÊ	ÎËiÂÉXÎºkÂ"&–ÖÆ&VÃÒ.È‰Éx^È¹Î«BÊ	ÎËiÂÉXÎºkÂG·Vç&VD6÷VçBòG·Vç&VD6÷VçGŞ«F¢"'Ò"FFÖ7F–öãÒ&÷VâÖæ÷F–f–6F–öç2#ãÆ’FFÖÇV6–FSÒ&&VÆÂ#ãÂö“âG·Vç&VD6÷VçBòÇ7â6Æ73Ò&æ÷F–f–6F–öâÖ&FvR#âG·Vç&VD6÷VçBâ“’ò#“’²"¢Vç&VD6÷VçGÓÂ÷7ãæ¢"'ÓÂö'WGFöãæ ¢¢"#°¢VÆVÖVçG2çF÷&$7F–öç2æ–ææW$…DÔÂÒG¶7F–öç7ÒG¶æ÷F–f–6F–öä7F–öçÖ°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv÷VâÖæ÷F–f–6F–öç2uÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷VäFÖ–äæ÷F–f–6F–öç2“°§Ğ ¦gVæ7F–öâVç&VDFÖ–äæ÷F–f–6F–öä—FV×2‚’°¢–b‡7FFRçW6W#òç&öÆRÓÒ&FÖ–â"’&WGW&âµÓ°¢&WGW&âVç&VEv÷&´†÷W'4æ÷F–f–6F–öç2‡7FFRæFFæFÖ–äæ÷F–f–6F–öç2“°§Ğ ¦gVæ7F–öâ÷VäFÖ–äæ÷F–f–6F–öç2‚’°¢6öç7Bæ÷F–f–6F–öç2Ò²ââç7FFRæFFæFÖ–äæ÷F–f–6F–öç5Ğ¢æf–ÇFW"‚†æ÷F–f–6F–öâ’Óâæ÷F–f–6F–öâçG—RÓÓÒtõ$µô„õU%5ôäõD”d”4D”ôåõE•R¢ç6÷'B‚†Â"’ÓâFVÆ—fW'•F–ÖR†"ç7V&Ö—GFVDB’ÒFVÆ—fW'•F–ÖR†ç7V&Ö—GFVDB’“°¢÷VäÖöFÂ‚.È‰Éx^È¹Î«BÊ	ÎËiÂÉXÎºkÂ"Âæ÷F–f–6F–öç2æÆVæwF‚ò ¢ÆF—b6Æ73Ò&æ÷F–f–6F–öâÖÆ—7B#à¢G¶æ÷F–f–6F–öç2æÖ‚†æ÷F–f–6F–öâ’Óâ°¢6öç7BFV6†W"ÒFV6†W$'”–B†æ÷F–f–6F–öâçFV6†W$–B“°¢6öç7BVç&VBÒæ÷F–f–6F–öâç7FGW2ÓÓÒ'Vç&VB#°¢&WGW&âÆ'WGFöâ6Æ73Ò&æ÷F–f–6F–öâÖ—FVÒG·Vç&VBò'Vç&VB"¢"'Ò"G—SÒ&'WGFöâ"FFÖ÷VâÖæ÷F–f–6F–öãÒ"G¶R†æ÷F–f–6F–öâæ–B—Ò#à¢Ç7â6Æ73Ò&æ÷F–f–6F–öâÖ—FVÒÖ–6öâ"&–Ö†–FFVãÒ'G'VR#ãÆ’FFÖÇV6–FSÒ"G·Vç&VBò&&VÆÂ×&–ær"¢&6†V6²'Ò#ãÂö“ãÂ÷7ãà¢Ç7â6Æ73Ò&æ÷F–f–6F–öâÖ—FVÒÖ6÷’#ãÇ7G&öæsâG¶R‡FV6†W#òææÖRÇÂ.ÈJÈ9Ş¸¹‚"—ÒÈJÈ9Ş¸¹ÉÛBG¶f÷&ÖDÖöçF‚†æ÷F–f–6F–öâæÖöçF‚—ÒÈ‰Éx^È¹Î«NÉØBÊ	ÎËiÎÙhÈ«^¸¸¸ºBãÂ÷7G&öæsãÇ6ÖÆÃâG¶R†f÷&ÖDFFUF–ÖR†æ÷F–f–6F–öâç7V&Ö—GFVDB’—Ò+rG·Vç&VBò.Ù™^ÉÛ‚ÙXNÉ©B"¢.Ù™^ÉÛÙZ‚'ÓÂ÷6ÖÆÃãÂ÷7ãà¢Æ’FFÖÇV6–FSÒ&6†Wg&öâ×&–v‡B"&–Ö†–FFVãÒ'G'VR#ãÂö“à¢Âö'WGFöãæ°¢Ò’æ¦ö–â‚""—Ğ¢ÂöF—cà¢¢ÆF—b6Æ73Ò&V×G’×7FFR#îÈ8ºÎÉ«BÈ‰Éx^È¹Î«BÊ	ÎËiÂÉXÎºkÎÉÛBÉxnÈ«^¸¸¸ºBãÂöF—cæ“°¢VÆVÖVçG2æÖöFÅ&ö÷BçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ÷VâÖæ÷F–f–6F–öåÒ"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â7–æ2‚’Óâ°¢6öç7Bæ÷F–f–6F–öâÒ7FFRæFFæFÖ–äæ÷F–f–6F–öç2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ'WGFöâæFF6WBæ÷Väæ÷F–f–6F–öâ“°¢–b†æ÷F–f–6F–öâ’v—B÷VäFÖ–äæ÷F–f–6F–öâ†æ÷F–f–6F–öâ“°¢Ò’“°§Ğ ¦7–æ2gVæ7F–öâ÷VäFÖ–äæ÷F–f–6F–öâ†æ÷F–f–6F–öâ’°¢6öç7BFV6†W"ÒFV6†W$'”–B†æ÷F–f–6F–öâçFV6†W$–B“°¢–b‚FV6†W"’°¢6†÷uFö7B‚.É{«+¹	ÂÈJÈ9Ş¸¹‚Ê	^»;Nº[ÂËîÉØBÈ‰‚ÉxnÈ«^¸¸¸ºBâ"“°¢&WGW&ã°¢Ğ¢–b†æ÷F–f–6F–öâç7FGW2ÓÓÒ'Vç&VB"’°¢G'’°¢–b‡7FFRç7F÷&R’v—B7FFRç7F÷&RæÖ&´FÖ–äæ÷F–f–6F–öå&VB†æ÷F–f–6F–öâæ–B“°¢æ÷F–f–6F–öâç7FGW2Ò'&VB#°¢æ÷F–f–6F–öâç&VDBÒæWrFFR‚’çFô•4õ7G&–ær‚“°¢æ÷F–f–6F–öâç&VD'’Ò7FFRçW6W"çV–C°¢Ò6F6‚†W'&÷"’°¢6†÷uFö7B†W'&÷"æÖW76vRÇÂ.ÉXÎºkÎÉØBÉÛŞÉØÂË)ºjÎÙYÊxº«¾ÙhÈ«^¸¸¸ºBâ"“°¢Ğ¢Ğ¢7FFRæÖöçF‚Òæ÷F–f–6F–öâæÖöçFƒ°¢7FFRç6V&6‚Ò"#°¢7FFRç6VÆV7FVEFV6†W$–BÒFV6†W"æ–C°¢7FFRçf–WrÒ'—&öÆÄ–çWG2#°¢6Æ÷6TÖöFÂ‚“°¢&VæFW"‚“°¢–b‡'Väf÷$ÖöçF‚‡7FFRæÖöçF‚’ç7FGW2ÓÓÒ'V&Æ—6†VB"’°¢6†÷uFö7B‚.Ù™^Ê	^¹	Â«ˆÉzÎÉ¹NÉè^¸¸¸ºBâÈ‰Ê	^ÙYº
+Nº›Bº‹ÎÊ«ˆÉzÂÙ™^Ê	^ÉØBËzÈhÎÙ[BÊ;ÎÈKÉ©Bâ"“°¢&WGW&ã°¢Ğ¢&WVW7Dæ–ÖF–öäg&ÖR‚‚’Óâ÷VäÖöçF†Ç•”ÖöFÂ‡FV6†W"’“°§Ğ ¦gVæ7F–öâ&VæFW$F6†&ö&B‚’°¢6öç7B—&öÆÇ2Ò—&öÆÇ4f÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7B7VÖÖ'’Ò7VÖÖ&—¦U—&öÆÂ‡—&öÆÇ2æÖ‚†—FVÒ’Óâ—FVÒç—&öÆÂ’“°¢6öç7B'VâÒ'Väf÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7B6æ6VÆÆF–öç2Ò6æ6VÆÆF–öç4f÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7BVæ6öæf—&ÖVD—FV×2Ò—&öÆÇ2æfÆDÖ‚‡²FV6†W"Â—&öÆÂÒ’Óâ‡—&öÆÂçVæ6öæf—&ÖVDV&æ–ætÆ–æW2ÇÂµÒ’æÖ‚†Æ–æR’ÓâG·FV6†W"ææÖWÒG¶Æ–æRç7V&¦V7DæÖWÖ’“°¢6WEvR‚.«ˆÉzÂ¸ÈÈ¹Î»;N¹9Â"Âf÷&ÖDÖöçF‚‡7FFRæÖöçF‚’Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&6÷’Öæ÷F–6R"G·'Vâç7FGW2ÓÒ'V&Æ—6†VB"ò&F—6&ÆVB"¢"'ÓãÆ’FFÖÇV6–FSÒ'6VæB#ãÂö“ãÇ7ãîÉX¸+NºË‚»;^È*ÃÂ÷7ããÂö'WGFöãà¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&W‡÷'BÖÆVFvW"#ãÆ’FFÖÇV6–FSÒ&F÷væÆöB#ãÂö“ãÇ7ãî¸+NÉzŞÈIÂÊÉêSÂ÷7ããÂö'WGFöãà¢G·'Vâç7FGW2ÓÓÒ'V&Æ—6†VB ¢òÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâÖFævW""G—SÒ&'WGFöâ"FFÖ7F–öãÒ&6æ6VÂ×'Vâ#ãÆ’FFÖÇV6–FSÒ'&÷FFRÖ67r#ãÂö“ãÇ7ãîÙ™^Ê	RËzÈhÃÂ÷7ããÂö'WGFöãæ ¢¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ'V&Æ—6‚×'Vâ#ãÆ’FFÖÇV6–FSÒ&6†V6²Ö6†V6²#ãÂö“ãÇ7ãâG·'Vâç7FGW2ÓÓÒ&6æ6VÆÆVB"ò.È‰Ê	^»;‚ÉêÎ»	ÎÙh’"¢.«ˆÉzÂÙ™^Ê	R'ÓÂ÷7ããÂö'WGFöãæĞ¢“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢G·'Vâç7FGW2ÓÓÒ&6æ6VÆÆVB ¢òÆF—b6Æ73Ò&æ÷F–6Rv&æ–ær#ãÆ’FFÖÇV6–FSÒ&†—7F÷'’#ãÂö“ãÇ7ãâG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÒG¶R‡'Vâç&Wf—6–öâÇÂ—ŞË
+‚Ù™^Ê	^»;ÉÛBËzÈhÎ¹	È«^¸¸¸ºBâÉ¹BÊx«ˆÉZ«;Â«;^Ê	ÎÉZÉØBÈ‰Ê	^ÙYÂ¹*BÈ8‚Ë
+È‰ºÂÉêÎ»	ÎÙhÙYÈKÉ©Bâ«‹ÊBÙ™^Ê	^»;«;ÂËzÈhÂÈ*ÎÉÊ¸©B»;NÊN¹
+¸¸¸ºBãÂ÷7ããÂöF—cæ ¢¢'Vâç7FGW2ÓÒ'V&Æ—6†VB"òÆF—b6Æ73Ò&æ÷F–6Rv&æ–ær#ãÆ’FFÖÇV6–FSÒ'G&–ævÆRÖÆW'B#ãÂö“ãÇ7ãîÙˆNÉêÂ«8NÈ+«+«;Î¸©BËHÉXÉè^¸¸¸ºBâÈJÈ9Ş¸¹»8BÉ¹BÊx«ˆÉZ«;Â«;^Ê	ÎÉZÉØB«(ØjÙYÂ¹*BÙ™^Ê	^Ù[BÊ;ÎÈKÉ©BâÈ*ÎÙ¨Î»;NÙyŒ+~ÈKÉZÉØ«‹ÉêRÙ¨Î«8NÈ*ÎÉÙ‚ËYÎÊ(RÙ™^ÉÛÉÛBÙXNÉ©NÙZ¸¸¸ºBãÂ÷7ããÂöF—cæ¢"'Ğ¢G·Væ6öæf—&ÖVD—FV×2æÆVæwF‚òÆF—b6Æ73Ò&æ÷F–6Rv&æ–ær#ãÆ’FFÖÇV6–FSÒ&&FvRÖ†VÇ#ãÂö“ãÇ7ãî«;ÎÈK‚Ë)ºjÎ«Ù™^ÉÛ¹	ÊxÉX®ÉØÊx«ˆ’ÙZŞºªÉÛBÉèÈ«^¸¸¸ºC¢G¶R‡Væ6öæf—&ÖVD—FV×2æ¦ö–â‚"Â"’—ÒâÉ¹B«ˆÉzÂÉè^º
+^ÉyÈIÂË)ºjÂ»
+È¹ŞÉØBÈJØ9ŞÙ[NÉ[ÂÙ™^Ê	^ÙZÈ‰‚ÉèÈ«^¸¸¸ºBãÂ÷7ããÂöF—cæ¢"'Ğ¢ÆF—b6Æ73Ò'FööÆ&"#à¢Æ–çWB6Æ73Ò&ÖöçF‚Ö6öçG&öÂ"G—SÒ&ÖöçF‚"fÇVSÒ"G¶R‡7FFRæÖöçF‚—Ò"&–ÖÆ&VÃÒ.«ˆÉzÂÉ¹B"FFÖ6öçG&öÃÒ&ÖöçF‚"óà¢Ç7â6Æ73Ò'7FGW2Ö6†—G¶R‡'Vâç7FGW2—Ò#âG·7FGW4Æ&VÂ‡'Vâç7FGW2—ÓÂ÷7ãà¢Ç7â6Æ73Ò'FööÆ&"×76W"#ãÂ÷7ãà¢ÆF—b6Æ73Ò'6V&6‚×w&#ãÆ’FFÖÇV6–FSÒ'6V&6‚#ãÂö“ãÆ–çWB6Æ73Ò'6V&6‚Ö6öçG&öÂ"G—SÒ'6V&6‚"fÇVSÒ"G¶R‡7FFRç6V&6‚—Ò"Æ6V†öÆFW#Ò.ÈJÈ9Ş¸¹‚«(È8’"&–ÖÆ&VÃÒ.ÈJÈ9Ş¸¹‚«(È8’"FFÖ6öçG&öÃÒ'6V&6‚"óãÂöF—cà¢ÂöF—cà¢Ç6V7F–öâ6Æ73Ò&ÖWG&–72"&–ÖÆ&VÃÒ.«ˆÉzÂÉ©NÉ[Ò#à¢G¶ÖWG&–2‚'W6W'2×&÷VæB"Â.¸ÈÈ8ÈJÈ9Ş¸¹‚"ÂG·—&öÆÇ2æÆVæwF‡Şº¨VÂÙ™ÎÈKÈJÈ9Ş¸¹‚G¶7F—fUFV6†W'2‚’æÆVæwF‡Şº¨V—Ğ¢G¶ÖWG&–2‚&6—&6ÆRÖFöÆÆ"×6–vâ"Â.ËIÒÊx«ˆÉZ"Âf÷&ÖEvöâ‡7VÖÖ'’æw&÷72’Â.«;^Ê	ÂÊB«ˆÉZ"—Ğ¢G¶ÖWG&–2‚'&V6V—B×FW‡B"Â.ËIÒ«;^Ê	ÎÉZ"Âf÷&ÖEvöâ‡7VÖÖ'’æFVGV7F–öç2’Â»;NÙy‚ÊÉª’«‹ÊHG¶f÷&ÖEvöâ‡7VÖÖ'’æ–ç7W&VD&6R—Ö—Ğ¢G¶ÖWG&–2‚'vÆÆWBÖ6&G2"Â.ÈºBÊx«ˆÉZ"Âf÷&ÖEvöâ‡7VÖÖ'’ææWB’Â.ÈJÈ9Ş¸¹‚Êx«ˆ’ÉˆÊ	RÙZ«8B"—Ğ¢Â÷6V7F–öãà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îÈJÈ9Ş¸¹»8B«ˆÉzÃÂöƒ#ãÇîÈJÈ9Ş¸¹»8BÈhÎ¹9Ò«ZÎÈK«;Â»;NÙy»8BÈº«:«‹ÊHÉZÉËÎºÂ«8NÈ+ÙYÂÉÛN»(‚¸ºÂËHÉXƒÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#âG·—&öÆÅF&ÆR‡—&öÆÇ2—ÓÂöF—cà¢Â÷6V7F–öãà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îË)ºjÂÊxNÙh’È8Ùš“Âöƒ#ãÇîÉè^º
+^»hØKº¨^ÈKÈIÂ«;^«	Î«˜ÎÊxÉÙ‚É¹N»8BÈ8Ø9ÃÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò'&öw&W72×7G&—#à¢G·&öw&W757FW‚#"Â.É¹B«ˆÉzÂÉè^º
+R"ÂG·—&öÆÇ2æÆVæwF‡Şº¨VÂG'VRÂ—&öÆÇ2æÆVæwF‚â—Ğ¢G·&öw&W757FW‚#""Â.«8NÈ+«(Øj"ÂG·—&öÆÇ2æÆVæwF‡Şº¨VÂG'VRÂ'Vâç7FGW2ÓÒ&G&gB"—Ğ¢G·&öw&W757FW‚#2"Â.«ˆÉzÂÙ™^Ê	R"Â7FGW4Æ&VÂ‡'Vâç7FGW2’Â'Vâç7FGW2ÓÒ&G&gB"Â'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"—Ğ¢G·&öw&W757FW‚#B"Â.º¨^ÈKÈIÂ«;^«	Â"Â'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"ò.ÈJÈ9Ş¸¹‚É{N¹èÂ«¸ªR"¢'Vâç7FGW2ÓÓÒ&6æ6VÆÆVB"ò.ÉêÎ»	ÎÙh’Ù¸B«;^«	Â"¢.Ù™^Ê	RÙ¸B«;^«	Â"Â'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"ÂfÇ6R—Ğ¢ÂöF—cà¢Â÷6V7F–öãà¢G¶6æ6VÆÆF–öç2æÆVæwF‚òÇ6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#ãÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îËzÈhÌ+~ÉêÎ»	ÎÙh’ÉÛNº
+SÂöƒ#ãÇî«‹ÊBÙ™^Ê	^»;ÉØBÈ*ŞÊ	ÎÙYÊxÉX®«:»8«+ÒÈ*ÎÉÊº[Â»;NÊNÙZ¸¸¸ºBãÂ÷ãÂöF—cãÂöF—cãÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒîËzÈhÂË
+È‰ƒÂ÷FƒãÇFƒîÈ*ÎÉÊÂ÷FƒãÇFƒîË)ºjÂÈ¹Î«Â÷FƒãÇFƒîË)ºjÎÉéÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“âG¶6æ6VÆÆF–öç2æÖ‚†—FVÒ’ÓâÇG#ãÇFCâG¶R†—FVÒç&Wf—6–öâ—ŞË
+ƒÂ÷FCãÇFCâG¶R†—FVÒç&V6öâ—ÓÂ÷FCãÇFCâG¶R†f÷&ÖDFFUF–ÖR†—FVÒæ7&VFVDB’—ÓÂ÷FCãÇFCâG¶R†—FVÒæ7F÷%V–BÇÂ.«HºjÎÉé"—ÓÂ÷FCãÂ÷G#æ’æ¦ö–â‚""—ÓÂ÷F&öG“ãÂ÷F&ÆSãÂöF—cãÂ÷6V7F–öãæ¢"'Ğ¢°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvW‡÷'BÖÆVFvW"uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"ÂW‡÷'DÆVFvW"“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒwV&Æ—6‚×'VâuÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷VåV&Æ—6„ÖöFÂ“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv6æ6VÂ×'VâuÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vä6æ6VÅ—&öÆÄÖöFÂ“°¢–b‡'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"’VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv6÷’Öæ÷F–6RuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â6÷•—6Æ—æ÷F–6R“°¢&–æE—&öÆÅ&÷w2‚“°§Ğ ¦gVæ7F–öâ&VæFW%—&öÆÄ–çWG2‚’°¢6öç7B'VâÒ'Väf÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7BÆö6¶VBÒ'Vâç7FGW2ÓÓÒ'V&Æ—6†VB#°¢6öç7BFV6†W'2Ò7F—fUFV6†W'2‚’æf–ÇFW"‚‡FV6†W"’Óâ7FFRç6V&6‚ÇÂFV6†W"ææÖRæ–æ6ÇVFW2‡7FFRç6V&6‚’“°¢6öç7BÖ—76–æt–ç7W&VE6Æ'’ÒFV6†W'2æf–ÇFW"‚‡FV6†W"’Óâ°¢6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“°¢&WGW&â6WGF–æw2æ–ç7W&æ6TVç&öÆÆVBbbÖöçF†Ç•”Ö÷VçG2‡FV6†W"Â7FFRæÖöçF‚’æV×Æ÷–VTw&÷75’ÃÒ°¢Ò“°¢6WEvR‚.É¹B«ˆÉzÂÉè^º
+R"Âf÷&ÖDÖöçF‚‡7FFRæÖöçF‚’“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò'FööÆ&"#à¢Æ–çWB6Æ73Ò&ÖöçF‚Ö6öçG&öÂ"G—SÒ&ÖöçF‚"fÇVSÒ"G¶R‡7FFRæÖöçF‚—Ò"&–ÖÆ&VÃÒ.«ˆÉzÂÉ¹B"FFÖ6öçG&öÃÒ&ÖöçF‚"óà¢Ç7â6Æ73Ò'7FGW2Ö6†—G¶R‡'Vâç7FGW2—Ò#âG·7FGW4Æ&VÂ‡'Vâç7FGW2—ÓÂ÷7ãà¢Ç7â6Æ73Ò'FööÆ&"×76W"#ãÂ÷7ãà¢ÆF—b6Æ73Ò'6V&6‚×w&#ãÆ’FFÖÇV6–FSÒ'6V&6‚#ãÂö“ãÆ–çWB6Æ73Ò'6V&6‚Ö6öçG&öÂ"G—SÒ'6V&6‚"fÇVSÒ"G¶R‡7FFRç6V&6‚—Ò"Æ6V†öÆFW#Ò.ÈJÈ9Ş¸¹‚«(È8’"&–ÖÆ&VÃÒ.ÈJÈ9Ş¸¹‚«(È8’"FFÖ6öçG&öÃÒ'6V&6‚"óãÂöF—cà¢ÂöF—cà¢ÆF—b6Æ73Ò&æ÷F–6RG¶Ö—76–æt–ç7W&VE6Æ'’æÆVæwF‚ò'v&æ–ær"¢"'Ò#ãÆ’FFÖÇV6–FSÒ"G¶Ö—76–æt–ç7W&VE6Æ'’æÆVæwF‚ò'G&–ævÆRÖÆW'B"¢&6—&6ÆRÖ6†V6²'Ò#ãÂö“ãÇ7ãâG¶Ö—76–æt–ç7W&VE6Æ'’æÆVæwF‚ò«{ÎºÎÈhÎ¹9ÒÉ¹N«ˆÉÛBÉè^º
+^¹	ÊxÉX®ÉØ»;NÙy‚«ÉèRÈJÈ9Ş¸¹ÉÛBG¶Ö—76–æt–ç7W&VE6Æ'’æÆVæwF‡Şº¨RÉèÈ«^¸¸¸ºBæ¢.«{ÎºÎÈhÎ¹9ŞÉØÉ¹N«ˆÉËÎºÂÂÈ*ÎÉx^ÈhÎ¹9ŞÉØ«;Îºª»8BÈ¹Î«ˆ’9rÈ‰ÉxRÈ¹ÎÈ‰ºÂ«8NÈ+ÙYÂ¹*B2ã2^º[ÂÉ¹Ë)ÎÊy^È‰ÙZ¸¸¸ºBâÙYÂÈJÈ9Ş¸¹Éy«(Â¹ÈhÎ¹9ŞÉØBÙZ«¹‚ÊÉªÙZÈ‰‚ÉèÈ«^¸¸¸ºBâ'ÓÂ÷7ããÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#âG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÒÊx«ˆÉZÂöƒ#ãÇî«{ÎºÎÈhÎ¹9Ü+~«	^È*Îº8Ì+~«YØk^»˜L+~Ê;ÎË
+º8Ì+~«‹Ø8Êx«ˆ«;Â»;NÙy‚Èº«:«‹ÊHÉZÉØBÈJÈ9Ş¸¹»8NºÂÉè^º
+^ÙZ¸¸¸ºBãÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒîÈJÈ9Ş¸¹ƒÂ÷FƒãÇFƒî«ÉèR»;NÙyƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÉÛN»(‚¸ºÂ«{ÎºÎÈhÎ¹9ÓÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«{ÎºÂÈ‰Éx^È¹Î«CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈ‰ÉxRÈ¹ÎÈ‰ƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«	^È*Îº8ÃÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«	^È*Îº8Â2ã2SÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«YØk\+~Ê;ÎË
+Œ+~«‹Ø8Â÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈº«:ÉZÂ÷FƒãÇFƒîÉè^º
+RÈ8Ø9ÃÂ÷FƒãÇF‚&–ÖÆ&VÃÒ.ÉéÉxR#ãÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“à¢G·FV6†W'2æÖ‚‡FV6†W"’Óâ°¢6öç7B÷fW'&–FRÒ7FFRæFFæ÷fW'&–FW5¶G·7FFRæÖöçF‡Ó¢G·FV6†W"æ–GÖÓ°¢6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“°¢6öç7BÖ÷VçG2ÒÖöçF†Ç•”Ö÷VçG2‡FV6†W"Â7FFRæÖöçF‚“°¢6öç7BF÷FÂÒÖ÷VçG2çF÷FÄw&÷75“°¢6öç7B7W7FöÒÒ÷fW'&–FSòæV×Æ÷–VTw&÷75’ÒçVÆÂÇÂ'&’æ—4'&’†÷fW'&–FSòæ'W6–æW75v÷&´Æ–æW2’ÇÂ÷fW'&–FSòæ'W6–æW74w&÷75’ÒçVÆÂÇÂ÷fW'&–FSòæw&÷75’ÒçVÆÂÇÂÖ÷VçG2æFF—F–öæÄw&÷75’â°¢6öç7BÖ—76–æu6Æ'’Ò6WGF–æw2æ–ç7W&æ6TVç&öÆÆVBbbÖ÷VçG2æV×Æ÷–VTw&÷75’ÃÒ°¢6öç7B–ç7W&æ6T6÷VçBÒö&¦V7BçfÇVW2‡6WGF–æw2æ–ç7W&æ6U6WGF–æw2’æf–ÇFW"‚†—FVÒ’Óâ—FVÒæVç&öÆÆVB’æÆVæwFƒ°¢6öç7B7FGW5FW‡BÒÖ—76–æu6Æ'’ò.«{ÎºÎÈhÎ¹9ÒÙXNÉ©B"¢Ö÷VçG2çVæ6öæf—&ÖVD6÷VçBòË)ºjÂÙ™^ÉÛ‚G¶Ö÷VçG2çVæ6öæf—&ÖVD6÷VçGŞ«F¢F÷FÂâò.Éè^º
+RÉ˜Nº8Â"¢.«ˆÉZºûÉè^º
+R#°¢6öç7B7FGW46Æ72ÒF÷FÂâbbÖ—76–æu6Æ'’bbÖ÷VçG2çVæ6öæf—&ÖVD6÷VçBò'–B"¢'VæF–ær#°¢&WGW&âÇG#ãÇFCâG·W'6öä6VÆÂ‡FV6†W"—ÓÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—G¶–ç7W&æ6T6÷VçBò'V&Æ—6†VB"¢'VæF–ær'Ò#âG¶–ç7W&æ6T6÷VçBòG¶–ç7W&æ6T6÷VçGŞÊ(R«ÉèV¢.ºû«ÉèR'ÓÂ÷7ããÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#ãÇ7G&öæsâG¶f÷&ÖEvöâ†Ö÷VçG2æV×Æ÷–VTw&÷75’—ÓÂ÷7G&öæsãÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖD†÷W'2†Ö÷VçG2æV×Æ÷–VUv÷&´†÷W'2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖD†÷W'2†Ö÷VçG2æ'W6–æW74†÷W'2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#ãÇ7G&öæsâG¶f÷&ÖEvöâ†Ö÷VçG2æ'W6–æW74w&÷75’—ÓÂ÷7G&öæsãÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ†W7F–ÖFVD'W6–æW75v—F††öÆF–ær†Ö÷VçG2æ'W6–æW74w&÷75’’—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ†Ö÷VçG2æFF—F–öæÄw&÷75’—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#ãÇ7G&öæsâG¶f÷&ÖEvöâ‡F÷FÂ—ÓÂ÷7G&öæsãÆF—b6Æ73Ò&6VÆÂ×7V'FW‡B#âG¶7W7FöÒò.ÉÛN»(‚¸ºÂÉè^º
+R"¢.«‹»;«	"'ÓÂöF—cãÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—G·7FGW46Æ77Ò#âG¶R‡7FGW5FW‡B—ÓÂ÷7ããÂ÷FCãÇFCãÆ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.ÉÛN»(‚¸ºÂÊx«ˆÉZÈ‰Ê	R"&–ÖÆ&VÃÒ"G¶R‡FV6†W"ææÖR—ÒÉÛN»(‚¸ºÂÊx«ˆÉZÈ‰Ê	R"FFÖVF—BÖÖöçF†Ç’×“Ò"G¶R‡FV6†W"æ–B—Ò"G¶Æö6¶VBò&F—6&ÆVB"¢"'ÓãÆ’FFÖÇV6–FSÒ'Væ6–Â#ãÂö“ãÂö'WGFöããÂ÷FCãÂ÷G#æ°¢Ò’æ¦ö–â‚""’ÇÂV×G•&÷rƒ—Ğ¢Â÷F&öG“ãÂ÷F&ÆSãÂöF—cà¢Â÷6V7F–öãà¢°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖVF—BÖÖöçF†Ç’×•Ò"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢6öç7BFV6†W"ÒFV6†W$'”–B†'WGFöâæFF6WBæVF—DÖöçF†Ç•’“°¢–b‡FV6†W"’÷VäÖöçF†Ç•”ÖöFÂ‡FV6†W"“°¢Ò’“°§Ğ ¦gVæ7F–öâ&VæFW$VçG&–W2‚’°¢6öç7BÆö6¶VBÒ'Väf÷$ÖöçF‚‡7FFRæÖöçF‚’ç7FGW2ÓÓÒ'V&Æ—6†VB#°¢6WEvR‚.È‰ÉxR¸+NÉzÒ"Âf÷&ÖDÖöçF‚‡7FFRæÖöçF‚’Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&77bÖ†VÇ"G¶Æö6¶VBò&F—6&ÆVB"¢"'ÓãÆ’FFÖÇV6–FSÒ&f–ÆR×W#ãÂö“ãÇ7ãä55bÉx^ºÎ¹9ÃÂ÷7ããÂö'WGFöãà¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&FBÖVçG'’"G¶Æö6¶VBò&F—6&ÆVB"¢"'ÓãÆ’FFÖÇV6–FSÒ'ÇW2#ãÂö“ãÇ7ãîÈ‰ÉxRËiN«Â÷7ããÂö'WGFöãà¢“°¢6öç7BVçG&–W2ÒVçG&–W4f÷$ÖöçF‚‡7FFRæÖöçF‚’æf–ÇFW"‚†VçG'’’ÓâFV6†W$'”–B†VçG'’çFV6†W$–B“òææÖRæ–æ6ÇVFW2‡7FFRç6V&6‚’“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò'FööÆ&"#à¢Æ–çWB6Æ73Ò&ÖöçF‚Ö6öçG&öÂ"G—SÒ&ÖöçF‚"fÇVSÒ"G¶R‡7FFRæÖöçF‚—Ò"&–ÖÆ&VÃÒ.È‰ÉxRÉ¹B"FFÖ6öçG&öÃÒ&ÖöçF‚"óà¢Ç7â6Æ73Ò'FööÆ&"×76W"#ãÂ÷7ãà¢ÆF—b6Æ73Ò'6V&6‚×w&#ãÆ’FFÖÇV6–FSÒ'6V&6‚#ãÂö“ãÆ–çWB6Æ73Ò'6V&6‚Ö6öçG&öÂ"G—SÒ'6V&6‚"fÇVSÒ"G¶R‡7FFRç6V&6‚—Ò"Æ6V†öÆFW#Ò.ÈJÈ9Ş¸¹‚«(È8’"&–ÖÆ&VÃÒ.ÈJÈ9Ş¸¹‚«(È8’"FFÖ6öçG&öÃÒ'6V&6‚"óãÂöF—cà¢ÂöF—cà¢ÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ&–æfò#ãÂö“ãÇ7ãî«È‰ÉxR¸+NÉzŞÉyÈ¹Î«ˆ’ÂÈhÎ¹9Ò«ZÎ»hBÂ»;NÙy‚ÊÉª’ÉzÎ»h«ÈªN¸8^È;~ÉËÎºÂÊÉê^¹
+¸¸¸ºBâ«8NÉ[ÒÊ«NÉÛB¸)ÊIÉy»	N¸ÎÉkN¸øBÙ™^Ê	^¹	Â«;Î««ˆÉzÎ¸©BÉÊÊx¹
+¸¸¸ºBãÂ÷7ããÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#âG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÒÈ‰ÉxSÂöƒ#ãÇâG¶VçG&–W2æÆVæwF‡Ş«B+rËIÒG¶f÷&ÖD†÷W'2†VçG&–W2ç&VGV6R‚‡7VÒÂ—FVÒ’Óâ7VÒ²çVÖ&W"†—FVÒæ†÷W'2’Â’—ÓÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#à¢ÇF&ÆSãÇF†VCãÇG#ãÇFƒîÈ‰Éx^ÉÛÃÂ÷FƒãÇFƒîÈJÈ9Ş¸¹ƒÂ÷FƒãÇFƒî«;Îºª“Â÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈ¹Î«CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈ¹Î«ˆ“Â÷FƒãÇFƒîÈhÎ¹9Ò«ZÎ»hCÂ÷FƒãÇFƒî»;NÙyƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«ˆÉZÂ÷FƒãÂ÷G#ãÂ÷F†VCà¢ÇF&öG“âG¶VçG&–W2æÖ‚†VçG'’’ÓâÇG#ãÇFCâG¶R†VçG'’çv÷&¶VDöâ—ÓÂ÷FCãÇFCâG¶R‡FV6†W$'”–B†VçG'’çFV6†W$–B“òææÖR—ÓÂ÷FCãÇFCâG¶R†VçG'’ç7V&¦V7DæÖR—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶R†VçG'’æ†÷W'2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ†VçG'’æ†÷W&Ç•&FR—ÓÂ÷FCãÇFCâG¶R…E$TDÔTåEôÄ$TÅ5¶VçG'’çG&VFÖVçEÒ—ÓÂ÷FCãÇFCâG¶VçG'’æ–ç7W&æ6T6÷fW&VBò.ÊÉª’"¢.ºûÊÉª’'ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ†VçG'’æ†÷W'2¢VçG'’æ†÷W&Ç•&FR—ÓÂ÷FCãÂ÷G#æ’æ¦ö–â‚""’ÇÂV×G•&÷rƒ‚—ÓÂ÷F&öG“ãÂ÷F&ÆSà¢ÂöF—cà¢Â÷6V7F–öãà¢°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢–b‚Æö6¶VB’°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvFBÖVçG'’uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷VäVçG'”ÖöFÂ“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv77bÖ†VÇuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vä77d†VÇÖöFÂ“°¢Ğ§Ğ ¦gVæ7F–öâ&VæFW%FV6†W'2‚’°¢6WEvR‚.ÈJÈ9Ş¸¹‚«HºjÂ"Â.ÉÛÈ*Â+rÊ	«{Â«hÎÙYÂ"ÂÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&6÷’×÷'FÂ#ãÆ’FFÖÇV6–FSÒ&Æ–æ²#ãÂö“ãÇ7ãîØúÎØK‚ºxØÂ»;^È*ÃÂ÷7ããÂö'WGFöããÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&FB×FV6†W"#ãÆ’FFÖÇV6–FSÒ'W6W"×ÇW2#ãÂö“ãÇ7ãîÈJÈ9Ş¸¹‚¹;ºÓÂ÷7ããÂö'WGFöãæ“°¢6öç7B6VÆV7FVBÒFV6†W$'”–B‡7FFRç6VÆV7FVEFV6†W$–B’ÇÂ7FFRæFFçFV6†W'5³Ó°¢–b‡6VÆV7FVB’7FFRç6VÆV7FVEFV6†W$–BÒ6VÆV7FVBæ–C°¢6öç7Bf–ÇFW&VBÒ7FFRæFFçFV6†W'2æf–ÇFW"‚‡FV6†W"’ÓâFV6†W"ææÖRæ–æ6ÇVFW2‡7FFRç6V&6‚’“°¢6öç7BVæF–æu&WVW7G2Ò7FFRæFFæ66W75&WVW7G2æf–ÇFW"‚‡&WVW7B’Óâ&WVW7Bç7FGW2ÓÓÒ'VæF–ær"“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò'FööÆ&"#ãÆF—b6Æ73Ò'6V&6‚×w&#ãÆ’FFÖÇV6–FSÒ'6V&6‚#ãÂö“ãÆ–çWB6Æ73Ò'6V&6‚Ö6öçG&öÂ"G—SÒ'6V&6‚"fÇVSÒ"G¶R‡7FFRç6V&6‚—Ò"Æ6V†öÆFW#Ò.ÉÛNºhB«(È8’"&–ÖÆ&VÃÒ.ÉÛNºhB«(È8’"FFÖ6öçG&öÃÒ'6V&6‚"óãÂöF—cãÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ66÷VçB×&WVW7G2#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#ävöövÆR«8NÊ	RÈ«ÉÛ‚É©NË*ÓÂöƒ#ãÇîÈJÈ9Ş¸¹ÉÛBØúÎØKÉyÈIÂË)ÉØÂºÎ«{ÉÛÙYº›BÉzÎ«‹ÉyÙÎÈ¹Î¹
+¸¸¸ºBãÂ÷ãÂöF—cãÇ7â6Æ73Ò'7FGW2Ö6†—G·VæF–æu&WVW7G2æÆVæwF‚ò&G&gB"¢'V&Æ—6†VB'Ò#âG·VæF–æu&WVW7G2æÆVæwF‚òG·VæF–æu&WVW7G2æÆVæwF‡Ş«B¸È«‹¢.¸È«‹ÉxnÉØÂ'ÓÂ÷7ããÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒîÉ©NË*ŞÉéÂ÷FƒãÇFƒävöövÆRÉÛNº™NÉÛÃÂ÷FƒãÇFƒîÉ©NË*ÒÈ¹Î«Â÷FƒãÇFƒîÉ{«+«¸ªSÂ÷FƒãÇF‚&–ÖÆ&VÃÒ.ÉéÉxR#ãÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“à¢G·VæF–æu&WVW7G2æÖ‚‡&WVW7B’Óâ°¢6öç7BÖF6†W2ÒÖF6†–æuFV6†W'4f÷$66W75&WVW7B‡&WVW7BÂ7FFRæFFçFV6†W'2“°¢&WGW&âÇG#ãÇFCãÇ7G&öæsâG¶R‡&WVW7BæF—7Æ”æÖRÇÂ.ÉÛNºhBºûÙ™^ÉÛ‚"—ÓÂ÷7G&öæsãÂ÷FCãÇFCâG¶R‡&WVW7BæVÖ–Â—ÓÂ÷FCãÇFCâG¶R†f÷&ÖDFFUF–ÖR‡&WVW7Bç&WVW7FVDB’—ÓÂ÷FCãÇFCâG¶ÖF6†W2æÆVæwF‚ÓÓÒòÇ7â6Æ73Ò'7FGW2Ö6†—&VG’#âG¶R†ÖF6†W5³ÒææÖR—ÓÂ÷7ãæ¢Ç7â6Æ73Ò'7FGW2Ö6†—VæF–ær#îÉÛNº™NÉÛÂÙ™^ÉÛ‚ÙXNÉ©CÂ÷7ãæÓÂ÷FCãÇFCãÆF—b6Æ73Ò'&÷rÖ7F–öç2#ãÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’'WGFöâÖ6ö×7B"G—SÒ&'WGFöâ"FFÖ&÷fRÖ66W73Ò"G¶R‡&WVW7BçV–BÇÂ&WVW7Bæ–B—Ò#ãÆ’FFÖÇV6–FSÒ'W6W"Ö6†V6²#ãÂö“ãÇ7ãî«8NÊ	RÉ{«+Â÷7ããÂö'WGFöããÂöF—cãÂ÷FCãÂ÷G#æ°¢Ò’æ¦ö–â‚""’ÇÂV×G•&÷rƒR—Ğ¢Â÷F&öG“ãÂ÷F&ÆSãÂöF—cà¢Â÷6V7F–öãà¢ÆF—b6Æ73Ò'7Æ—BÖÆ–÷WB#à¢Ç6V7F–öâ6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#à¢ÇF&ÆSãÇF†VCãÇG#ãÇFƒîÈJÈ9Ş¸¹ƒÂ÷FƒãÇFƒî«ÉèR»;NÙyƒÂ÷FƒãÇFƒî«ˆÉzÂ«ZÎÈKÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«‹»;‚«{ÎºÎÈhÎ¹9ÓÂ÷FƒãÇFƒîÈ*ÎÉxRÈ¹Î«ˆ“Â÷FƒãÇFƒîÈ8Ø9ÃÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“à¢G¶f–ÇFW&VBæÖ‚‡FV6†W"’Óâ²6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“²6öç7B†4'W6–æW72Ò6WGF–æw2æ'W6–æW75&FW2æÆVæwF‚âÇÂ6WGF–æw2æFVfVÇD'W6–æW75’â²6öç7B–ç7W&æ6T6÷VçBÒö&¦V7BçfÇVW2‡6WGF–æw2æ–ç7W&æ6U6WGF–æw2’æf–ÇFW"‚†—FVÒ’Óâ—FVÒæVç&öÆÆVB’æÆVæwFƒ²&WGW&âÇG"FF×6VÆV7B×FV6†W#Ò"G¶R‡FV6†W"æ–B—Ò"F&–æFWƒÒ##ãÇFCâG·W'6öä6VÆÂ‡FV6†W"—ÓÂ÷FCãÇFCâG¶–ç7W&æ6T6÷VçBòG¶–ç7W&æ6T6÷VçGŞÊ(R«ÉèV¢.ºû«ÉèR'ÓÂ÷FCãÇFCâG¶R‡”6ö×÷6—F–öäÆ&VÂ‡6WGF–æw2æFVfVÇDV×Æ÷–VU’Â†4'W6–æW72ò¢’—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ‡6WGF–æw2æFVfVÇDV×Æ÷–VU’—ÓÂ÷FCãÇFCâG·6WGF–æw2æ'W6–æW75&FW2æÆVæwF‚òG·6WGF–æw2æ'W6–æW75&FW2æÆVæwF‡Ş«	Â«;Îºª–¢6WGF–æw2æFVfVÇD'W6–æW75’âò.«‹ÊBÉ¹NÉZ"¢.ºû¹;ºÒ'ÓÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—G·FV6†W"ç7FGW2ÓÓÒ&7F—fR"ò'–B"¢&6æ6VÆÆVB'Ò#âG·FV6†W"ç7FGW2ÓÓÒ&7F—fR"ò.Ù™ÎÈK"¢.»˜NÙ™ÎÈK'ÓÂ÷7ããÂ÷FCãÂ÷G#æ²Ò’æ¦ö–â‚""’ÇÂV×G•&÷rƒb—Ğ¢Â÷F&öG“ãÂ÷F&ÆSà¢Â÷6V7F–öãà¢G·6VÆV7FVBòÆ6–FR6Æ73Ò&FWF–Â×æVÂ#à¢ÆF—b6Æ73Ò&FWF–Â×æVÂÖ†VFW"FWF–Â×F—FÆR×&÷r#ãÆF—cãÆƒ#âG¶R‡6VÆV7FVBææÖR—ÓÂöƒ#ãÇâG¶R‡6VÆV7FVBæVÖ–Â—ÓÂ÷ãÂöF—cãÆ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.ÈJÈ9Ş¸¹‚Ê	^»;BÈ‰Ê	R"&–ÖÆ&VÃÒ"G¶R‡6VÆV7FVBææÖR—ÒÊ	^»;BÈ‰Ê	R"FFÖVF—B×FV6†W#ãÆ’FFÖÇV6–FSÒ'Væ6–Â#ãÂö“ãÂö'WGFöããÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÉ{¹ÛÜ+~È¹Ş»8BÊ	^»;CÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîÉ{¹ÛŞË)ƒÂöGCãÆFCâG¶R‡6VÆV7FVBç†öæRÇÂ.ºû¹;ºÒ"—ÓÂöFCãÂöF—cãÆF—cãÆGCîÈ9Ş¸XNÉ¹NÉÛÌ+~ÈK»8N»(Ù‹ƒÂöGCãÆFCâG¶R†f÷&ÖEFV6†W$–FVçF—G’‡6VÆV7FVB’ÇÂ.ºû¹;ºÒ"—ÓÂöFCãÂöF—cãÆF—cãÆGCîÊNË+BÊ;ÎºûÎ¹;ºŞ»(Ù‹ƒÂöGCãÆFCîÊÉê^ÙYÊxÉX®ÉØÃÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÊ	«{ÂÉ{«+Âöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîºÎ«{ÉÛ‚T”CÂöGCãÆFCâG¶R‡6VÆV7FVBæWF…V–BÇÂ.È«ÉÛ‚¸È«‹"—ÓÂöFCãÂöF—cãÆF—cãÆGCîÈ8Ø9ÃÂöGCãÆFCâG·6VÆV7FVBç7FGW2ÓÓÒ&7F—fR"ò.Ù™ÎÈK"¢.»˜NÙ™ÎÈK'ÓÂöFCãÂöF—cãÂöFÃãÂöF—cà¢G·FV6†W%”FWF–Ç2‡6VÆV7FVB—Ğ¢G·FV6†W%•6WGF–æw2‡6VÆV7FVB’æ–ç7W&æ6TVç&öÆÆVBÇÂFV6†W%•6WGF–æw2‡6VÆV7FVB’æFVfVÇDV×Æ÷–VU’âòÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆF—b6Æ73Ò&FWF–Â×F—FÆR×&÷r#ãÆƒ3î«{ÎºÎÈhÎ¹9ÒÉ¹Ë)ÎÊy^È‰‚Ê	^»;CÂöƒ3ãÆ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.É¹Ë)ÎÊy^È‰‚Ê	^»;BÈ‰Ê	R"&–ÖÆ&VÃÒ"G¶R‡6VÆV7FVBææÖR—ÒÉ¹Ë)ÎÊy^È‰‚Ê	^»;BÈ‰Ê	R"FFÖVF—B×F‚×&öf–ÆSãÆ’FFÖÇV6–FSÒ'Væ6–Â#ãÂö“ãÂö'WGFöããÂöF—cãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCî«;^Ê	Î¸ÈÈ8«ÊÂöGCãÆFCâG¶R‡F…&öf–ÆTf÷%FV6†W"‡6VÆV7FVB’æFWVæFVçD6÷VçB—Şº¨SÂöFCãÂöF—cãÆF—cãÆGCã‡ã#ÈK‚Éé¸XÂöGCãÆFCâG¶R‡F…&öf–ÆTf÷%FV6†W"‡6VÆV7FVB’æ6†–ÆG&Vã…Fó#—Şº¨SÂöFCãÂöF—cãÆF—cãÆGCîÉ¹Ë)ÎÊy^È‰‚»˜NÉÊƒÂöGCãÆFCâG·&FUW&6VçB‡F…&öf–ÆTf÷%FV6†W"‡6VÆV7FVB’çv—F††öÆF–æu&F–ò—ÓÂöFCãÂöF—cãÂöFÃãÂöF—cæ¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÉ¹Ë)ÎÊy^È‰ƒÂöƒ3ãÇ6Æ73Ò&f÷&ÒÖ†VÇ#îÈ*ÎÉx^ÈhÎ¹9ÒÊx«ˆÉZÉy¸©BÈ*ÎÉx^ÈhÎ¹9ÒÉ¹Ë)ÎÊy^È‰‚«‹ÊHÉÛBÊÉª¹
+¸¸¸ºBãÂ÷ãÂöF—cæĞ¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î¸»N¸»’«;Îºª“Âöƒ3ãÆF—b6Æ73Ò'FrÖÆ—7B#âG·6VÆV7FVBç7V&¦V7G2æÖ‚‡7V&¦V7B’ÓâÇ7â6Æ73Ò'Fr#âG¶R‡7V&¦V7B—ÓÂ÷7ãæ’æ¦ö–â‚""—ÓÂöF—cãÂöF—cà¢Âö6–FSæ¢"'Ğ¢ÂöF—cà¢°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvFB×FV6†W"uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷VåFV6†W$ÖöFÂ“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv6÷’×÷'FÂuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â6÷•÷'FÄÆ–æ²“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷"‚%¶FFÖVF—B×FV6†W%Ò"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ÷VåFV6†W$VF—DÖöFÂ‡6VÆV7FVB’“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷"‚%¶FFÖVF—B×F‚×&öf–ÆUÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ÷VåF…&öf–ÆTÖöFÂ‡6VÆV7FVB’“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ&÷fRÖ66W75Ò"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢6öç7B&WVW7BÒ7FFRæFFæ66W75&WVW7G2æf–æB‚†—FVÒ’Óâ†—FVÒçV–BÇÂ—FVÒæ–B’ÓÓÒ'WGFöâæFF6WBæ&÷fT66W72“°¢–b‡&WVW7B’÷Vä66W74&÷fÄÖöFÂ‡&WVW7B“°¢Ò’“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FF×6VÆV7B×FV6†W%Ò"’æf÷$V6‚‚‡&÷r’Óâ&÷ræFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢7FFRç6VÆV7FVEFV6†W$–BÒ&÷ræFF6WBç6VÆV7EFV6†W#°¢&VæFW%FV6†W'2‚“°¢Ò’“°§Ğ ¦gVæ7F–öâ&VæFW%&FW2‚’°¢6WEvR‚.È¹Î«ˆ’+r«8NÉ[ÒÊ«B"Â.ÊÉª’«‹«N»8B«yÎË™’"ÂÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&FB×&FR#ãÆ’FFÖÇV6–FSÒ'ÇW2#ãÂö“ãÇ7ãîÊ«BËiN«Â÷7ããÂö'WGFöãæ“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ&Æ–W'2Ó2#ãÂö“ãÇ7ãîÙYÂÈJÈ9Ş¸¹Éy«(Â«;Îºª»8BÈ¹Î«ˆ«;ÂÈIÎºÂ¸ºNº[‚ÈhÎ¹9Ò«ZÎ»hNÉØB¸ùÈ¹ÎÉyÊxÊ	^ÙZÈ‰‚ÉèÈ«^¸¸¸ºBâ«:Éª«H«8N«ÉèÉËÎº›B«{ÎºÎÈhÎ¹9ÒÂ¸ø^ºkŞÊÉËÎºÂ«8NÈhÜ+~»	»;^ÙY¸©B«	^ÉÙ¸©BÈ*ÎÉx^ÈhÎ¹9ÒÂÉÛÎÈ¹ÎÊ«	^ÉÙ¸©B«‹Ø8ÈhÎ¹9ŞÉËÎºÂ«(ØjÙYº›É[ÉÛB«8NÉ[ÒÈºNÊxÉØBÉé¸ù’ØÉÊ	^ÙYÊx¸©BÉX®È«^¸¸¸ºBãÂ÷7ããÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îÙˆNÉêÂÊÉª’Ê«CÂöƒ#ãÇîÈJÈ9Ş¸¹‚²«;Îºª’²ÊÉª’«‹«B«‹ÊHÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒîÈJÈ9Ş¸¹ƒÂ÷FƒãÇFƒî«;Îºª“Â÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈ¹Î«ˆ“Â÷FƒãÇFƒîÈhÎ¹9Ò«ZÎ»hCÂ÷FƒãÇFƒãN¸È»;NÙyƒÂ÷FƒãÇFƒîÊÉª’È¹ÎÉéÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“à¢G·7FFRæFFç&FU'VÆW2æÖ‚‡'VÆR’ÓâÇG#ãÇFCâG¶R‡FV6†W$'”–B‡'VÆRçFV6†W$–B“òææÖR—ÓÂ÷FCãÇFCâG¶R‡'VÆRç7V&¦V7DæÖR—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ‡'VÆRæ†÷W&Ç•&FR—ÓÂ÷FCãÇFCâG¶R…E$TDÔTåEôÄ$TÅ5·'VÆRçG&VFÖVçEÒ—ÓÂ÷FCãÇFCâG·'VÆRæ–ç7W&æ6T6÷fW&VBò.ÊÉª’"¢.ºûÊÉª’'ÓÂ÷FCãÇFCâG¶R‡'VÆRæVffV7F—fTg&öÒ—ÓÂ÷FCãÂ÷G#æ’æ¦ö–â‚""’ÇÂV×G•&÷rƒb—Ğ¢Â÷F&öG“ãÂ÷F&ÆSãÂöF—cà¢Â÷6V7F–öãà¢°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvFB×&FRuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vå&FTÖöFÂ“°§Ğ ¦gVæ7F–öâ&VæFW$ÆVFvW"‚’°¢6öç7B—&öÆÇ2Ò—&öÆÇ4f÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7B7VÖÖ'’Ò7VÖÖ&—¦U—&öÆÂ‡—&öÆÇ2æÖ‚†—FVÒ’Óâ—FVÒç—&öÆÂ’“°¢6WEvR‚.É¹N»8B«ˆÉzÎ¸+NÉzŞÈIÂ"Âf÷&ÖDÖöçF‚‡7FFRæÖöçF‚’Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ'&–çB#ãÆ’FFÖÇV6–FSÒ'&–çFW"#ãÂö“ãÇ7ãîÉÛÈxCÂ÷7ããÂö'WGFöãà¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&W‡÷'BÖÆVFvW"#ãÆ’FFÖÇV6–FSÒ&F÷væÆöB#ãÂö“ãÇ7ãä55bÊÉêSÂ÷7ããÂö'WGFöãà¢“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò'FööÆ&"#ãÆ–çWB6Æ73Ò&ÖöçF‚Ö6öçG&öÂ"G—SÒ&ÖöçF‚"fÇVSÒ"G¶R‡7FFRæÖöçF‚—Ò"&–ÖÆ&VÃÒ.«ˆÉzÂÉ¹B"FFÖ6öçG&öÃÒ&ÖöçF‚"óãÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#ãÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#âG¶R†6öæf–ræ6FV×”æÖR—Ò«ˆÉzÎ¸+NÉzŞÈIÃÂöƒ#ãÇî«‹ÉêRÊN¸ºÎÉª’+rG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÓÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#âG¶ÆVFvW%F&ÆR‡—&öÆÇ2Â7VÖÖ'’—ÓÂöF—cãÂ÷6V7F–öãà¢°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒw&–çBuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâv–æF÷rç&–çB‚’“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvW‡÷'BÖÆVFvW"uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"ÂW‡÷'DÆVFvW"“°§Ğ ¦gVæ7F–öâ&VæFW%6WGF–æw2‚’°¢6öç7BF…öÆ–7’ÒF…öÆ–7”f÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7B–ç7W&æ6UöÆ–7’Ò–ç7W&æ6UöÆ–7”f÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7BÆV7GW&U'VÆRÒF…öÆ–7’æ÷F†W#òæ6FVv÷&–W3òçFV×÷&'”ÆV7GW&RÇÂ·Ó°¢6WEvR‚.«8NÈ++r»;NÉX‚ÈJNÊ	R"Â.«HºjÎÉéÊNÉª’"Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&W‡÷'B×F‚×F&ÆR#ãÆ’FFÖÇV6–FSÒ&f–ÆRÖF÷vâ#ãÂö“ãÇ7ãî«NÉÛNÈKÉZÙÂ55cÂ÷7ããÂö'WGFöãà¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&FB×F‚×öÆ–7’#ãÆ’FFÖÇV6–FSÒ'ÇW2#ãÂö“ãÇ7ãîÈ8‚ÈK«ˆ‚«‹ÊHÂ÷7ããÂö'WGFöãà¢“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ&ÆæFÖ&²#ãÂö“ãÇ7ãîÉ¹Ë)ÎÊy^È‰¸©B«ZŞÈKË*ÒÉX¸+NÉ˜ÈhÎ¹9ŞÈK»)RÈ¹ÎÙhº’»8NÙÂ.º[Â«‹ÊHÉËÎºÂ«8NÈ+ÙZ¸¸¸ºBâ»)^ºÉÛB»	N¸Îº›B«‹ÊB«‹ÊHÉØBÈ‰Ê	^ÙYÊxÉX®«:È8‚È¹ÎÙhÉÛÎÉÙ‚»(NÊNÉØBËiN«ÙYÈKÉ©BâÙ™^Ê	Rº¨^ÈKÈIÎÉy¸©BÊÉª’»(NÊNÉÛB«{¸ÈºÂ»;NÊN¹
+¸¸¸ºBãÂ÷7ããÂöF—cà¢ÆF—b6Æ73Ò'7Æ—BÖÆ–÷WB#à¢Ç6V7F–öâ6Æ73Ò&FWF–Â×æVÂ#à¢ÆF—b6Æ73Ò&FWF–Â×æVÂÖ†VFW"#ãÆƒ#âG¶R‡F…öÆ–7’ææÖRÇÂ.ÈK«ˆ‚«‹ÊH"—ÓÂöƒ#ãÇâG¶R‡F…öÆ–7’çfW'6–öâ—Ò+rG¶R‡F…öÆ–7’æVffV7F—fTg&öÒ—Ş»hØKÊÉª“Â÷ãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«{ÎºÎÈhÎ¹9ÓÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCî«NÉÛNÈKÉZÙÃÂöGCãÆFCâG¶R‡F…öÆ–7’æV×Æ÷–ÖVçCòçF&ÆU&Wf—6–öâ—Ò«	ÎÊ	SÂöFCãÂöF—cãÆF—cãÆGCî«ˆÉzÂ«ZÎ«CÂöGCãÆFCâG¶f÷&ÖDçVÖ&W"‡F…öÆ–7’æV×Æ÷–ÖVçCòçF&ÆU&÷w3òæÆVæwF‚—Ş«	ÃÂöFCãÂöF—cãÆF—cãÆGCîÉ¹Ë)ÎÊy^È‰‚ÈJØ9ÓÂöGCãÆFCãƒR+rR+r#SÂöFCãÂöF—cãÆF—cãÆGCã‡ã#ÈK‚Éé¸X«;^Ê	ÃÂöGCãÆFCîÉÛÉ¹»8BÊÉª“ÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÈ*ÎÉx^ÈhÎ¹9ÓÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîÈhÎ¹9ŞÈKƒÂöGCãÆFCâG·&FUW&6VçB‡F…öÆ–7’æ'W6–æW73òæ–æ6öÖUF…&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCîÊx»
+ÈhÎ¹9ŞÈKƒÂöGCãÆFCîÈhÎ¹9ŞÈKÉÙ‚G·&FUW&6VçB‡F…öÆ–7’æ'W6–æW73òæÆö6Ä–æ6öÖUF…&FTöd–æ6öÖUF‚—ÓÂöFCãÂöF—cãÆF—cãÆGCîÙZ«8BÙª«;ÎÈKÉÊƒÂöGCãÆFCâG·&FUW&6VçB„çVÖ&W"‡F…öÆ–7’æ'W6–æW73òæ–æ6öÖUF…&FRÇÂ’¢ƒ²çVÖ&W"‡F…öÆ–7’æ'W6–æW73òæÆö6Ä–æ6öÖUF…&FTöd–æ6öÖUF‚ÇÂ’’—ÓÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÉÛÎÈ¹ÎÊ«	^ÉÙ‚«‹Ø8ÈhÎ¹9ÓÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîÙXNÉ©N«+Ş»˜NÉÊƒÂöGCãÆFCâG·&FUW&6VçB†ÆV7GW&U'VÆRæW‡Vç6U&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCîÈhÎ¹9ŞÈKÉÊƒÂöGCãÆFCâG·&FUW&6VçB†ÆV7GW&U'VÆRæ–æ6öÖUF…&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCî«;ÎÈKËYÎÊÙYÃÂöGCãÆFCî«N»8BÈhÎ¹9Ş«ˆÉZG¶f÷&ÖEvöâ†ÆV7GW&U'VÆRæÖ–æ–×VÕF†&ÆT–æ6öÖTÖ÷VçB—ÒÉÛNÙYƒÂöFCãÂöF—cãÆF—cãÆGCîËYÎÊÙYÂËH«;ÂÙª«;ÎÈKÉÊƒÂöGCãÆFCâG·&FUW&6VçB‚ƒÒçVÖ&W"†ÆV7GW&U'VÆRæW‡Vç6U&FRÇÂ’’¢çVÖ&W"†ÆV7GW&U'VÆRæ–æ6öÖUF…&FRÇÂ’¢ƒ²çVÖ&W"†ÆV7GW&U'VÆRæÆö6Ä–æ6öÖUF…&FTöd–æ6öÖUF‚ÇÂ’’—ÓÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«;^È¹Ò«{Î«Âöƒ3ãÆF—b6Æ73Ò'6÷W&6RÖÆ—7B#âG²‡F…öÆ–7’ç6÷W&6W2ÇÂµÒ’æÖ‚‡6÷W&6R’ÓâÆ‡&VcÒ"G¶R‡6fT‡GGW&Â‡6÷W&6RçW&Â’—Ò"F&vWCÒ%ö&Ææ²"&VÃÒ&æö÷VæW"æ÷&VfW'&W"#ãÆ’FFÖÇV6–FSÒ&W‡FW&æÂÖÆ–æ²#ãÂö“âG¶R‡6÷W&6RçF—FÆR—ÓÂöæ’æ¦ö–â‚""—ÓÂöF—cãÂöF—cà¢Â÷6V7F–öãà¢Ç6V7F–öâ6Æ73Ò&FWF–Â×æVÂ#à¢ÆF—b6Æ73Ò&FWF–Â×æVÂÖ†VFW"#ãÆƒ#îÈ*ÎÙ¨Î»;NÙy‚Ê	^ËSÂöƒ#ãÇâG¶R†–ç7W&æ6UöÆ–7’çfW'6–öâ—Ò+r«ZŞÈKË*Ò«‹ÊH«;Â»8N¸øB«HºjÃÂ÷ãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«{ÎºÎÈhÎ¹9Ò»;NÙyƒÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCî«ZŞºûÎÉ{«ˆƒÂöGCãÆFCâG·&FUW&6VçB†–ç7W&æ6UöÆ–7’æV×Æ÷–VSòææF–öæÅVç6–öãòç&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCî«N«	^»;NÙyƒÂöGCãÆFCâG·&FUW&6VçB†–ç7W&æ6UöÆ–7’æV×Æ÷–VSòæ†VÇF„–ç7W&æ6Sòç&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCîÉê^«‹É©NÉiÂöGCãÆFCî«N«	^»;NÙyº8ÎÉÙ‚G·&FUW&6VçB†–ç7W&æ6UöÆ–7’æV×Æ÷–VSòæÆöæuFW&Ô6&U&FR—ÓÂöFCãÂöF—cãÆF—cãÆGCî«:Éª»;NÙyƒÂöGCãÆFCâG·&FUW&6VçB†–ç7W&æ6UöÆ–7’æV×Æ÷–VSòæV×Æ÷–ÖVçD–ç7W&æ6Sòç&FR—ÓÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«;^È¹Ò«{Î«Âöƒ3ãÆF—b6Æ73Ò'6÷W&6RÖÆ—7B#âG²†–ç7W&æ6UöÆ–7’ç6÷W&6W2ÇÂµÒ’æÖ‚‡6÷W&6R’ÓâÆ‡&VcÒ"G¶R‡6fT‡GGW&Â‡6÷W&6RçW&Â’—Ò"F&vWCÒ%ö&Ææ²"&VÃÒ&æö÷VæW"æ÷&VfW'&W"#ãÆ’FFÖÇV6–FSÒ&W‡FW&æÂÖÆ–æ²#ãÂö“âG¶R‡6÷W&6RçF—FÆR—ÓÂöæ’æ¦ö–â‚""—ÓÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆF—b6Æ73Ò&æ÷F–6Rv&æ–ær6ö×7B#ãÆ’FFÖÇV6–FSÒ'G&–ævÆRÖÆW'B#ãÂö“ãÇ7ãîÉé¸ù’«8NÈ+ÉØÈJÈ9Ş¸¹»8B«ZŞºûÎÉ{«ˆŒ+~«N«	^»;NÙyŒ+~«:Éª»;NÙy‚Èº«:«‹ÊHÉZÉØBÈ*ÎÉªÙYÂÉˆÈ8«	.Éè^¸¸¸ºBâ«;^¸º‚«:ÊxÉZÂÉè\+~Ø{NÈ*ÎÉ¹BÂ¹º:¸ˆNºjÂÊxÉ¹ÂÙËNÊx+~Ê	^È+¹;ÉØ«ˆÉzÂÙ™^Ê	RÊNÉyÈ‰¸ù’«;^Ê	ÎÉZÉËÎºÂºyîËiNÈKÉ©BãÂ÷7ããÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&FBÖ–ç7W&æ6R×öÆ–7’#ãÆ’FFÖÇV6–FSÒ'ÇW2#ãÂö“ãÇ7ãîÈ8‚È*ÎÙ¨Î»;NÙy‚«‹ÊHÂ÷7ããÂö'WGFöããÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î»;NÉX‚Ê	«(Âöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîÊÉê^ÈhÂ«	ÎÉÛÊ	^»;CÂöGCãÆFCîØúÎÙZ‚«ˆÊxÂöFCãÂöF—cãÆF—cãÆGCäf—&W7F÷&R«‹»;‚«hÎÙYÃÂöGCãÆFCîÊNº›B«»hÂöFCãÂöF—cãÆF—cãÆGCîÈJÈ9Ş¸¹‚º¨^ÈKÈIÃÂöGCãÆFCî»;ÉÛ‚T”NºxÃÂöFCãÂöF—cãÆF—cãÆGCîÙ™^Ê	^»;‚È‰Ê	SÂöGCãÆFCî«ˆÊxÂöFCãÂöF—cãÂöFÃãÂöF—cà¢ÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3îÙˆNÉêÂÈºNÙh’ºª¹9ÃÂöƒ3ãÇ7â6Æ73Ò'7FGW2Ö6†—G¶6öæf–ræFVÖôÖöFRò&G&gB"¢'V&Æ—6†VB'Ò#âG¶6öæf–ræFVÖôÖöFRò.¸Ûºª‚¸ÛÉÛNØK"¢$f—&V&6RÉ{«+'ÓÂ÷7ããÂöF—cà¢Â÷6V7F–öãà¢ÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâöÆ–7’Ö†—7F÷'’#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îÈK«ˆ‚«‹ÊHÊÉª’ÉÛNº
+SÂöƒ#ãÇîÈ¹ÎÙhÉÛÎÉÛB«ÉêRËYÎ«{ÎÉÛ‚ÉÊÙª‚»(NÊNÉÛBÉé¸ù’ÊÉª¹
+¸¸¸ºBãÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒî»(NÊCÂ÷FƒãÇFƒî«‹ÊHº¨SÂ÷FƒãÇFƒîÈ¹ÎÙhÉÛÃÂ÷FƒãÇFƒîÙ™^ÉÛÉÛÃÂ÷FƒãÇFƒîÈ8Ø9ÃÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“âGµ²ââç7FFRæFFçF…öÆ–6–W5Òç6÷'B‚†Â"’Óâ7G&–ær†"æVffV7F—fTg&öÒ’æÆö6ÆT6ö×&R…7G&–ær†æVffV7F—fTg&öÒ’’’æÖ‚‡öÆ–7’’ÓâÇG#ãÇFCãÇ7G&öæsâG¶R‡öÆ–7’çfW'6–öâ—ÓÂ÷7G&öæsãÂ÷FCãÇFCâG¶R‡öÆ–7’ææÖR—ÓÂ÷FCãÇFCâG¶R‡öÆ–7’æVffV7F—fTg&öÒ—ÓÂ÷FCãÇFCâG¶R‡öÆ–7’çfW&–f–VDBÇÂ"Ò"—ÓÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—V&Æ—6†VB#âG·öÆ–7’æ'V–ÇD–âò.¸+NÉêR«;^È¹Ş»;‚"¢.¹;ºÒÉ˜Nº8Â'ÓÂ÷7ããÂ÷FCãÂ÷G#æ’æ¦ö–â‚""—ÓÂ÷F&öG“ãÂ÷F&ÆSãÂöF—cà¢Â÷6V7F–öãà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâöÆ–7’Ö†—7F÷'’#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#îÈ*ÎÙ¨Î»;NÙy‚«‹ÊHÊÉª’ÉÛNº
+SÂöƒ#ãÇî«ZŞºûÎÉ{«ˆ‚È8+~ÙYÙYÎË)¹ûÂÉ{ÊI»8«+Ş¹	¸©B«‹ÊH¸øBÈ¹ÎÙhÉÛÎ»8NºÂ»;NÊNÙZ¸¸¸ºBãÂ÷ãÂöF—cãÂöF—cà¢ÆF—b6Æ73Ò&FF×7W&f6RF&ÆR×67&öÆÂ#ãÇF&ÆSãÇF†VCãÇG#ãÇFƒî»(NÊCÂ÷FƒãÇFƒî«‹ÊHº¨SÂ÷FƒãÇFƒîÈ¹ÎÙhÉÛÃÂ÷FƒãÇFƒîÊ(^º8ÎÉÛÃÂ÷FƒãÇFƒîÈ8Ø9ÃÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“âGµ²ââç7FFRæFFæ–ç7W&æ6UöÆ–6–W5Òç6÷'B‚†Â"’Óâ7G&–ær†"æVffV7F—fTg&öÒ’æÆö6ÆT6ö×&R…7G&–ær†æVffV7F—fTg&öÒ’’’æÖ‚‡öÆ–7’’ÓâÇG#ãÇFCãÇ7G&öæsâG¶R‡öÆ–7’çfW'6–öâ—ÓÂ÷7G&öæsãÂ÷FCãÇFCâG¶R‡öÆ–7’ææÖR—ÓÂ÷FCãÇFCâG¶R‡öÆ–7’æVffV7F—fTg&öÒ—ÓÂ÷FCãÇFCâG¶R‡öÆ–7’æVffV7F—fUFòÇÂ.«8NÈhÒ"—ÓÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—V&Æ—6†VB#âG·öÆ–7’æ'V–ÇD–âò.¸+NÉêR«;^È¹Ş»;‚"¢.¹;ºÒÉ˜Nº8Â'ÓÂ÷7ããÂ÷FCãÂ÷G#æ’æ¦ö–â‚""—ÓÂ÷F&öG“ãÂ÷F&ÆSãÂöF—cà¢Â÷6V7F–öãà¢°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvW‡÷'B×F‚×F&ÆRuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"ÂF÷væÆöEF…F&ÆUFV×ÆFR“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvFB×F‚×öÆ–7’uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷VåF…öÆ–7”ÖöFÂ“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvFBÖ–ç7W&æ6R×öÆ–7’uÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vä–ç7W&æ6UöÆ–7”ÖöFÂ“°§Ğ ¦gVæ7F–öâ&VæFW$†VÇ‚’°¢6öç7BVW'’Ò7FFRæ†VÇ6V&6‚çG&–Ò‚“°¢6öç7Bf—6–&ÆT'F–6ÆW2ÒVW'¢ò6V&6„†VÇ'F–6ÆW2‡VW'’Â†VÇ'F–6ÆW2Â†VÇ'F–6ÆW2æÆVæwF‚¢¢†VÇ'F–6ÆW3°¢6WEvR‚.È*ÎÉª’ÈJNº¨^ÈIÂ"Â.«HºjÎÉé¸øNÉ¸ºy"Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"F—FÆSÒ$’¸øNÉ¸ºyÉ{N«‹"&–ÖÆ&VÃÒ$’¸øNÉ¸ºyÉ{N«‹"FFÖ7F–öãÒ&÷VâÖ76—7FçB#ãÆ’FFÖÇV6–FSÒ&ÖW76vRÖ6—&6ÆR×VW7F–öâ#ãÂö“ãÇ7ãä’¸øNÉ¸ºyÂ÷7ããÂö'WGFöãà¢“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ&&öö²Ö6†V6²#ãÂö“ãÇ7ãî«HºjÎÉéÉx^ºËBÈ‰ÎÈIÎÉ˜Ù™Nº›N»8BÈ*ÎÉª»)^Éè^¸¸¸ºBâÈºNÊ	Â«	ÎÉÛÊ	^»;Nº[Â¸J>«‹ÊNÉyØXÎÈªNØ«‚«8NÊ	^«;Â«È8«ˆÉzÎºÂÊNË+BÊË
+º[ÂÙ™^ÉÛÙYÈKÉ©BãÂ÷7ããÂöF—cà¢ÆF—b6Æ73Ò&†VÇ×FööÆ&"#à¢ÆF—b6Æ73Ò'6V&6‚×w&#ãÆ’FFÖÇV6–FSÒ'6V&6‚#ãÂö“ãÆ–çWB6Æ73Ò'6V&6‚Ö6öçG&öÂ"G—SÒ'6V&6‚"fÇVSÒ"G¶R‡7FFRæ†VÇ6V&6‚—Ò"Æ6V†öÆFW#Ò.ÈJNº¨^ÈIÂ«(È8’"&–ÖÆ&VÃÒ.È*ÎÉª’ÈJNº¨^ÈIÂ«(È8’"FFÖ†VÇ×6V&6‚óãÂöF—cà¢Ç7ãâG·f—6–&ÆT'F–6ÆW2æÆVæwF‡Ş«	ÂÙZŞºª“Â÷7ãà¢ÂöF—cà¢ÆF—b6Æ73Ò&†VÇÖÆ–÷WB#à¢Æ6–FR6Æ73Ò&†VÇ×Fö2"&–ÖÆ&VÃÒ.È*ÎÉª’ÈJNº¨^ÈIÂºªË
+‚#à¢Ç7G&öæsîºªË
+ƒÂ÷7G&öæsà¢G¶†VÇ'F–6ÆW2æÖ‚†'F–6ÆRÂ–æFW‚’ÓâÆ'WGFöâG—SÒ&'WGFöâ"FFÖ†VÇÖ§V×Ò"G¶R†'F–6ÆRæ–B—Ò#ãÇ7ãâG¶–æFW‚²ÓÂ÷7ãâG¶R†'F–6ÆRçF—FÆR—ÓÂö'WGFöãæ’æ¦ö–â‚""—Ğ¢Âö6–FSà¢Ç6V7F–öâ6Æ73Ò&†VÇÖ6öçFVçB"&–ÖÆ&VÃÒ.È*ÎÉª’ÈJNº¨^ÈIÂ¸+NÉª’#à¢G·f—6–&ÆT'F–6ÆW2æÖ‚†'F–6ÆRÂ–æFW‚’Óâ ¢Æ'F–6ÆR–CÒ&†VÇÒG¶R†'F–6ÆRæ–B—Ò"6Æ73Ò&†VÇÖ'F–6ÆR#à¢Æ†VFW#ãÇ7ãâGµ7G&–ær†–æFW‚²’çE7F'Bƒ"Â#"—ÓÂ÷7ããÆF—cãÆƒ#âG¶R†'F–6ÆRçF—FÆR—ÓÂöƒ#ãÇâG¶R†'F–6ÆRç7VÖÖ'’—ÓÂ÷ãÂöF—cãÂö†VFW#à¢ÆöÃâG¶'F–6ÆRç7FW2æÖ‚‡7FW’ÓâÆÆ“âG¶R‡7FW—ÓÂöÆ“æ’æ¦ö–â‚""—ÓÂööÃà¢G¶'F–6ÆRæ6WF–öç2æÖ‚†6WF–öâ’ÓâÆF—b6Æ73Ò&†VÇÖ6WF–öâ#ãÆ’FFÖÇV6–FSÒ'G&–ævÆRÖÆW'B#ãÂö“ãÇ7ãâG¶R†6WF–öâ—ÓÂ÷7ããÂöF—cæ’æ¦ö–â‚""—Ğ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’'WGFöâÖ6ö×7B"G—SÒ&'WGFöâ"FFÖ†VÇÖ6³Ò"G¶R†'F–6ÆRçF—FÆR—Ò#ãÆ’FFÖÇV6–FSÒ&ÖW76vRÖ6—&6ÆR×VW7F–öâ#ãÂö“ãÇ7ãîÉÛBÙZŞºª’ÊxºËÙY«‹Â÷7ããÂö'WGFöãà¢Âö'F–6ÆSà¢’æ¦ö–â‚""’ÇÂÆF—b6Æ73Ò&V×G’×7FFR#ãÇ7G&öæsîÉÛÎË™ÙY¸©BÈJNº¨^ÈIÎ«ÉxnÈ«^¸¸¸ºBãÂ÷7G&öæsãÇ7ãî«‹¸ªRÉÛNºhNÉËÎºÂ¸ºNÈ¹Â«(È8ÙY«¸)‚’¸øNÉ¸ºyÉyÊxºËÙ[BÊ;ÎÈKÉ©BãÂ÷7ããÂöF—cæĞ¢Â÷6V7F–öãà¢ÂöF—cà¢°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒv÷VâÖ76—7FçBuÒ"’æFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â÷Vä76—7FçB“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷"‚%¶FFÖ†VÇ×6V&6…Ò"’æFDWfVçDÆ—7FVæW"‚&–çWB"Â†WfVçB’Óâ°¢6öç7B6&WBÒWfVçBçF&vWBç6VÆV7F–öå7F'C°¢7FFRæ†VÇ6V&6‚ÒWfVçBçF&vWBçfÇVS°¢&VæFW$†VÇ‚“°¢6öç7BæW‡D–çWBÒVÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷"‚%¶FFÖ†VÇ×6V&6…Ò"“°¢æW‡D–çWBæfö7W2‚“°¢æW‡D–çWBç6WE6VÆV7F–öå&ævR†6&WBÂ6&WB“°¢Ò“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ†VÇÖ§V×Ò"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢–b‡7FFRæ†VÇ6V&6‚’°¢7FFRæ†VÇ6V&6‚Ò"#°¢&VæFW$†VÇ‚“°¢Ğ¢&WVW7Dæ–ÖF–öäg&ÖR‚‚’ÓâFö7VÖVçBçVW'•6VÆV7F÷"†6†VÇÒG¶'WGFöâæFF6WBæ†VÇ§V×Ö“òç67&öÆÄ–çFõf–Wr‡²&V†f–÷#¢'6Öö÷F‚"Â&Æö6³¢'7F'B"Ò’“°¢Ò’“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ†VÇÖ6µÒ"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢÷Vä76—7FçB‚“°¢VÆVÖVçG2æ76—7FçD–çWBçfÇVRÒG¶'WGFöâæFF6WBæ†VÇ6·ÒÈ*ÎÉª’»
+»)^ÉØBÉXÎº
+NÊI†°¢VÆVÖVçG2æ76—7FçD–çWBæfö7W2‚“°¢Ò’“°§Ğ ¦gVæ7F–öâ&VæFW%v÷&´†÷W'2‚’°¢6öç7BFV6†W"ÒFV6†W$'”–B‡7FFRçW6W"çFV6†W$–B“°¢6öç7B'VâÒ'Väf÷$ÖöçF‚‡7FFRæÖöçF‚“°¢6öç7BÆö6¶VBÒ'Vâç7FGW2ÓÓÒ'V&Æ—6†VB#°¢6öç7B6WGF–æw2ÒFV6†W"òFV6†W%•6WGF–æw2‡FV6†W"’¢vWEFV6†W%•6WGF–æw2‡·Ò“°¢6öç7B7W'&VçBÒFV6†W"òÖöçF†Ç•v÷&´–çWB‡FV6†W"æ–B’¢çVÆÃ°¢6öç7BÆVv7”÷fW'&–FRÒFV6†W"ò7FFRæFFæ÷fW'&–FW5¶G·7FFRæÖöçF‡Ó¢G·FV6†W"æ–GÖÒÇÂ·Ò¢·Ó°¢6öç7BV×Æ÷–VUv÷&´†÷W'2Ò7W'&VçCòæV×Æ÷–VUv÷&´†÷W'2óòÆVv7”÷fW'&–FRæV×Æ÷–VUv÷&´†÷W'2óò°¢6öç7B'W6–æW74†÷W'2Ò7W'&VçCòæ'W6–æW74†÷W'0¢ÇÂ'W6–æW74†÷W'4g&öÕv÷&´Æ–æW2‡6WGF–æw2æ'W6–æW75&FW2ÂÆVv7”÷fW'&–FRæ'W6–æW75v÷&´Æ–æW2“°¢6öç7B6äVçFW$V×Æ÷–VT†÷W'2Ò6WGF–æw2æFVfVÇDV×Æ÷–VU’âÇÂ6WGF–æw2æ–ç7W&æ6TVç&öÆÆVC°¢6öç7B†5v÷&µG—W2Ò6äVçFW$V×Æ÷–VT†÷W'2ÇÂ6WGF–æw2æ'W6–æW75&FW2æÆVæwF‚â° ¢6WEvR‚.È‰Éx^È¹Î«BÉè^º
+R"Âf÷&ÖDÖöçF‚‡7FFRæÖöçF‚’Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"F—FÆSÒ.È‰Éx^È¹Î«BÊÉêR"&–ÖÆ&VÃÒ.È‰Éx^È¹Î«BÊÉêR"FFÖ7F–öãÒ'6fR×v÷&²Ö†÷W'2"G²FV6†W"ÇÂÆö6¶VBÇÂ†5v÷&µG—W2ò&F—6&ÆVB"¢"'ÓãÆ’FFÖÇV6–FSÒ'6fR#ãÂö“ãÇ7ãîÈ‰Éx^È¹Î«BÊÉêSÂ÷7ããÂö'WGFöãà¢“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒFV6†W"ò ¢ÆF—b6Æ73Ò'FööÆ&"#à¢Æ–çWB6Æ73Ò&ÖöçF‚Ö6öçG&öÂ"G—SÒ&ÖöçF‚"fÇVSÒ"G¶R‡7FFRæÖöçF‚—Ò"&–ÖÆ&VÃÒ.È‰ÉxRÉ¹B"FFÖ6öçG&öÃÒ&ÖöçF‚"óà¢Ç7â6Æ73Ò'7FGW2Ö6†—G¶R‡'Vâç7FGW2—Ò#âG¶Æö6¶VBò.Éè^º
+Rºx«	"¢7W'&VçBò.Ê	ÎËiÂÉ˜Nº8Â"¢.Éè^º
+RÊB'ÓÂ÷7ãà¢ÂöF—cà¢ÆF—b6Æ73Ò&æ÷F–6RG¶Æö6¶VBò'v&æ–ær"¢"'Ò#ãÆ’FFÖÇV6–FSÒ"G¶Æö6¶VBò&Æö6²"¢'6†–VÆBÖ6†V6²'Ò#ãÂö“ãÇ7ãâG¶Æö6¶VBòG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—Ò«ˆÉzÎ«Ù™^Ê	^¹	ÉkBÈ‰Éx^È¹Î«NÉØBÈ‰Ê	^ÙZÈ‰‚ÉxnÈ«^¸¸¸ºBæ¢.È‰Éx^È¹Î«NºxÂÉè^º
+^ÙZÈ‰‚ÉèÈ«^¸¸¸ºBâÉÛNº™NÉÛÂÂÉ¹N«ˆ’ÂÈ¹Î«ˆ’Â»;NÙy«;ÂÈK«ˆ‚Ê	^»;N¸©B«HºjÎÉé«¹;ºŞÙY«:«(ØjÙZ¸¸¸ºBâ'ÓÂ÷7ããÂöF—cà¢Ç6V7F–öâ6Æ73Ò&6öçFVçB×6V7F–öâ#à¢ÆF—b6Æ73Ò'6V7F–öâÖ†VF–ær#ãÆF—cãÆƒ#âG¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÒÈ‰Éx^È¹Î«CÂöƒ#ãÇî«HºjÎÉé«¹;ºŞÙYÂ«ˆÉzÂÉÊÙ‰^«;Â«;ÎºªÉyÙ[N¸»’É¹NÉÙ‚ËIÒÈ‰Éx^È¹Î«NÉØBÉè^º
+^ÙZ¸¸¸ºBãÂ÷ãÂöF—câG¶7W'&VçCòç7V&Ö—GFVDBòÇ7â6Æ73Ò&6VÆÂ×7V'FW‡B#îËYÎ«{ÂÊÉêRG¶R†f÷&ÖDFFUF–ÖR†7W'&VçBç7V&Ö—GFVDB’—ÓÂ÷7ãæ¢"'ÓÂöF—cà¢G¶†5v÷&µG—W2òÆf÷&Ò–CÒ'FV6†W"×v÷&²Ö†÷W'2Öf÷&Ò"6Æ73Ò&FF×7W&f6RFV6†W"×v÷&²Ö†÷W'2Öf÷&Ò#à¢G¶6äVçFW$V×Æ÷–VT†÷W'2òÆF—b6Æ73Ò'FV6†W"×v÷&²Ö†÷W"×&÷r#ãÆF—cãÇ7G&öæsî«{ÎºÎÈhÎ¹9ÒÈ‰ÉxSÂ÷7G&öæsãÇ7ãîÉ¹N«ˆ«;Â»8N¸øNºÂÈ‰Éx^È¹Î«NºxÂ«‹ºŞ¹
+¸¸¸ºBãÂ÷7ããÂöF—cãÆF—b6Æ73Ò&–çWB×7Vff—‚#ãÆ–çWBæÖSÒ&V×Æ÷–VUv÷&´†÷W'2"G—SÒ&çVÖ&W""Ö–ãÒ#"ÖƒÒ#sCB"7FWÒ#ãR"fÇVSÒ"G¶R†V×Æ÷–VUv÷&´†÷W'2—Ò"G¶Æö6¶VBò&F—6&ÆVB"¢"'Ò&–ÖÆ&VÃÒ.«{ÎºÎÈhÎ¹9ÒÈ‰Éx^È¹Î«B"óãÇ7ãîÈ¹Î«CÂ÷7ããÂöF—cãÂöF—cæ¢"'Ğ¢G·6WGF–æw2æ'W6–æW75&FW2æÖ‚‡&FR’ÓâÆF—b6Æ73Ò'FV6†W"×v÷&²Ö†÷W"×&÷r#ãÆF—cãÇ7G&öæsâG¶R‡&FRç7V&¦V7DæÖR—ÓÂ÷7G&öæsãÇ7ãîÈ*ÎÉx^ÈhÎ¹9ÒÈ‰ÉxSÂ÷7ããÂöF—cãÆF—b6Æ73Ò&–çWB×7Vff—‚#ãÆ–çWBG—SÒ&çVÖ&W""Ö–ãÒ#"ÖƒÒ#sCB"7FWÒ#ãR"fÇVSÒ"G¶R†'W6–æW74†÷W'5·&FRæ–EÒÇÂ—Ò"FFÖ'W6–æW72Ö†÷W#Ò"G¶R‡&FRæ–B—Ò"G¶Æö6¶VBò&F—6&ÆVB"¢"'Ò&–ÖÆ&VÃÒ"G¶R‡&FRç7V&¦V7DæÖR—ÒÈ‰Éx^È¹Î«B"óãÇ7ãîÈ¹Î«CÂ÷7ããÂöF—cãÂöF—cæ’æ¦ö–â‚""—Ğ¢Âöf÷&Óæ¢ÆF—b6Æ73Ò&V×G’×7FFR#î«HºjÎÉé«º‹ÎÊ«{ÎºÎÈhÎ¹9ÒÉ¹N«ˆ’¹‰¸©BÈ*ÎÉx^ÈhÎ¹9Ò«;ÎºªÉØB¹;ºŞÙ[NÉ[ÂÙZ¸¸¸ºBãÂöF—cæĞ¢Â÷6V7F–öãà¢¢ÆF—b6Æ73Ò&V×G’×7FFR#îÉ{«+¹	ÂÈJÈ9Ş¸¹‚Ê	^»;N«ÉxnÈ«^¸¸¸ºBãÂöF—cæ°¢&–æD6öÖÖöä6öçG&öÇ2‚“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒw6fR×v÷&²Ö†÷W'2uÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â7–æ2†WfVçB’Óâ°¢6öç7B'WGFöâÒWfVçBæ7W'&VçEF&vWC°¢6öç7Bf÷&ÒÒFö7VÖVçBçVW'•6VÆV7F÷"‚"7FV6†W"×v÷&²Ö†÷W'2Öf÷&Ò"“°¢–b‚f÷&Óòç&W÷'EfÆ–F—G’‚’’&WGW&ã°¢6öç7B†÷W%fÇVW2Ò°¢çVÖ&W"†f÷&ÒæVÆVÖVçG2æV×Æ÷–VUv÷&´†÷W'3òçfÇVRÇÂ’À¢ââå²ââæf÷&ÒçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ'W6–æW72Ö†÷W%Ò"•ÒæÖ‚†–çWB’ÓâçVÖ&W"†–çWBçfÇVRÇÂ’¢Ó°¢–b††÷W%fÇVW2ç6öÖR‚††÷W'2’ÓâçVÖ&W"æ—4f–æ—FR††÷W'2’ÇÂ†÷W'2ÂÇÂ†÷W'2âsCB’’°¢6†÷uFö7B‚.È‰Éx^È¹Î«NÉØÉÛNÈ8sCBÉÛNÙYºÂÉè^º
+^Ù[BÊ;ÎÈKÉ©Bâ"“°¢&WGW&ã°¢Ğ¢6öç7B&t'W6–æW74†÷W'2Òö&¦V7Bæg&öÔVçG&–W2…²ââæf÷&ÒçVW'•6VÆV7F÷$ÆÂ‚%¶FFÖ'W6–æW72Ö†÷W%Ò"•Ğ¢æÖ‚†–çWB’Óâ¶–çWBæFF6WBæ'W6–æW74†÷W"ÂçVÖ&W"†–çWBçfÇVRÇÂ•Ò’“°¢6öç7B–çWBÒ°¢–C¢ÖöçF†Ç•v÷&´–çWD–B‡7FFRæÖöçF‚ÂFV6†W"æ–B’À¢FV6†W$–C¢FV6†W"æ–BÀ¢FV6†W%V–C¢7FFRçW6W"çV–BÀ¢ÖöçFƒ¢7FFRæÖöçF‚À¢V×Æ÷–VUv÷&´†÷W'3¢çVÖ&W"†f÷&ÒæVÆVÖVçG2æV×Æ÷–VUv÷&´†÷W'3òçfÇVRÇÂ’À¢'W6–æW74†÷W'3¢'V–ÆD'W6–æW74†÷W'2‡6WGF–æw2æ'W6–æW75&FW2Â&t'W6–æW74†÷W'2’À¢7V&Ö—GFVDC¢æWrFFR‚’çFô•4õ7G&–ær‚¢Ó°¢'WGFöâæF—6&ÆVBÒG'VS°¢G'’°¢–b‡7FFRç7F÷&R’v—B7FFRç7F÷&Rç6fUFV6†W$ÖöçF†Ç”–çWB†–çWB“°¢7FFRæFFæÖöçF†Ç•v÷&´–çWG5¶G·7FFRæÖöçF‡Ó¢G·FV6†W"æ–GÖÒÒ–çWC°¢6†÷uFö7B†G¶f÷&ÖDÖöçF‚‡7FFRæÖöçF‚—ÒÈ‰Éx^È¹Î«NÉØBÊÉê^ÙhÈ«^¸¸¸ºBæ“°¢&VæFW%v÷&´†÷W'2‚“°¢Ò6F6‚†W'&÷"’°¢6†÷uFö7B†W'&÷"æÖW76vRÇÂ.È‰Éx^È¹Î«NÉØBÊÉê^ÙYÊxº«¾ÙhÈ«^¸¸¸ºBâ"“°¢Òf–æÆÇ’°¢'WGFöâæF—6&ÆVBÒfÇ6S°¢Ğ¢Ò“°§Ğ ¦gVæ7F–öâ&VæFW%—6Æ—2‚’°¢6öç7BFV6†W$–BÒ7FFRçW6W"ç&öÆRÓÓÒ'FV6†W""ò7FFRçW6W"çFV6†W$–B¢7FFRç6VÆV7FVEFV6†W$–C°¢6öç7BFV6†W"ÒFV6†W$'”–B‡FV6†W$–B“°¢6öç7BÖöçF‡2Òf–Æ&ÆU—6Æ—ÖöçF‡2‡FV6†W$–B“°¢–b‚ÖöçF‡2æ–æ6ÇVFW2‡7FFRç6VÆV7FVE—6Æ—ÖöçF‚’’7FFRç6VÆV7FVE—6Æ—ÖöçF‚ÒÖöçF‡5³ÒÇÂ7FFRæÖöçFƒ°¢6öç7B—&öÆÂÒ—&öÆÄf÷%FV6†W"‡FV6†W$–BÂ7FFRç6VÆV7FVE—6Æ—ÖöçF‚“°¢6öç7B'VâÒ²ââç'Väf÷$ÖöçF‚‡7FFRç6VÆV7FVE—6Æ—ÖöçF‚’Â7FGW3¢—6Æ—7FGW2‡FV6†W$–BÂ7FFRç6VÆV7FVE—6Æ—ÖöçF‚’Ó°¢6öç7B—4FÖ–âÒ7FFRçW6W"ç&öÆRÓÓÒ&FÖ–â#°¢6öç7BFVÆ—fW'’ÒFVÆ—fW'”f÷"‡FV6†W$–BÂ7FFRç6VÆV7FVE—6Æ—ÖöçF‚“°¢6WEvR‡7FFRçW6W"ç&öÆRÓÓÒ'FV6†W""ò.«ˆÉzÎº¨^ÈKÈIÂ"¢G·FV6†W#òææÖRÇÂ.ÈJÈ9Ş¸¹‚'Ò«ˆÉzÎº¨^ÈKÈIÆÂ.»	ÎÙh¹	ÂÉ¹N»8B¸+NÉzÒ"Â ¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"F—FÆSÒ%Db¸ºNÉ«NºÎ¹9Â"&–ÖÆ&VÃÒ.«ˆÉzÎº¨^ÈKÈIÂDb¸ºNÉ«NºÎ¹9Â"FFÖ7F–öãÒ&F÷væÆöB×—6Æ—"G·—&öÆÂò""¢&F—6&ÆVB'ÓãÆ’FFÖÇV6–FSÒ&F÷væÆöB#ãÂö“ãÇ7ãåDb¸ºNÉ«NºÎ¹9ÃÂ÷7ããÂö'WGFöãà¢Æ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×6V6öæF'’"G—SÒ&'WGFöâ"F—FÆSÒ.ÉÛÈxB"&–ÖÆ&VÃÒ.«ˆÉzÎº¨^ÈKÈIÂÉÛÈxB"FFÖ7F–öãÒ'&–çB×—6Æ—"G·—&öÆÂò""¢&F—6&ÆVB'ÓãÆ’FFÖÇV6–FSÒ'&–çFW"#ãÂö“ãÇ7ãîÉÛÈxCÂ÷7ããÂö'WGFöãà¢G¶—4FÖ–âòÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"F—FÆSÒ.ÉÛNº™NÉÛÂ»	ÎÈj"&–ÖÆ&VÃÒ.«ˆÉzÎº¨^ÈKÈIÂÉÛNº™NÉÛÂ»	ÎÈj"FFÖ7F–öãÒ&VÖ–Â×—6Æ—"G·—&öÆÂbb'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"ò""¢&F—6&ÆVB'ÓãÆ’FFÖÇV6–FSÒ&Ö–Â×ÇW2#ãÂö“ãÇ7ãîÉÛNº™NÉÛÂ»	ÎÈjÂ÷7ããÂö'WGFöãæ¢"'Ğ¢“°¢6öç7Bæ÷F–6RÒ7FFRçW6W"ç&öÆRÓÓÒ'FV6†W" ¢ò.»;ÉÛÉy«(Â»	ÎÙh¹	Â«ˆÉzÎº¨^ÈKÈIÎºxÂÙÎÈ¹Î¹
+¸¸¸ºBâØÈÎÉÛÎÉØB¸+Nº
+N»	¾ÉØ«;^Éª’«‹«‹ÉyÈIÎ¸©BÈ*ÎÉª’Ù¸BÈ*ŞÊ	ÎÙ[BÊ;ÎÈKÉ©Bâ ¢¢'Vâç7FGW2ÓÒ'V&Æ—6†VB ¢ò.«HºjÎÉéºûºjÎ»;N«‹Éè^¸¸¸ºBâÉÛNº™NÉÛÂË*»h»	ÎÈjÉØ«ˆÉzÂÙ™^Ê	RÙ¸BÈ*ÎÉªÙZÈ‰‚ÉèÈ«^¸¸¸ºBâ ¢¢FVÆ—fW'¢òG¶FVÆ—fW'’ç&V6—–VçDVÖ–ÇÒÊ;ÎÈhÎºÂG¶f÷&ÖDFVÆ—fW'”B†FVÆ—fW'’ç6VçDB—ŞÉyË*»h»	ÎÈjÙhÈ«^¸¸¸ºBæ ¢¢.Ù™^Ê	^¹	Âº¨^ÈKÈIÎÉè^¸¸¸ºBâÈ‰ÈºÉéÉ˜«ˆÉZÉØBÙ™^ÉÛÙYÂ¹*BDb¸ºNÉ«NºÎ¹9Â¹‰¸©BÉÛNº™NÉÛÂË*»h»	ÎÈjÉØBÊxNÙhÙYÈKÉ©Bâ#°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒ ¢ÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ"G¶FVÆ—fW'’ò&Ö–ÂÖ6†V6²"¢&Æö6²Ö¶W–†öÆR'Ò#ãÂö“ãÇ7ãâG¶R†æ÷F–6R—ÓÂ÷7ããÂöF—cà¢ÆF—b6Æ73Ò'—6Æ—ÖÆ–÷WB#à¢Æ6–FR6Æ73Ò'—6Æ—ÖÆ—7B#ãÆF—b6Æ73Ò'—6Æ—ÖÆ—7BÖ†VFW"#ãÆƒ#îº¨^ÈKÈIÂ¸+NÉzÓÂöƒ#ãÂöF—cà¢G¶ÖöçF‡2æÖ‚†ÖöçF‚’Óâ²6öç7B—FVÒÒ—&öÆÄf÷%FV6†W"‡FV6†W$–BÂÖöçF‚“²&WGW&âÆ'WGFöâ6Æ73Ò'—6Æ—Ö—FVÒG¶ÖöçF‚ÓÓÒ7FFRç6VÆV7FVE—6Æ—ÖöçF‚ò&7F—fR"¢"'Ò"G—SÒ&'WGFöâ"FF×—6Æ—ÖÖöçFƒÒ"G¶R†ÖöçF‚—Ò#ãÇ7G&öæsâG¶f÷&ÖDÖöçF‚†ÖöçF‚—ÓÂ÷7G&öæsãÇ7ãâG·—6Æ—7FGW2‡FV6†W$–BÂÖöçF‚’ÓÓÒ'V&Æ—6†VB"ò.»	ÎÙh’É˜Nº8Â"¢.«HºjÎÉéºûºjÎ»;N«‹'ÓÂ÷7ããÇ7â6Æ73Ò&Ö÷VçB#âG¶f÷&ÖEvöâ†—FVÓòç—&öÆÂææWB—ÓÂ÷7ããÂö'WGFöãæ²Ò’æ¦ö–â‚""’ÇÂÆF—b6Æ73Ò&V×G’×7FFR#î»	ÎÙh¹	Âº¨^ÈKÈIÎ«ÉxnÈ«^¸¸¸ºBãÂöF—cæĞ¢Âö6–FSà¢G·—&öÆÂbbFV6†W"ò—6Æ—6†VWB‡FV6†W"Â—&öÆÂç—&öÆÂÂ7FFRç6VÆV7FVE—6Æ—ÖöçF‚Â'Vâ’¢ÆF—b6Æ73Ò&V×G’×7FFR#îÙ™^ÉÛÙZº¨^ÈKÈIÎ«ÉxnÈ«^¸¸¸ºBãÂöF—cæĞ¢ÂöF—cà¢°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvF÷væÆöB×—6Æ—uÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"ÂF÷væÆöD7W'&VçE—6Æ—“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒw&–çB×—6Æ—uÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâv–æF÷rç&–çB‚’“°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvVÖ–Â×—6Æ—uÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ÷Vå—6Æ—VÖ–ÄÖöFÂ‡FV6†W"Â—&öÆÃòç—&öÆÂÂ'Vâ’“°¢VÆVÖVçG2æ6öçFVçBçVW'•6VÆV7F÷$ÆÂ‚%¶FF×—6Æ—ÖÖöçF…Ò"’æf÷$V6‚‚†'WGFöâ’Óâ'WGFöâæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ°¢7FFRç6VÆV7FVE—6Æ—ÖöçF‚Ò'WGFöâæFF6WBç—6Æ—ÖöçFƒ°¢&VæFW%—6Æ—2‚“°¢Ò’“°¢–b‡7FFRçW6W"ç&öÆRÓÓÒ'FV6†W""bb—&öÆÂbb'Vâç7FGW2ÓÓÒ'V&Æ—6†VB"’&V6÷&E—6Æ—f–WvVB‡FV6†W$–BÂ7FFRç6VÆV7FVE—6Æ—ÖöçF‚“°§Ğ ¦gVæ7F–öâ&VæFW%&öf–ÆR‚’°¢6öç7BFV6†W"ÒFV6†W$'”–B‡7FFRçW6W"çFV6†W$–B“°¢6WEvR‚.¹;ºÒÊ	^»;B"Â.¸+B«8NÊ	R"ÂÆ'WGFöâ6Æ73Ò&'WGFöâ'WGFöâ×&–Ö'’"G—SÒ&'WGFöâ"FFÖ7F–öãÒ&VF—BÖ×’×&öf–ÆR"G·FV6†W"ò""¢&F—6&ÆVB'ÓãÆ’FFÖÇV6–FSÒ'Væ6–Â#ãÂö“ãÇ7ãî¸+BÊ	^»;BÈ‰Ê	SÂ÷7ããÂö'WGFöãæ“°¢VÆVÖVçG2æ6öçFVçBæ–ææW$…DÔÂÒFV6†W"ò ¢ÆF—b6Æ73Ò'7Æ—BÖÆ–÷WB#ãÇ6V7F–öâ6Æ73Ò&FWF–Â×æVÂ#ãÆF—b6Æ73Ò&FWF–Â×æVÂÖ†VFW"#ãÆƒ#âG¶R‡FV6†W"ææÖR—ÓÂöƒ#ãÇâG¶R‡FV6†W"æVÖ–Â—ÓÂ÷ãÂöF—cãÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«	ÎÉÛ‚Ê	^»;CÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCîÉ{¹ÛŞË)ƒÂöGCãÆFCâG¶R‡FV6†W"ç†öæRÇÂ.ºû¹;ºÒ"—ÓÂöFCãÂöF—cãÆF—cãÆGCîÈ9Ş¸XNÉ¹NÉÛÌ+~ÈK»8N»(Ù‹ƒÂöGCãÆFCâG¶R†f÷&ÖEFV6†W$–FVçF—G’‡FV6†W"’ÇÂ.ºû¹;ºÒ"—ÓÂöFCãÂöF—cãÂöFÃãÂöF—cãÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î¸»N¸»’«;Îºª“Âöƒ3ãÆF—b6Æ73Ò'FrÖÆ—7B#âG²‡FV6†W"ç7V&¦V7G2ÇÂµÒ’æÖ‚†—FVÒ’ÓâÇ7â6Æ73Ò'Fr#âG¶R†—FVÒ—ÓÂ÷7ãæ’æ¦ö–â‚""’ÇÂÇ7â6Æ73Ò&f÷&ÒÖ†VÇ#îºû¹;ºÓÂ÷7ãæÓÂöF—cãÂöF—cãÂ÷6V7F–öãà¢Ç6V7F–öããÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ'W6W"×Vâ#ãÂö“ãÇ7ãîÉÛNºhBÂÉ{¹ÛŞË)‚ÂÈ9Ş¸XNÉ¹NÉÛÌ+~ÈK»8N»(Ù‹É˜¸»N¸»’«;ÎºªÉØÊxÊ	È‰Ê	^ÙZÈ‰‚ÉèÈ«^¸¸¸ºBãÂ÷7ããÂöF—cãÆF—b6Æ73Ò&æ÷F–6R#ãÆ’FFÖÇV6–FSÒ&Æö6²Ö¶W–†öÆR#ãÂö“ãÇ7ãävöövÆRÉÛNº™NÉÛÂÂ«8NÊ	RÈ8Ø9ÂÂÉ¹N«ˆ’ÂÈ¹Î«ˆ’Â»;NÙy‚ÂÈK«ˆ«;Â«;^Ê	ÂÊ	^»;N¸©B«HºjÎÉéºxÂÈ‰Ê	^ÙZÈ‰‚ÉèÈ«^¸¸¸ºBãÂ÷7ããÂöF—cãÂ÷6V7F–öããÂöF—cà¢¢ÆF—b6Æ73Ò&V×G’×7FFR#îÉ{«+¹	ÂÈJÈ9Ş¸¹‚Ê	^»;N«ÉxnÈ«^¸¸¸ºBãÂöF—cæ°¢VÆVÖVçG2çF÷&$7F–öç2çVW'•6VÆV7F÷"‚%¶FFÖ7F–öãÒvVF—BÖ×’×&öf–ÆRuÒ"“òæFDWfVçDÆ—7FVæW"‚&6Æ–6²"Â‚’Óâ÷VåFV6†W%6VÆe&öf–ÆTÖöFÂ‡FV6†W"’“°§Ğ ¦gVæ7F–öâ–æ—F–Æ—¦T76—7FçB‚’°¢–b‚7FFRæ76—7FçDÖW76vW2æÆVæwF‚’°¢7FFRæ76—7FçDÖW76vW2çW6‚‡°¢&öÆS¢&76—7FçB"À¢FW‡C¢.ÙHNºÎ«{¹ê‚È*ÎÉª»)^ÉØBÊxºËÙ[BÊ;ÎÈKÉ©BâÈºNÊ	ÂÉÛNºhBÂÉÛNº™NÉÛÂÂÊNÙ™N»(Ù‹‚Â«8NÊ(Î»(Ù‹‚ÂÊ;ÎºûÎ»(Ù‹É˜«ˆÉzÎÉZÉØÉè^º
+^ÙYÊxºxÈKÉ©Bâ"À¢6÷W&6S¢.È*ÎÉª’ÈJNº¨^ÈIÂ ¢Ò“°¢Ğ¢VÆVÖVçG2æ76—7FçE7FGW2çFW‡D6öçFVçBÒ6öæf–ræ76—7FçCòæVæ&ÆV@¢ò$vVÖ–æ’+rÈ*ÎÉª’ÈJNº¨^ÈIÂÊNÉª’ ¢¢.¸+NÉêRÈJNº¨^ÈIÂ+rvVÖ–æ’É{«+ÊB#°¢&VæFW$76—7FçDÖW76vW2‚“°§Ğ ¦gVæ7F–öâ÷Vä76—7FçB‚’°¢–b‡7FFRçW6W#òç&öÆRÓÒ&FÖ–â"’&WGW&ã°¢–æ—F–Æ—¦T76—7FçB‚“°¢VÆVÖVçG2æ76—7FçEæVÂæ†–FFVâÒfÇ6S°¢VÆVÖVçG2æ76—7FçEFövvÆRç6WDGG&–'WFR‚&&–ÖW‡æFVB"Â'G'VR"“°¢&Vg&W6„–6öç2‚“°¢&WVW7Dæ–ÖF–öäg&ÖR‚‚’ÓâVÆVÖVçG2æ76—7FçD–çWBæfö7W2‚’“°§Ğ ¦gVæ7F–öâ6Æ÷6T76—7FçB‚’°¢VÆVÖVçG2æ76—7FçEæVÂæ†–FFVâÒG'VS°¢VÆVÖVçG2æ76—7FçEFövvÆRç6WDGG&–'WFR‚&&–ÖW‡æFVB"Â&fÇ6R"“°§Ğ ¦7–æ2gVæ7F–öâ7V&Ö—D76—7FçEVW7F–öâ†WfVçB’°¢WfVçBç&WfVçDFVfVÇB‚“°¢–b‡7FFRæ76—7FçD'W7’ÇÂ7FFRçW6W#òç&öÆRÓÒ&FÖ–â"’&WGW&ã°¢6öç7BVW7F–öâÒVÆVÖVçG2æ76—7FçD–çWBçfÇVRçG&–Ò‚“°¢–b‚VW7F–öâ’&WGW&ã°¢VÆVÖVçG2æ76—7FçD–çWBçfÇVRÒ"#°¢7FFRæ76—7FçDÖW76vW2çW6‚‡²&öÆS¢'W6W""ÂFW‡C¢VW7F–öâÒ“°¢7FFRæ76—7FçD'W7’ÒG'VS°¢&VæFW$76—7FçDÖW76vW2‡G'VR“° ¢6öç7BÆö6Äç7vW"Ò'V–ÆDÆö6Ä†VÇç7vW"‡VW7F–öâÂ†VÇ'F–6ÆW2Â7W'&VçEf–WtÆ&VÂ‚’“°¢ÆWBç7vW"ÒÆö6Äç7vW#°¢ÆWB6÷W&6RÒ.È*ÎÉª’ÈJNº¨^ÈIÂ#°¢6öç7B6åW6TvVÖ–æ’Ò6öæf–ræ76—7FçCòæVæ&ÆV@¢bb6öæf–ræ76—7FçCòç&÷f–FW"ÓÓÒ&vVÖ–æ’ ¢bb6öæf–ræFVÖôÖöFP¢bb7FFRç7F÷&P¢bbFWFV7E6Vç6—F—fT–çWB‡VW7F–öâ’æÆVæwF‚ÓÓÒ° ¢–b†6åW6TvVÖ–æ’’°¢G'’°¢6öç7B&ö×BÒ'V–ÆDvVÖ–æ•&ö×B‡VW7F–öâÂ†VÇ'F–6ÆW2Â7W'&VçEf–WtÆ&VÂ‚’“°¢ç7vW"Òv—B7FFRç7F÷&Ræ6´†VÇ76—7FçB‡&ö×BÂ6öæf–ræ76—7FçBæÖöFVÂ“°¢6÷W&6RÒ$vVÖ–æ’+rÈ*ÎÉª’ÈJNº¨^ÈIÂ#°¢VÆVÖVçG2æ76—7FçE7FGW2çFW‡D6öçFVçBÒ$vVÖ–æ’+rÈ*ÎÉª’ÈJNº¨^ÈIÂÊNÉª’#°¢Ò6F6‚†W'&÷"’°¢6öç6öÆRçv&â‚$vVÖ–æ’¸øNÉ¸ºyÉØBÈ*ÎÉªÙZÈ‰‚ÉxnÉkB¸+NÉêRÈJNº¨^ÈIÎºÂ¸»^ÙZ¸¸¸ºBâ"ÂW'&÷"“°¢VÆVÖVçG2æ76—7FçE7FGW2çFW‡D6öçFVçBÒ.¸+NÉêRÈJNº¨^ÈIÂ+rvVÖ–æ’ÉÙ¸»R»h«#°¢Ğ¢Ğ ¢7FFRæ76—7FçDÖW76vW2çW6‚‡²&öÆS¢&76—7FçB"ÂFW‡C¢ç7vW"Â6÷W&6RÒ“°¢7FFRæ76—7FçD'W7’ÒfÇ6S°¢&VæFW$76—7FçDÖW76vW2‚“°§Ğ ¦gVæ7F–öâ&VæFW$76—7FçDÖW76vW2‡6†÷uVæF–ærÒfÇ6R’°¢6öç7B7VvvW7F–öç2Ò7FFRæ76—7FçDÖW76vW2æÆVæwF‚ÓÓÒò ¢ÆF—b6Æ73Ò&76—7FçB×7VvvW7F–öç2"&–ÖÆ&VÃÒ.ËiNË)ÂÊxºË‚#à¢Gµ².«{ÎºÎÈhÎ¹9Ş«;ÂÈ*ÎÉx^ÈhÎ¹9ŞÉØBÙZ«¹‚Éè^º
+^ÙYº
+Nº›Cò"Â.ÉÛN»(‚¸ºÂ«ˆÉzÎ¸©BÉkN¹INÈIÂÉè^º
+^Ù[Cò"Â.º¨^ÈKÈIÎº[ÂÉÛNº™NÉÛÎºÂ»;N¸+Nº
+Nº›Cò%ÒæÖ‚‡VW7F–öâ’ÓâÆ'WGFöâG—SÒ&'WGFöâ"FFÖ76—7FçB×VW7F–öãÒ"G¶R‡VW7F–öâ—Ò#âG¶R‡VW7F–öâ—ÓÂö'WGFöãæ’æ¦ö–â‚""—Ğ¢ÂöF—cà¢¢"#°¢VÆVÖVçG2æ76—7FçDÖW76vW2æ–ææW$…DÔÂÒ7FFRæ76—7FçDÖW76vW2æÖ‚†ÖW76vR’Óâ ¢ÆF—b6Æ73Ò&76—7FçBÖÖW76vRG¶ÖW76vRç&öÆWÒ#à¢ÆF—câG¶76—7FçDÖW76vT‡FÖÂ†ÖW76vRçFW‡B—ÓÂöF—cà¢G¶ÖW76vRç6÷W&6RòÇ6ÖÆÃâG¶R†ÖW76vRç6÷W&6R—ÓÂ÷6ÖÆÃæ¢"'Ğ¢ÂöF—cà¢’æ¦ö–â‚""’²7VvvW7F–öç2²‡6†÷uVæF–æròÆF—b6Æ73Ò&76—7FçBÖÖW76vR76—7FçBVæF–ær#ãÆF—cîÈJNº¨^ÈIÎº[ÂÙ™^ÉÛÙY«:ÉèÈ«^¸¸¸ºBãÂöF—cãÂöF—cæ¢""“°¢6öç7B7V&Ö—BÒVÆVÖVçG2æ76—7FçDf÷&ÒçVW'•6VÆV7F÷"‚&'WGFöå·G—SÒw7V&Ö—BuÒ"“°¢7V&Ö—BæF—6&ÆVBÒ7FFRæ76—7FçD'W7“°¢VÆVÖVçG2æ76—7FçD–çWBæF—6&ÆVBÒ7FFRæ76—7FçD'W7“°¢VÆVÖVçG2æ76—7FçDÖW76vW2ç67&öÆÅF÷ÒVÆVÖVçG2æ76—7FçDÖW76vW2ç67&öÆÄ†V–v‡C°¢&Vg&W6„–6öç2‚“°§Ğ ¦gVæ7F–öâ7W'&VçEf–WtÆ&VÂ‚’°¢–b‡7FFRçf–WrÓÓÒ&FÖ–å—6Æ—"’&WGW&â.«	ÎÉÛ‚«ˆÉzÎº¨^ÈKÈIÂ#°¢–b‡7FFRçf–WrÓÓÒ&†VÇ"’&WGW&â.È*ÎÉª’ÈJNº¨^ÈIÂ#°¢&WGW&âFÖ–äæbæf–æB‚…²Âf–WuÒ’Óâf–WrÓÓÒ7FFRçf–Wr“òå³5ÒÇÂ.«HºjÎÉéÙ™Nº›B#°§Ğ ¦gVæ7F–öâ76—7FçDÖW76vT‡FÖÂ‡fÇVR’°¢&WGW&âR‡fÇVR’ç&WÆ6R‚õÆâörÂ#Æ'#â"“°§Ğ ¦gVæ7F–öâ—&öÆÇ4f÷$ÖöçF‚†ÖöçF‚’°¢6öç7B6V&6‚Ò7FFRç6V&6‚çG&–Ò‚“°¢&WGW&â7F—fUFV6†W'2‚¢æf–ÇFW"‚‡FV6†W"’Óâ6V&6‚ÇÂFV6†W"ææÖRæ–æ6ÇVFW2‡6V&6‚’¢æÖ‚‡FV6†W"’Óâ—&öÆÄf÷%FV6†W"‡FV6†W"æ–BÂÖöçF‚’¢æf–ÇFW"‚†—FVÒ’Óâ—FVÒbb—FVÒç—&öÆÂæV&æ–ætÆ–æW2æÆVæwF‚“°§Ğ ¦gVæ7F–öâ—&öÆÄf÷%FV6†W"‡FV6†W$–BÂÖöçF‚’°¢–b‚6öæf–ræFVÖôÖöFRbb7FFRæFFç—6Æ—2æÆVæwF‚’°¢6öç7B6fVBÒ7FFRæFFç—6Æ—2æf–æB‚†—FVÒ’Óâ—FVÒæÖöçF‚ÓÓÒÖöçF‚bb—FVÒçFV6†W$–BÓÓÒFV6†W$–B“°¢–b‡6fVCòç7FGW2ÓÓÒ'V&Æ—6†VB"’&WGW&â²FV6†W#¢FV6†W$'”–B‡FV6†W$–B’Â—&öÆÃ¢6fVBæ6Æ7VÆF–öâÇÂ6fVBÓ°¢–b‡7FFRçW6W#òç&öÆRÓÓÒ'FV6†W""’&WGW&âçVÆÃ°¢Ğ¢6öç7BFV6†W"ÒFV6†W$'”–B‡FV6†W$–B“°¢–b‚FV6†W"’&WGW&âçVÆÃ°¢6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“°¢6öç7B¶W’ÒG¶ÖöçF‡Ó¢G·FV6†W$–GÖ°¢6öç7B÷fW'&–FRÒÖW&vTÖöçF†Ç•v÷&´–çWB€¢6WGF–æw2æ'W6–æW75&FW2À¢7FFRæFFæ÷fW'&–FW5¶¶W•ÒÀ¢7FFRæFFæÖöçF†Ç•v÷&´–çWG5¶¶W•Ğ¢“°¢6öç7BV&æ–ætÆ–æW2Ò7&VFTÖöçF†Ç”V&æ–ætÆ–æW2‡²ââçFV6†W"Â'W6–æW75&FW3¢6WGF–æw2æ'W6–æW75&FW2ÒÂÖöçF‚Â÷fW'&–FR“°¢–b‚V&æ–ætÆ–æW2æÆVæwF‚’&WGW&âçVÆÃ°¢&WGW&â°¢FV6†W"À¢—&öÆÃ¢6Æ7VÆFU—&öÆÂ€¢V&æ–ætÆ–æW2À¢öÆ–7”f÷$ÖöçF‚†ÖöçF‚’À¢²ââæ÷fW'&–FRÂ–ç7W&æ6U6WGF–æw3¢6WGF–æw2æ–ç7W&æ6U6WGF–æw2ÒÀ¢FV6†W"çF…&öf–ÆP¢¢Ó°§Ğ ¦gVæ7F–öâVçG&–W4f÷$ÖöçF‚†ÖöçF‚’²&WGW&â7FFRæFFæVçG&–W2æf–ÇFW"‚†VçG'’’ÓâVçG'’æÖöçF‚ÓÓÒÖöçF‚“²Ğ¦gVæ7F–öâFV6†W$'”–B†–B’²&WGW&â7FFRæFFçFV6†W'2æf–æB‚‡FV6†W"’ÓâFV6†W"æ–BÓÓÒ–B“²Ğ¦gVæ7F–öâ7F—fUFV6†W'2‚’²&WGW&â7FFRæFFçFV6†W'2æf–ÇFW"‚‡FV6†W"’ÓâFV6†W"ç7FGW2ÓÓÒ&7F—fR"“²Ğ¦gVæ7F–öâFV6†W%•6WGF–æw2‡FV6†W"’°¢6öç7B6WGF–æw2ÒvWEFV6†W%•6WGF–æw2‡FV6†W"“°¢–b‚'&’æ—4'&’‡FV6†W#òæ'W6–æW75&FW2’’°¢6WGF–æw2æ'W6–æW75&FW2Ò7FFRæFFç&FU'VÆW0¢æf–ÇFW"‚‡'VÆR’Óâ'VÆRçFV6†W$–BÓÓÒFV6†W#òæ–Bbb'VÆRçG&VFÖVçBÓÓÒ&'W6–æW72"¢æÖ‚‡'VÆR’Óâ‡²–C¢'VÆRæ–BÂ7V&¦V7DæÖS¢'VÆRç7V&¦V7DæÖRÂ†÷W&Ç•&FS¢çVÖ&W"‡'VÆRæ†÷W&Ç•&FR’Ò’“°¢Ğ¢&WGW&â6WGF–æw3°§Ğ¦gVæ7F–öâÖöçF†Ç•”Ö÷VçG2‡FV6†W"ÂÖöçF‚’°¢6öç7B¶W’ÒG¶ÖöçF‡Ó¢G·FV6†W"æ–GÖ°¢6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“°¢6öç7B÷fW'&–FRÒÖW&vTÖöçF†Ç•v÷&´–çWB€¢6WGF–æw2æ'W6–æW75&FW2À¢7FFRæFFæ÷fW'&–FW5¶¶W•ÒÀ¢7FFRæFFæÖöçF†Ç•v÷&´–çWG5¶¶W•Ğ¢“°¢&WGW&âvWDÖöçF†Ç•”Ö÷VçG2‡²ââçFV6†W"Â'W6–æW75&FW3¢6WGF–æw2æ'W6–æW75&FW2ÒÂ÷fW'&–FR“°§Ğ ¦gVæ7F–öâÖöçF†Ç•v÷&´–çWB‡FV6†W$–BÂÖöçF‚Ò7FFRæÖöçF‚’°¢&WGW&â7FFRæFFæÖöçF†Ç•v÷&´–çWG5¶G¶ÖöçF‡Ó¢G·FV6†W$–GÖÒÇÂçVÆÃ°§Ğ¦gVæ7F–öâ”6ö×÷6—F–öäÆ&VÂ†V×Æ÷–VU’Â'W6–æW75’’°¢–b†V×Æ÷–VU’âbb'W6–æW75’â’&WGW&â.«{ÎºÂ²È*ÎÉxR#°¢–b†V×Æ÷–VU’â’&WGW&â.«{ÎºÎÈhÎ¹9Ò#°¢–b†'W6–æW75’â’&WGW&â.È*ÎÉx^ÈhÎ¹9Ò#°¢&WGW&â.«ˆÉZºûÈJNÊ	R#°§Ğ¦gVæ7F–öâ—&öÆÄ6ö×÷6—F–öäÆ&VÂ‡—&öÆÂ’°¢6öç7BÆ&VÂÒ”6ö×÷6—F–öäÆ&VÂ‡—&öÆÃòæw&÷74'•G&VFÖVçCòæV×Æ÷–VRÇÂÂ—&öÆÃòæw&÷74'•G&VFÖVçCòæ'W6–æW72ÇÂ“°¢&WGW&âÆ&VÂÓÓÒ.«ˆÉZºûÈJNÊ	R"bb—&öÆÃòæw&÷72âò.ËiN«Êx«ˆ’"¢Æ&VÃ°§Ğ¦gVæ7F–öâFV6†W%”FWF–Ç2‡FV6†W"’°¢6öç7B6WGF–æw2ÒFV6†W%•6WGF–æw2‡FV6†W"“°¢6öç7B&FW2Ò6WGF–æw2æ'W6–æW75&FW2æÆVæwF€¢ò6WGF–æw2æ'W6–æW75&FW2æÖ‚‡&FR’ÓâÆF—cãÆGCâG¶R‡&FRç7V&¦V7DæÖR—ÓÂöGCãÆFCâG¶f÷&ÖEvöâ‡&FRæ†÷W&Ç•&FR—ÒşÈ¹Î«CÂöFCãÂöF—cæ’æ¦ö–â‚""¢¢ÆF—cãÆGCîÈ*ÎÉx^ÈhÎ¹9ÒÈ¹Î«ˆ“ÂöGCãÆFCâG·6WGF–æw2æFVfVÇD'W6–æW75’âò.«‹ÊB«:Ê	RÉ¹NÉZÈ*ÎÉª’ÊI"¢.ºû¹;ºÒ'ÓÂöFCãÂöF—cæ°¢6öç7B–ç7W&æ6U&÷w2Òö&¦V7BæVçG&–W2„”å5U$ä4UôÄ$TÅ2’æÖ‚…¶¶W’ÂÆ&VÅÒ’Óâ°¢6öç7B—FVÒÒ6WGF–æw2æ–ç7W&æ6U6WGF–æw5¶¶W•Ó°¢6öç7BW&–öBÒ—FVÒæVffV7F—fTg&öÒÇÂ—FVÒæVffV7F—fUFğ¢òG¶—FVÒæVffV7F—fTg&öÒÇÂ.È¹ÎÉéÉÛÂºûÊ	R'ÒâG¶—FVÒæVffV7F—fUFòÇÂ.«8NÈhÒ'Ö ¢¢.«‹«BºûÈJNÊ	R#°¢&WGW&âÆF—cãÆGCâG¶R†Æ&VÂ—ÓÂöGCãÆFCâG¶—FVÒæVç&öÆÆVBò«ÉèR+rG¶—FVÒæFVfVÇD&6TÖ÷VçBÓÒçVÆÂò.«‹ÊHÉZºûÉè^º
+R"¢f÷&ÖEvöâ†—FVÒæFVfVÇD&6TÖ÷VçB—ÓÇ7â6Æ73Ò&FVf–æ—F–öâ×7V'FW‡B#âG¶R‡W&–öB—ÓÂ÷7ãæ¢.ºû«ÉèR'ÓÂöFCãÂöF—cæ°¢Ò’æ¦ö–â‚""“°¢&WGW&âÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î«ˆÉzÂÊ«CÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#ãÆF—cãÆGCî«‹»;‚«{ÎºÎÈhÎ¹9ÓÂöGCãÆFCâG¶f÷&ÖEvöâ‡6WGF–æw2æFVfVÇDV×Æ÷–VU’—ÓÂöFCãÂöF—câG·&FW7ÓÆF—cãÆGCî«YØk^»˜B«‹»;«	#ÂöGCãÆFCâG·6WGF–æw2çG&ç7÷'EöÆ–7’çVæ—DÖ÷VçBòG¶f÷&ÖEvöâ‡6WGF–æw2çG&ç7÷'EöÆ–7’çVæ—DÖ÷VçB—ÒşÙ¨Â+rG¶R…E$TDÔTåEôÄ$TÅ5·6WGF–æw2çG&ç7÷'EöÆ–7’çG&VFÖVçEÒ—Ö¢.ºû¹;ºÒ'ÓÂöFCãÂöF—cãÆF—cãÆGCî«8NÉ[ÒÉ©NÉ[ÓÂöGCãÆFCâG¶R‡FV6†W"æ6öçG&7E7VÖÖ'’—ÓÂöFCãÂöF—cãÆF—cãÆGCîÊx«ˆ’ÉˆÊ	^ÉÛÃÂöGCãÆFCîºzNÉ¹BG¶R‡FV6†W"ç–ÖVçDF’—ŞÉÛÃÂöFCãÂöF—cãÂöFÃãÂöF—cãÆF—b6Æ73Ò&FWF–ÂÖ&Æö6²#ãÆƒ3î»;NÙy»8B«Éè\+~Èº«:«‹ÊHÂöƒ3ãÆFÂ6Æ73Ò&FVf–æ—F–öâÖÆ—7B#âG¶–ç7W&æ6U&÷w7ÓÂöFÃãÂöF—cæ°§Ğ¦gVæ7F–öâ'Väf÷$ÖöçF‚†ÖöçF‚’²&WGW&â7FFRæFFç—&öÆÅ'Vç2æf–æB‚‡'Vâ’Óâ'VâæÖöçF‚ÓÓÒÖöçF‚’ÇÂ²ÖöçF‚Â7FGW3¢&G&gB"ÂV&Æ—6†VDC¢çVÆÂÓ²Ğ¦gVæ7F–öâ6æ6VÆÆF–öç4f÷$ÖöçF‚†ÖöçF‚’°¢&WGW&â7FFRæFFç—&öÆÄ6æ6VÆÆF–öç0¢æf–ÇFW"‚†—FVÒ’Óâ—FVÒæÖöçF‚ÓÓÒÖöçF‚¢ç6÷'B‚†Â"’ÓâçVÖ&W"†"ç&Wf—6–öâ’ÒçVÖ&W"†ç&Wf—6–öâ’“°§Ğ¦gVæ7F–öâF…öÆ–7”f÷$ÖöçF‚†ÖöçF‚’°¢&WGW&â&W6öÇfTVffV7F—fUöÆ–7’‡7FFRæFFçF…öÆ–6–W2ÂÖöçF‚ÂçG5F…öÆ–7“##B“°§Ğ ¦gVæ7F–öâ–ç7W&æ6UöÆ–7”f÷$ÖöçF‚†ÖöçF‚’°¢&WGW&â&W6öÇfTVffV7F—fUöÆ–7’‡7FFRæFFæ–ç7W&æ6UöÆ–6–W2ÂÖöçF‚Âöff–6–Ä–ç7W&æ6UöÆ–6–W2æB‚Ó’“°§Ğ ¦gVæ7F–öâöÆ–7”f÷$ÖöçF‚†ÖöçF‚’°¢&WGW&â7&VFT6öÖ&–æVEöÆ–7’‡F…öÆ–7”f÷$ÖöçF‚†ÖöçF‚’Â–ç7W&æ6UöÆ–7”f÷$ÖöçF‚†ÖöçF‚’“°§Ğ ¦gVæ7F–öâÖW&vT'V–ÇD–åF…öÆ–6–W2‡öÆ–6–W2’°¢6öç7B'•fW'6–öâÒæWrÖ…µ¶çG5F…öÆ–7“##BçfW'6–öâÂ7G'V7GW&VD6ÆöæR†çG5F…öÆ–7“##B•ÕÒ“°¢öÆ–6–W2æf÷$V6‚‚‡öÆ–7’’Óâ'•fW'6–öâç6WB‡öÆ–7’çfW'6–öâÇÂöÆ–7’æ–BÂöÆ–7’’“°¢&WGW&â²ââæ'•fW'6–öâçfÇVW2‚•Ó°§Ğ ¦gVæ7F–öâÖW&vT'V–ÇD–ä–ç7W&æ6UöÆ–6–W2‡öÆ–6–W2’°¢6öç7B'•fW'6–öâÒæWrÖ†öff–6–Ä–ç7W&æ6UöÆ–6–W2æÖ‚‡öÆ–7’’Óâ·öÆ–7’çfW'6–öâÂ7G'V7GW&VD6ÆöæR‡öÆ–7’•Ò’“°¢öÆ–6–W2æf÷$V6‚‚‡öÆ–7’’Óâ'•fW'6–öâç6WB‡öÆ–7’çfW'6–öâÇÂöÆ–7’æ–BÂöÆ–7’’“°¢&WGW&â²ââæ'•fW'6–öâçfÇVW2‚•Ó°§Ğ ¦gVæ7F–öâf–Æ&ÆU—6Æ—ÖöçF‡2‡FV6†W$–B’°¢–b‚6öæf–ræFVÖôÖöFRbb7FFRæFFç—6Æ—2æÆVæwF‚’°¢&WGW&â7FFRæFFç—6Æ—0¢æf–ÇFW"‚†—FVÒ’Óâ—FVÒçFV6†W$–BÓÓÒFV6†W$–Bbb‡7FFRçW6W"ç&öÆRÓÓÒ&FÖ–â"ÇÂ—FVÒç7FGW2ÓÓÒ'V&Æ—6†VB"’¢æÖ‚†—FVÒ’Óâ—FVÒæÖöçF‚¢ç6÷'B‚¢ç&WfW'6R‚“°¢Ğ¢&WGW&â²ââææWr6WB‡7FFRæFFç—&öÆÅ'Vç2æÖ‚‡'Vâ’Óâ'VâæÖöçF‚’•Ğ¢æf–ÇFW"‚†ÖöçF‚’Óâ7FFRçW6W"ç&öÆRÓÒ'FV6†W""ÇÂ'Väf÷$ÖöçF‚†ÖöçF‚’ç7FGW2ÓÓÒ'V&Æ—6†VB"¢ç6÷'B‚’ç&WfW'6R‚“°§Ğ ¦gVæ7F–öâ—6Æ—7FGW2‡FV6†W$–BÂÖöçF‚’°¢6öç7B6fVBÒ7FFRæFFç—6Æ—2æf–æB‚†—FVÒ’Óâ—FVÒçFV6†W$–BÓÓÒFV6†W$–Bbb—FVÒæÖöçF‚ÓÓÒÖöçF‚“°¢&WGW&â6fVCòç7FGW2ÇÂ'Väf÷$ÖöçF‚†ÖöçF‚’ç7FGW3°§Ğ ¦gVæ7F–öâ7W'&VçE—6Æ—‡FV6†W$–BÂÖöçF‚’°¢&WGW&â7FFRæFFç—6Æ—2æf–æB‚†—FVÒ’Óâ—FVÒçFV6†W$–BÓÓÒFV6†W$–Bbb—FVÒæÖöçF‚ÓÓÒÖöçF‚“°§Ğ ¦gVæ7F–öâ—&öÆÅF&ÆR†—FV×2’°¢&WGW&âÇF&ÆSãÇF†VCãÇG#ãÇFƒîÈJÈ9Ş¸¹ƒÂ÷FƒãÇFƒî«ˆÉzÂ«ZÎÈKÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îËIÒÊx«ˆÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«;^Ê	ÎÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈºBÊx«ˆÉZÂ÷FƒãÇFƒî»	ÎÙh“Â÷FƒãÇFƒîÉ{N¹èÃÂ÷FƒãÇFƒîÊN¸ºÃÂ÷FƒãÇF‚&–ÖÆ&VÃÒ.ÉéÉxR#ãÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“âG¶—FV×2æÖ‚‡²FV6†W"Â—&öÆÂÒ’Óâ°¢6öç7B&V6V—BÒ&V6V—Df÷"‡FV6†W"æ–BÂ7FFRæÖöçF‚“°¢6öç7BFVÆ—fW'’ÒFVÆ—fW'”f÷"‡FV6†W"æ–BÂ7FFRæÖöçF‚“°¢6öç7BV&Æ—6†VBÒ'Väf÷$ÖöçF‚‡7FFRæÖöçF‚’ç7FGW2ÓÓÒ'V&Æ—6†VB#°¢6öç7B–ç7W&VBÒö&¦V7BçfÇVW2†–ç7W&æ6T&6W4f÷"‡—&öÆÂ’’ç6öÖR‚†Ö÷VçB’ÓâÖ÷VçBâ“°¢&WGW&âÇG#ãÇFCâG·W'6öä6VÆÂ‡FV6†W"—ÓÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—G·—&öÆÂæw&÷74'•G&VFÖVçBæV×Æ÷–VRâò'V&Æ—6†VB"¢'&VG’'Ò#âG¶R‡—&öÆÄ6ö×÷6—F–öäÆ&VÂ‡—&öÆÂ’—ÓÂ÷7ããÆF—b6Æ73Ò&6VÆÂ×7V'FW‡B#îÈ*ÎÙ¨Î»;NÙy‚G¶–ç7W&VBò.ÊÉª’"¢.ºûÊÉª’'ÓÂöF—cãÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ‡—&öÆÂæw&÷72—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖEvöâ‡—&öÆÂçF÷FÄFVGV7F–öç2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#ãÇ7G&öæsâG¶f÷&ÖEvöâ‡—&öÆÂææWB—ÓÂ÷7G&öæsãÂ÷FCãÇFCãÇ7â6Æ73Ò'7FGW2Ö6†—G·'Väf÷$ÖöçF‚‡7FFRæÖöçF‚’ç7FGW7Ò#âG·7FGW4Æ&VÂ‡'Väf÷$ÖöçF‚‡7FFRæÖöçF‚’ç7FGW2—ÓÂ÷7ããÂ÷FCãÇFCâG·&V6V—BòÇ7â6Æ73Ò'7FGW2Ö6†—V&Æ—6†VB"F—FÆSÒ"G¶R†f÷&ÖEf–WvVDB‡&V6V—Bçf–WvVDB’—Ò#îÉ{N¹èÂÉ˜Nº8ÃÂ÷7ãæ¢Ç7â6Æ73Ò'7FGW2Ö6†—VæF–ær#âG·V&Æ—6†VBò.ºûÉ{N¹èÂ"¢.»	ÎÙh’ÊB'ÓÂ÷7ãæÓÂ÷FCãÇFCâG¶FVÆ—fW'’òÇ7â6Æ73Ò'7FGW2Ö6†—V&Æ—6†VB"F—FÆSÒ"G¶R†f÷&ÖDFVÆ—fW'”B†FVÆ—fW'’ç6VçDB’—Ò#îº™NÉÛÂ»	ÎÈjÂ÷7ãæ¢Ç7â6Æ73Ò'7FGW2Ö6†—VæF–ær#âG·V&Æ—6†VBò.ºû»	ÎÈj"¢.»	ÎÙh’ÊB'ÓÂ÷7ãæÓÂ÷FCãÇFCãÆF—b6Æ73Ò'&÷rÖ7F–öç2#âG·V&Æ—6†VBò""¢Æ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.«;ÎÈKŒ+~«;^Ê	ÂÊÊ	R"&–ÖÆ&VÃÒ"G¶R‡FV6†W"ææÖR—Ò«;ÎÈK‚»ò«;^Ê	ÂÊÊ	R"FFÖF§W7B×—&öÆÃÒ"G¶R‡FV6†W"æ–B—Ò#ãÆ’FFÖÇV6–FSÒ&6Æ7VÆF÷"#ãÂö“ãÂö'WGFöãæÓÆ'WGFöâ6Æ73Ò&–6öâÖ'WGFöâ"G—SÒ&'WGFöâ"F—FÆSÒ.º¨^ÈKÈIÂ»;N«‹"&–ÖÆ&VÃÒ"G¶R‡FV6†W"ææÖR—Òº¨^ÈKÈIÂ»;N«‹"FF×f–Wr×—6Æ—Ò"G¶R‡FV6†W"æ–B—Ò#ãÆ’FFÖÇV6–FSÒ&f–ÆR×6V&6‚#ãÂö“ãÂö'WGFöããÂöF—cãÂ÷FCãÂ÷G#æ°¢Ò’æ¦ö–â‚""’ÇÂV×G•&÷rƒ’—ÓÂ÷F&öG“ãÂ÷F&ÆSæ°§Ğ ¦gVæ7F–öâÆVFvW%F&ÆR†—FV×2Â7VÖÖ'’’°¢&WGW&âÇF&ÆR6Æ73Ò&66÷VçF–ærÖÆVFvW"#ãÇF†VCãÇG#ãÇFƒîÈKº¨SÂ÷FƒãÇFƒîÉ{¹ÛŞË)ƒÂ÷FƒãÇFƒîÈ9Ş¸XNÉ¹NÉÛÌ+~ÈK»8N»(Ù‹ƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈº«:ÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈ‰Éx^È¹Î«CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«	^È*Îº8ÃÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«	^È*Îº8ÂÈKÉZ«;^Ê	ÃÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«YØkRÙ©şÈ‰ƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«YØk^»˜CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÊ;ÎË
+º8ÃÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«‹Ø8Â÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îËiN«Êx«ˆ’É¹Ë)ÎÊy^È‰ƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈKÉZ«;^Ê	ÂÙZ«8CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÈhÎ¹9ŞÈKƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÊx»
+ÈhÎ¹9ŞÈKƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«N«	R¾É©NÉiÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«ZŞºûÎÉ{«ˆƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«:Éª»;NÙyƒÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î»;NÙyº8ÂÙZ«8CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«ZŞºûÎÉ{«ˆ‚«‹ÊHÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«N«	^»;NÙy‚«‹ÊHÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«:Éª»;NÙy‚«‹ÊHÉZÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#î«;^Ê	ÎÉZÙZ«8CÂ÷FƒãÇF‚6Æ73Ò&çVÖW&–2#îÊx«ˆÉZÂ÷FƒãÂ÷G#ãÂ÷F†VCãÇF&öG“âG¶—FV×2æÖ‚‡²FV6†W"Â—&öÆÂÒ’Óâ°¢6öç7B&W÷'BÒ66÷VçF–æu&W÷'Df÷"‡—&öÆÂ“°¢6öç7B&6W2Ò–ç7W&æ6T&6W4f÷"‡—&öÆÂ“°¢6öç7Bv—F††öÆF–æuF÷FÂÒ&W÷'BæÆV7GW&Uv—F††öÆF–ær²&W÷'BæFF—F–öæÅ–ÖVçEv—F††öÆF–æs°¢&WGW&âÇG#ãÇFCâG¶R‡FV6†W"ææÖR—ÓÂ÷FCãÇFCâG¶R‡FV6†W"ç†öæRÇÂ""—ÓÂ÷FCãÇFCâG¶R†f÷&ÖEFV6†W$–FVçF—G’‡FV6†W"’—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'Bç&W÷'FVDw&÷72—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖD†÷W'2‡&W÷'Bæ6Æ74†÷W'2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæÆV7GW&TfVTw&÷72—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæÆV7GW&Uv—F††öÆF–ær—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BçG&ç7÷'EG&—2—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BçG&ç7÷'DÖ÷VçB—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'Bç&¶–ætÖ÷VçB—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'Bæ÷F†W%–ÖVçDÖ÷VçB—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæFF—F–öæÅ–ÖVçEv—F††öÆF–ær—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡v—F††öÆF–æuF÷FÂ—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæV×Æ÷–VT–æ6öÖUF‚—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæV×Æ÷–VTÆö6ÅF‚—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'Bæ†VÇF„æDÆöæuFW&Ô6&R—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BææF–öæÅVç6–öâ—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'BæV×Æ÷–ÖVçD–ç7W&æ6R—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"‡&W÷'Bæ–ç7W&æ6UF÷FÂ—ÓÂ÷FCãÇFB6Æ73Ò&çVÖW&–2#âG¶f÷&ÖDçVÖ&W"†&6W2ææF–öæÅVç6–öâ—ÓÂ÷FCãÇFB6Æ73Ò&ï<ÓÛh‘éì¶»§q«^wYKš[J
+KˆÛ™Nˆ]KœÛ™Kš[J
+Kˆ‹‹˜[Y]UXXÚ\’Y[]J]K˜š\]PÛÙK]K™Ù[™\ÛÙJKˆİXš™XİÎˆ]KœİXš™XİËœÜ]
+‹ŠK›X\
+
+][JHOˆ][Kš[J
+JK™š[\Š›ÛÛX[ŠBˆNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™UXXÚ\”›Ùš[JXXÚ\‹šY›Ùš[JNÂˆØš™Xİ˜\ÜÚYÛŠXXÚ\‹›Ùš[JNÂˆİ]K\Ù\‹›˜[YHH›Ùš[K›˜[YNÂˆØİ[Y[œ]Y\TÙ[XİÜŠˆİ\Ù\‹[˜[YHŠK^ÛÛ[H›Ùš[K›˜[YNÂˆØİ[Y[œ]Y\TÙ[XİÜŠˆİ\Ù\‹X]˜]\ˆŠK^ÛÛ[H›Ùš[K›˜[YKœÛXÙJJNÂˆÚİÕØ\İ
+ºà­;(%zìí:éo;( ;'©{e¢;"­zââ:âéˆŠNÂˆ™[™\”›Ùš[J
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[•XXÚ\“[Ù[
+
+HÂˆÜ[“[Ù[
+»!(; çzâæ:äìzègH‹ˆ›Ü›HYHXXÚ\‹Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹[˜[YH»'m:é¡ÛX™[[œ]YHXXÚ\‹[˜[YHˆ˜[YOH›˜[YHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹Y[XZ[‘ÛÛÙÛH;'m:êe;'oÛX™[[œ]YHXXÚ\‹Y[XZ[ˆ˜[YOH™[XZ[ˆ\OH™[XZ[ˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹\Û™H»%ì:ço{,¦ÛX™[[œ]YHXXÚ\‹\Û™Hˆ˜[YOHœÛ™Hˆ\OH[ˆ]]ØÛÛ\]OH[ˆXÙZÛ\HŒLLLˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹Xš\Y]KXÛÙH» çzáa;&å;'o»'¤:é«ÛX™[[œ]YHXXÚ\‹Xš\Y]KXÛÙHˆ˜[YOH˜š\]PÛÙHˆ\OH^ˆ[œ][ÙOH›[Y\šXÈˆ]]ØÛÛ\]OH›Ù™ˆˆZ[›[™İHˆˆX^[™İHˆˆ]\›H–ÌNW^ÍŸHˆXÙZÛ\H»&"ˆLLHˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[ºîa;&ã:äd:êm;!(; çzâæ;'m:èg:­î;'n;fá;)à{($H;'¡zè){eh;"&;'¢;"­zââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YÙ[™\‹XÛÙH»!,zìá:ì¢;f.{'¤:é«ÛX™[[œ]YHXXÚ\‹YÙ[™\‹XÛÙHˆ˜[YOH™Ù[™\ÛÙHˆ\OH^ˆ[œ][ÙOH›[Y\šXÈˆ]]ØÛÛ\]OH›Ù™ˆˆZ[›[™İHŒHˆX^[™İHŒHˆ]\›H–ÌKNHˆXÙZÛ\H»&"ˆHˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[» çzáa;&å;'o:¬ï;ej:®æ;'¡zè){ef:¬l:à¦:äd;ekzêª{'a:êª:äd:îa;&ã:äd;!.;&¥ÜÜ[Ù]‚ˆ	Ú[œİ\˜[˜ÙQY]Ü’[
+Ù]XXÚ\”^TÙ][™ÜÊßJKš[œİ\˜[˜ÙTÙ][™ÜËXXÚ\ˆŠ_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹Y[\ŞYYK\^Hº®,:ìî:­ï:èg;!£:äçH;&å;)à:®"{%hOÛX™[[œ]YHXXÚ\‹Y[\ŞYYK\^Hˆ˜[YOH™Y˜][[\ŞYYT^Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOHŒˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹]˜[œÜÜ\™YÚ[Ûˆº­d;a­zîa;( {&ªH;)à;%ëp­ú®,;) ÛX™[[œ]YHXXÚ\‹]˜[œÜÜ\™YÚ[Ûˆˆ˜[YOH˜[œÜÜ™YÚ[Û“X™[ˆXÙZÛ\H»&"ˆ;!';&®;"ç:à­ˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹]˜[œÜÜ][š]º­d;a­H{f£:®";%hOÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YHXXÚ\‹]˜[œÜÜ][š]ˆ˜[YOH˜[œÜÜ[š][[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOHŒˆÏÜ[»&äÜÜ[Ù]Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹]˜[œÜÜ]™X]Y[º­d;a­zîa:®,:ìî;,¦:é«ÛX™[Ù[XİYHXXÚ\‹]˜[œÜÜ]™X]Y[ˆ˜[YOH˜[œÜÜ™X]Y[‰İ™X]Y[Ü[ÛœÊœ[™[™ÈŠ_OÜÙ[XİÙ]‚ˆ	Ø\Ú[™\ÜÔ˜]QY]Ü’[
+×KXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠ_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHXXÚ\‹\İXš™XİÈºâí:âîH:¬ï:êªOÛX™[[œ]YHXXÚ\‹\İXš™XİÈˆ˜[YOHœİXš™XİÈˆXÙZÛ\H»"o;dg:èg:­k:í¡ˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹XÛÛ˜Xİº¬á;%oH;&¥;%oOÛX™[[œ]YHXXÚ\‹XÛÛ˜Xİˆ˜[YOH˜ÛÛ˜Xİİ[[X\HˆXÙZÛ\H»&"ˆ;(%z­ç;&å:®"{('ˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹\^Y^H»)à:®"{'oÛX™[[œ]YHXXÚ\‹\^Y^Hˆ˜[YOHœ^[Y[^Hˆ\OH›[X™\ˆˆZ[HŒHˆX^HŒÌHˆ˜[YOHŒLˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹Y\[™[Èº¬í{(':ã ; àz¬ ;(lH;"&ÛX™[[œ]YHXXÚ\‹Y\[™[Èˆ˜[YOH™\[™[Ûİ[ˆ\OH›[X™\ˆˆZ[HŒHˆİ\HŒHˆ˜[YOHŒHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹XÚ[™[ˆŒŒ;!.;'¤:á`;"&ÛX™[[œ]YHXXÚ\‹XÚ[™[ˆˆ˜[YOH˜Ú[™[ÌŒˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOHŒˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹]^\˜][È»&ä;,§;)å{"&:îa;'*ÛX™[Ù[XİYHXXÚ\‹]^\˜][Èˆ˜[YOHÚ]Û[™Ô˜][ÈÜ[Ûˆ˜[YOHŒ	OÛÜ[ÛÜ[Ûˆ˜[YOHŒHˆÙ[XİYŒL	OÛÜ[ÛÜ[Ûˆ˜[YOHŒKŒˆŒLŒ	OÛÜ[ÛÜÙ[XİÙ]‚ˆÛ\ÜÏH™›Ü›KZ[[»"é;(':¬á;(%H;%ì:¬¬;'`; «;&ª{'¤:¬ ;,¦;'c:èg:­î;'n;eg:ä©:­ :é«;'¤;"®{'n;(";,*;%ä;!'RQ:éo;fe{'n;ef:ãá:ègH;&­;& {ef;!.;&¥Ü‚ˆÙ›Ü›O˜ºäìzègH‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆİXXÚ\‹Y›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆÛÛœİ[XZ[H›Ü›X[^™Q[XZ[
+]K™[XZ[
+NÂˆYˆ
+İ]K™]KXXÚ\œËœÛÛYJ
+XXÚ\ŠHOˆ›Ü›X[^™Q[XZ[
+XXÚ\‹™[XZ[
+HOOH[XZ[
+JH›İÈ™]È\œ›ÜŠº¬&{'`ÛÛÙÛH;'m:êe;'o:èg:äìzègzä';!(; çzâæ;'m;'¢;"­zââ:âéˆŠNÂˆÛÛœİ[œİ\˜[˜ÙTÙ][™ÜÈH™XY[œİ\˜[˜ÙTÙ][™ÜÊ›Ü›KXXÚ\ˆŠNÂˆÛÛœİY[]HH˜[Y]SÜ[Û˜[XXÚ\’Y[]J]K˜š\]PÛÙK]K™Ù[™\ÛÙJNÂˆÛÛœİXXÚ\ˆHÂˆYˆÜ\Ëœ˜[™ÛUURQ
+
+Kˆ˜[YNˆ]K›˜[YKš[J
+Kˆ[XZ[ˆÛ™Nˆ]KœÛ™Kš[J
+Kˆ‹‹šY[]Kˆ[œİ\˜[˜ÙQ[œ›ÛYˆØš™Xİ˜[Y\Ê[œİ\˜[˜ÙTÙ][™ÜÊKœÛÛYJ
+][JHOˆ][K™[œ›ÛY
+Kˆ[œİ\˜[˜ÙTÙ][™ÜËˆY˜][[\ŞYYT^Nˆ[X™\Š]K™Y˜][[\ŞYYT^JKˆY˜][\Ú[™\ÜÔ^Nˆˆ\Ú[™\ÜÔ˜]\Îˆ™XY\Ú[™\ÜÔ˜]\ÊˆİXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠKˆ˜[œÜÜÛXŞNˆÂˆ™YÚ[Û“X™[ˆ]K˜[œÜÜ™YÚ[Û“X™[š[J
+Kˆ[š][[İ[ˆ[X™\Š]K˜[œÜÜ[š][[İ[
+Kˆ™X]Y[ˆ]K˜[œÜÜ™X]Y[ˆKˆİXš™XİÎˆ]KœİXš™XİËœÜ]
+‹ŠK›X\
+
+][JHOˆ][Kš[J
+JK™š[\Š›ÛÛX[ŠKˆÛÛ˜Xİİ[[X\Nˆ]K˜ÛÛ˜Xİİ[[X\Kš[J
+H»&å;)à:®"H;(l:¬m‹ˆ^[Y[^Nˆ[X™\Š]Kœ^[Y[^JKˆİ]\Îˆ˜Xİ]™H‹ˆ]]ZYˆ[ˆ^›Ùš[NˆÈ\[™[Ûİ[ˆ[X™\Š]K™\[™[Ûİ[
+KÚ[™[ÌŒˆ[X™\Š]K˜Ú[™[ÌŒ
+KÚ]Û[™Ô˜][Îˆ[X™\Š]KÚ]Û[™Ô˜][ÊHBˆNÂˆİ]K™]KXXÚ\œËœ\Ú
+XXÚ\ŠNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+XXÚ\œÈ‹XXÚ\‹šYXXÚ\ŠNÂˆİ]KœÙ[XİYXXÚ\’YHXXÚ\‹šYÂˆÚİÕØ\İ
+»!(; çzâæ;'a:äìzèg{e¢;"­zââ:âéˆŠNÂˆ™[™\•XXÚ\œÊ
+NÂˆJNÂˆš[™\Ú[™\ÜÔ˜]QY]ÜŠˆİXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠNÂŸB‚™[˜İ[ÛˆÜ[”˜]S[Ù[
+
+HÂˆÜ[“[Ù[
+»"ç:®"H0­È:¬á;%oH;(l:¬m;-¥:¬ ‹ˆ›Ü›HYHœ˜]KY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]K]XXÚ\ˆ»!(; çzâæÛX™[Ù[XİYHœ˜]K]XXÚ\ˆˆ˜[YOHXXÚ\’Y‰Üİ]K™]KXXÚ\œË›X\
+
+XXÚ\ŠHOˆÜ[Ûˆ˜[YOH‰ÙJXXÚ\‹šY
+_H‰ÙJXXÚ\‹›˜[YJ_OÛÜ[Û˜
+Kš›Ú[ŠˆŠ_OÜÙ[XİÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]K\İXš™Xİº¬ï:êªOÛX™[[œ]YHœ˜]K\İXš™Xİˆ˜[YOHœİXš™Xİ˜[YHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]KX[[İ[»"ç:®"OÛX™[[œ]YHœ˜]KX[[İ[ˆ˜[YOHšİ\›T˜]Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]K]™X]Y[»!£:äçH:­k:í¡ÛX™[Ù[XİYHœ˜]K]™X]Y[ˆ˜[YOH™X]Y[Ü[Ûˆ˜[YOH™[\ŞYYHº­ï:èg;!£:äçOÛÜ[ÛÜ[Ûˆ˜[YOH˜\Ú[™\ÜÈ» «;%á{!£:äçOÛÜ[ÛÜ[Ûˆ˜[YOH›İ\ˆº®,;`à;!£:äçOÛÜ[ÛÜ[Ûˆ˜[YOH™^[\º¬í{(';%á»'cÛÜ[ÛÜÙ[XİÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]K[İ\‹XØ]YÛÜHº®,;`à;!£:äçH:í¡:éfÛX™[Ù[XİYHœ˜]K[İ\‹XØ]YÛÜHˆ˜[YOH›İ\’[˜ÛÛYPØ]YÛÜHÜ[Ûˆ˜[YOH[\Ü˜\SXİ\™H»'o;"ç;( H:¬%{'f0­û'n;( {&ª{%ëOÛÜ[ÛÜÙ[XİÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ˜]K\İ\»( {&ªH;"ç;'¤{'oÛX™[[œ]YHœ˜]K\İ\ˆ˜[YOH™Y™™Xİ]™Qœ›ÛHˆ\OH™]Hˆ˜[YOH‰ÙJİ]K›[Û
+_KLHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[ºìí;eæ;( {&ªOÛX™[X™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ[œ]˜[YOHš[œİ\˜[˜ÙPÛİ™\™Yˆ\OH˜ÚXÚØ›ŞˆÏˆ:ìí;eæ;( {&ªH;"&;%áOÛX™[Ù]‚ˆÙ›Ü›O˜»-¥:¬ ‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÜ˜]KY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆÛÛœİ[HHÈYˆÜ\Ëœ˜[™ÛUURQ
+
+KXXÚ\’Yˆ]KXXÚ\’YİXš™Xİ˜[YNˆ]KœİXš™Xİ˜[YKİXš™XİYˆÛYÊ]KœİXš™Xİ˜[YJKİ\›T˜]Nˆ[X™\Š]Kšİ\›T˜]JK™X]Y[ˆ]K™X]Y[[œİ\˜[˜ÙPÛİ™\™Yˆ]Kš[œİ\˜[˜ÙPÛİ™\™YOOH›Ûˆ‹İ\’[˜ÛÛYPØ]YÛÜNˆ]K™X]Y[OOH›İ\ˆˆÈ]K›İ\’[˜ÛÛYPØ]YÛÜHˆ[Y™™Xİ]™Qœ›ÛNˆ]K™Y™™Xİ]™Qœ›ÛHNÂˆİ]K™]Kœ˜]T[\Ëœ\Ú
+[JNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+œ˜]T[\È‹[KšY[JNÂˆÚİÕØ\İ
+º¬á;%oH;(l:¬m;'a;-¥:¬ ;e¢;"­zââ:âéˆŠNÂˆ™[™\”˜]\Ê
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[Üİ’[[Ù[
+
+HÂˆÜ[“[Ù[
+ÔÕˆ;"&;%áH:à­;%ëH;%ázèg:äç‹ˆ]ˆÛ\ÜÏH››İXÙHH]K[XÚYOH™š[K\Ü™XYÚY]ÚOÜ[»,ªÈ;)!;'f;%í;'m:é¡;'a;%a:ç¦;f%{"çz¬ï:¬&z¬£:éã:äèU‹NÔÕºéo;!(;`ç{em;(ï;!.;&¥ÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™]K\İ\™˜XÙHX›K\ØÜ›ÛX›OXYÛÜšÙYÛİXXÚ\’YİœİXš™Xİ˜[YOİšİ\œÏİšİ\›T˜]Oİ™X]Y[İš[œİ\˜[˜ÙPÛİ™\™Yİ›İ\’[˜ÛÛYPØ]YÛÜOİ›İ\”^[Y[Ü›İ\İİİXY›ÙOŒŒ‹LLOİXXÚ\‹ZYİ»)$zäìH;"&;efOİŒİŒİ™[\ŞYYOİYOİİİİİ›ÙOİX›OÙ]‚ˆ›Ü›HYH˜Üİ‹Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšYˆİ[OH›X\™Ú[‹]ÜŒMœ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH˜Üİ‹Yš[HÔÕˆ;c#;'oÛX™[[œ]YH˜Üİ‹Yš[Hˆ˜[YOH™š[Hˆ\OH™š[HˆXØÙ\H‹˜Üİ‹^ØÜİˆˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[™X]Y[:¬$ˆ[\ŞYYK\Ú[™\ÜËİ\‹^[\ˆ:®,;`à;!£:äç{'`;!(;`çH;%í;%ä[\Ü˜\SXİ\™{&`;)à:®"H:¬mQ:éo:á(û'a;"&;'¢;"­zââ:âéÜÜ[Ù]Ù›Ü›O‚ˆ»%ázèg:äç‹\Ş[˜È
+
+HOˆÂˆÛÛœİ[œ]HØİ[Y[œ]Y\TÙ[XİÜŠˆØÜİ‹Yš[HŠNÂˆYˆ
+Z[œ]™š[\ÏË–ÌJHÈÚİÕØ\İ
+ÔÕˆ;c#;'o;'a;!(;`ç{em;(ï;!.;&¥ˆŠNÈ™]\›ˆ˜[ÙNÈBˆÛÛœİØš™XİÈHÜİ”›İÜÕÓØš™XİÊ\œÙPÜİŠ]ØZ][œ]™š[\ÖÌK^
+
+JJNÂˆÛÛœİ™\]Z\™YHÈÛÜšÙYÛˆ‹XXÚ\’Y‹œİXš™Xİ˜[YH‹šİ\œÈ‹šİ\›T˜]H‹™X]Y[‹š[œİ\˜[˜ÙPÛİ™\™Y—NÂˆYˆ
+[Øš™XİË›[™İ™\]Z\™YœÛÛYJ
+Ù^JHOˆJÙ^H[ˆØš™XİÖÌJJJH›İÈ™]È\œ›ÜŠÔÕˆ;%í;'m:é¡;'a;fe{'n;em;(ï;!.;&¥ˆŠNÂˆÛÛœİ[İÙY™X]Y[ÈH™]ÈÙ]
+È™[\ŞYYH‹˜\Ú[™\ÜÈ‹›İ\ˆ‹™^[\—JNÂˆÛÛœİ[šY\ÈHØš™XİË›X\
+
+][K[™^
+HOˆÂˆYˆ
+]XXÚ\RY
+][KXXÚ\’Y
+JH›İÈ™]È\œ›ÜŠ	Ú[™^
+ÈŸ{e¢{'fXXÚ\’Y:¬ :äìzègzä&;%­;'¢;)à;%b»"­zââ:âé˜
+NÂˆYˆ
+K×—ÍKWÌŸKWÌŸIË\İ
+][KÛÜšÙYÛŠJH›İÈ™]È\œ›ÜŠ	Ú[™^
+ÈŸ{e¢{'fÛÜšÙYÛˆ;f%{"ç{'a;fe{'n;em;(ï;!.;&¥˜
+NÂˆYˆ
+X[İÙY™X]Y[Ëš\Ê][K™X]Y[
+JH›İÈ™]È\œ›ÜŠ	Ú[™^
+ÈŸ{e¢{'f™X]Y[:¬$»'a;fe{'n;em;(ï;!.;&¥˜
+NÂˆ™]\›ˆÈYˆÜ\Ëœ˜[™ÛUURQ
+
+K[Ûˆ][KÛÜšÙYÛ‹œÛXÙJÊKÛÜšÙYÛˆ][KÛÜšÙYÛ‹XXÚ\’Yˆ][KXXÚ\’YİXš™Xİ˜[YNˆ][KœİXš™Xİ˜[YKİXš™XİYˆÛYÊ][KœİXš™Xİ˜[YJKİ\œÎˆ[X™\Š][Kšİ\œÊKİ\›T˜]Nˆ[X™\Š][Kšİ\›T˜]JK™X]Y[ˆ][K™X]Y[[œİ\˜[˜ÙPÛİ™\™Yˆ][Kš[œİ\˜[˜ÙPÛİ™\™YÓİÙ\Ø\ÙJ
+HOOHYH‹İ\’[˜ÛÛYPØ]YÛÜNˆ][K™X]Y[OOH›İ\ˆˆÈ][K›İ\’[˜ÛÛYPØ]YÛÜH[\Ü˜\SXİ\™Hˆˆ[İ\”^[Y[Ü›İ\ˆ][K™X]Y[OOH›İ\ˆˆÈ][K›İ\”^[Y[Ü›İ\[ˆ[Ûİ\˜ÙNˆ˜ÜİˆˆNÂˆJNÂˆYˆ
+[šY\ËœÛÛYJ
+[JHOˆS[X™\‹š\Ñš[š]J[Kšİ\œÊHS[X™\‹š\Ñš[š]J[Kšİ\›T˜]JJJH›İÈ™]È\œ›ÜŠ»"ç:¬!:æ$:â¥;"ç:®"{%ä;"*û'¤:¬ ;%a:âã:¬$»'m;'¢;"­zââ:âéˆŠNÂˆİ]K™]K™[šY\Ëœ\Ú
+‹‹™[šY\ÊNÂˆYˆ
+İ]KœİÜ™JH]ØZ]›ÛZ\ÙK˜[
+[šY\Ë›X\
+
+[JHOˆİ]KœİÜ™KœØ]™QØİ[Y[
+ÛÜšÑ[šY\È‹[KšY[JJJNÂˆİ]K›[ÛH[šY\ÖÌK›[ÛÂˆÚİÕØ\İ
+	Ù[šY\Ë›[™İz¬m;'f;"&;%áH:à­;%ë{'a;-¥:¬ ;e¢;"­zââ:âé˜
+NÂˆ™[™\‘[šY\Ê
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[XØÙ\ÜĞ\›İ˜[[Ù[
+™\]Y\İ
+HÂˆÛÛœİX]Ú\ÈHX]Ú[™ÕXXÚ\œÑ›ÜXØÙ\ÜÔ™\]Y\İ
+™\]Y\İİ]K™]KXXÚ\œÊNÂˆÛÛœİÜ[ÛœÈHX]Ú\Ë›X\
+
+XXÚ\ŠHOˆÜ[Ûˆ˜[YOH‰ÙJXXÚ\‹šY
+_H‰ÙJXXÚ\‹›˜[YJ_H0­È	ÙJXXÚ\‹™[XZ[
+_OÛÜ[Û˜
+Kš›Ú[ŠˆŠNÂˆÜ[“[Ù[
+‘ÛÛÙÛH:¬á;(%H;%ì:¬¬;"®{'n‹ˆ]ˆÛ\ÜÏH››İXÙH	ÛX]Ú\Ë›[™İOOHHÈˆˆˆØ\›š[™ÈŸHH]K[XÚYOHœÚY[XÚXÚÈÚOÜ[‰ÛX]Ú\Ë›[™İOOHHÈ»&¥;,«H;'m:êe;'o:¬ï:äìzègH;'m:êe;'o;'m;'o;.f;ejzââ:âéˆ;"®{'n;ef:êm;!(; çzâæ;'m:âé;"ç:èg:­î;'n;eh;"&;'¢;"­zââ:âéˆˆˆº¬&{'`;'m:êe;'o;'f;fg;!,H;!(; çzâæ;'a;,/»)à:ê®ûe¢;"­zââ:âéˆ;!(; çzâæ;'a:ê/;( :äìzèg{ef:¬l:à¦;'m:êe;'o;'a;"&;(%{em;(ï;!.;&¥ˆŸOÜÜ[Ù]‚ˆÛ\ÜÏH™Yš[š][Û‹[\İ\›İ˜[\İ[[X\H]»&¥;,«{'¤Ù‰ÙJ™\]Y\İ™\Ü^S˜[YH»'m:é¡:ëî;fe{'nŠ_OÙÙ]]‘ÛÛÙÛH;'m:êe;'oÙ‰ÙJ™\]Y\İ™[XZ[
+_OÙÙ]]‘š\™X˜\ÙHRQÙ‰ÙJ™\]Y\İZY™\]Y\İšY
+_OÙÙ]Ù‚ˆ›Ü›HYH˜XØÙ\ÜËX\›İ˜[Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšYˆİ[OH›X\™Ú[‹]ÜŒN‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH˜\›İ˜[]XXÚ\ˆ»%ì:¬¬;eh;!(; çzâæÛX™[Ù[XİYH˜\›İ˜[]XXÚ\ˆˆ˜[YOHXXÚ\’Yˆ™\]Z\™Y	ÛX]Ú\Ë›[™İÈˆˆˆ™\ØX›YŸO‰ÛÜ[ÛœÈÜ[Ûˆ˜[YOHˆ»'o;.f;ef:â¥;!(; çzâæ;%á»'cÛÜ[Û˜OÜÙ[XİÙ]‚ˆX™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ[[œ]˜[YOH˜ÛÛ™š\›YYˆ\OH˜ÚXÚØ›Şˆ	ÛX]Ú\Ë›[™İÈˆˆˆ™\ØX›YŸHÏˆ;'m:êe;'o:¬ï;!(; çzâæ;(%zìí:éo;fe{'n;e¢;"­zââ:âéÛX™[‚ˆÙ›Ü›O‚ˆ»"®{'n:ì#È;%ì:¬¬‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆØXØÙ\ÜËX\›İ˜[Y›Ü›HŠNÂˆYˆ
+[X]Ú\Ë›[™İ
+H›İÈ™]È\œ›ÜŠ»'m:êe;'o;'m;'o;.f;ef:â¥;!(; çzâæ;'a:ê/;( :äìzèg{em;(ï;!.;&¥ˆŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆYˆ
+Y›Ü›K™[[Y[Ë˜ÛÛ™š\›YY˜ÚXÚÙY
+HÈÚİÕØ\İ
+»"®{'n;fe{'n;'a;!(;`ç{em;(ï;!.;&¥ˆŠNÈ™]\›ˆ˜[ÙNÈBˆÛÛœİXXÚ\ˆHXXÚ\RY
+™]È›Ü›Q]J›Ü›JK™Ù]
+XXÚ\’YŠJNÂˆ˜[Y]UXXÚ\XØÙ\ÜĞ\›İ˜[
+™\]Y\İXXÚ\ŠNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™K˜\›İ™UXXÚ\XØÙ\ÜÊ™\]Y\İXXÚ\ŠNÂˆXXÚ\‹˜]]ZYH™\]Y\İZY™\]Y\İšYÂˆ™\]Y\İœİ]\ÈH˜\›İ™YÂˆ™\]Y\İXXÚ\’YHXXÚ\‹šYÂˆ™\]Y\İœ™]šY]ÙY]H™]È]J
+KÒTÓÔİš[™Ê
+NÂˆÚİÕØ\İ
+	İXXÚ\‹›˜[Y_H;!(; çzâæ;'fÛÛÙÛH:¬á;(%{'a;%ì:¬¬;e¢;"­zââ:âé˜
+NÂˆ™[™\•XXÚ\œÊ
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[•XXÚ\‘Y][Ù[
+XXÚ\ŠHÂˆÛÛœİ›Ùš[HH^›Ùš[Q›Ü•XXÚ\ŠXXÚ\ŠNÂˆÛÛœİ^TÙ][™ÜÈHXXÚ\”^TÙ][™ÜÊXXÚ\ŠNÂˆÜ[“[Ù[
+»!(; çzâæ;(%zìí;"&;(%H‹ˆ]ˆÛ\ÜÏH››İXÙHH]K[XÚYOH\Ù\‹XÛÙÈÚOÜ[ºîa;fg;!,{fe;ef:êm:âé;'c:èg:­î;'n:í ;a,;($z­ï;'m;,*:âê:ä&:êl:¬ï:¬l:®"{%ë;'¤:èã:â¥; «{(':ä&;)à;%b»"­zââ:âéÜÜ[Ù]‚ˆ›Ü›HYHXXÚ\‹YY]Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY][˜[YH»'m:é¡ÛX™[[œ]YHXXÚ\‹YY][˜[YHˆ˜[YOH›˜[YHˆ˜[YOH‰ÙJXXÚ\‹›˜[YJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]Y[XZ[‘ÛÛÙÛH;'m:êe;'oÛX™[[œ]YHXXÚ\‹YY]Y[XZ[ˆ˜[YOH™[XZ[ˆ\OH™[XZ[ˆ˜[YOH‰ÙJXXÚ\‹™[XZ[
+_Hˆ	İXXÚ\‹˜]]ZYÈœ™XYÛ›HˆˆˆŸH™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[‰İXXÚ\‹˜]]ZYÈ»%ì:¬¬:ä':¬á;(%{'f;'m:êe;'o;'`:ìà:¬¯{eh;"&;%á»"­zââ:âéˆˆˆ»"®{'n;&¥;,«{'fÛÛÙÛH;'m:êe;'o:¬ï;(%{fe{g¢;'o;.f;em;%o;ejzââ:âéˆŸOÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]\Û™H»%ì:ço{,¦ÛX™[[œ]YHXXÚ\‹YY]\Û™Hˆ˜[YOHœÛ™Hˆ\OH[ˆ]]ØÛÛ\]OH[ˆ˜[YOH‰ÙJXXÚ\‹œÛ™HˆŠ_HˆXÙZÛ\HŒLLLˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]Xš\Y]KXÛÙH» çzáa;&å;'o»'¤:é«ÛX™[[œ]YHXXÚ\‹YY]Xš\Y]KXÛÙHˆ˜[YOH˜š\]PÛÙHˆ\OH^ˆ[œ][ÙOH›[Y\šXÈˆ]]ØÛÛ\]OH›Ù™ˆˆZ[›[™İHˆˆX^[™İHˆˆ]\›H–ÌNW^ÍŸHˆ˜[YOH‰ÙJXXÚ\‹˜š\]PÛÙHˆŠ_HˆXÙZÛ\H»&"ˆLLHˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[ºîa;&ã:äd:êm;!(; çzâæ;'m:èg:­î;'n;fá;)à{($H;'¡zè){eh;"&;'¢;"­zââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]YÙ[™\‹XÛÙH»!,zìá:ì¢;f.{'¤:é«ÛX™[[œ]YHXXÚ\‹YY]YÙ[™\‹XÛÙHˆ˜[YOH™Ù[™\ÛÙHˆ\OH^ˆ[œ][ÙOH›[Y\šXÈˆ]]ØÛÛ\]OH›Ù™ˆˆZ[›[™İHŒHˆX^[™İHŒHˆ]\›H–ÌKNHˆ˜[YOH‰ÙJXXÚ\‹™Ù[™\ÛÙHˆŠ_HˆXÙZÛ\H»&"ˆHˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[» çzáa;&å;'o:¬ï;ej:®æ;'¡zè){ef:¬l:à¦:äd;ekzêª{'a:êª:äd:îa;&ã:äd;!.;&¥ÜÜ[Ù]‚ˆ	Ú[œİ\˜[˜ÙQY]Ü’[
+^TÙ][™ÜËš[œİ\˜[˜ÙTÙ][™ÜËXXÚ\‹YY]Š_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]Y[\ŞYYK\^Hº®,:ìî:­ï:èg;!£:äçH;&å;)à:®"{%hOÛX™[[œ]YHXXÚ\‹YY]Y[\ŞYYK\^Hˆ˜[YOH™Y˜][[\ŞYYT^Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJ^TÙ][™ÜË™Y˜][[\ŞYYT^J_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]]˜[œÜÜ\™YÚ[Ûˆº­d;a­zîa;( {&ªH;)à;%ëp­ú®,;) ÛX™[[œ]YHXXÚ\‹YY]]˜[œÜÜ\™YÚ[Ûˆˆ˜[YOH˜[œÜÜ™YÚ[Û“X™[ˆ˜[YOH‰ÙJ^TÙ][™ÜË˜[œÜÜÛXŞKœ™YÚ[Û“X™[
+_HˆXÙZÛ\H»&"ˆ;!';&®;"ç:à­ˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]]˜[œÜÜ][š]º­d;a­H{f£:®";%hOÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YHXXÚ\‹YY]]˜[œÜÜ][š]ˆ˜[YOH˜[œÜÜ[š][[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJ^TÙ][™ÜË˜[œÜÜÛXŞK[š][[İ[
+_HˆÏÜ[»&äÜÜ[Ù]Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]]˜[œÜÜ]™X]Y[º­d;a­zîa:®,:ìî;,¦:é«ÛX™[Ù[XİYHXXÚ\‹YY]]˜[œÜÜ]™X]Y[ˆ˜[YOH˜[œÜÜ™X]Y[‰İ™X]Y[Ü[ÛœÊ^TÙ][™ÜË˜[œÜÜÛXŞK™X]Y[
+_OÜÙ[XİÙ]‚ˆ	Ø\Ú[™\ÜÔ˜]QY]Ü’[
+^TÙ][™ÜË˜\Ú[™\ÜÔ˜]\ËXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠ_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHXXÚ\‹YY]\İXš™XİÈºâí:âîH:¬ï:êªOÛX™[[œ]YHXXÚ\‹YY]\İXš™XİÈˆ˜[YOHœİXš™XİÈˆ˜[YOH‰ÙJXXÚ\‹œİXš™XİËš›Ú[Š‹ŠJ_HˆXÙZÛ\H»"o;dg:èg:­k:í¡ˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]XÛÛ˜Xİº¬á;%oH;&¥;%oOÛX™[[œ]YHXXÚ\‹YY]XÛÛ˜Xİˆ˜[YOH˜ÛÛ˜Xİİ[[X\Hˆ˜[YOH‰ÙJXXÚ\‹˜ÛÛ˜Xİİ[[X\J_HˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]\^Y^H»)à:®"{'oÛX™[[œ]YHXXÚ\‹YY]\^Y^Hˆ˜[YOHœ^[Y[^Hˆ\OH›[X™\ˆˆZ[HŒHˆX^HŒÌHˆ˜[YOH‰ÙJXXÚ\‹œ^[Y[^J_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]\İ]\Èº¬á;(%H; à{`çÛX™[Ù[XİYHXXÚ\‹YY]\İ]\Èˆ˜[YOHœİ]\ÈÜ[Ûˆ˜[YOH˜Xİ]™Hˆ	İXXÚ\‹œİ]\ÈOOH˜Xİ]™HˆÈœÙ[XİYˆˆˆŸO»fg;!,OÛÜ[ÛÜ[Ûˆ˜[YOHš[˜Xİ]™Hˆ	İXXÚ\‹œİ]\ÈOOHš[˜Xİ]™HˆÈœÙ[XİYˆˆˆŸOºîa;fg;!,OÛÜ[ÛÜÙ[XİÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]Y\[™[Èº¬í{(':ã ; àz¬ ;(lH;"&ÛX™[[œ]YHXXÚ\‹YY]Y\[™[Èˆ˜[YOH™\[™[Ûİ[ˆ\OH›[X™\ˆˆZ[HŒHˆİ\HŒHˆ˜[YOH‰ÙJ›Ùš[K™\[™[Ûİ[
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHXXÚ\‹YY]XÚ[™[ˆŒŒ;!.;'¤:á`;"&ÛX™[[œ]YHXXÚ\‹YY]XÚ[™[ˆˆ˜[YOH˜Ú[™[ÌŒˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJ›Ùš[K˜Ú[™[ÌŒ
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHXXÚ\‹YY]\˜][È»&ä;,§;)å{"&:îa;'*ÛX™[Ù[XİYHXXÚ\‹YY]\˜][Èˆ˜[YOHÚ]Û[™Ô˜][ÈÜ[Ûˆ˜[YOHŒˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHÈœÙ[XİYˆˆˆŸO	OÛÜ[ÛÜ[Ûˆ˜[YOHŒHˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHHÈœÙ[XİYˆˆˆŸOŒL	OÛÜ[ÛÜ[Ûˆ˜[YOHŒKŒˆˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHKŒˆÈœÙ[XİYˆˆˆŸOŒLŒ	OÛÜ[ÛÜÙ[XİÙ]‚ˆÙ›Ü›O‚ˆ»( ;'©H‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆİXXÚ\‹YY]Y›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆÛÛœİ[XZ[H›Ü›X[^™Q[XZ[
+]K™[XZ[
+NÂˆYˆ
+İ]K™]KXXÚ\œËœÛÛYJ
+][JHOˆ][KšYOOHXXÚ\‹šY	‰ˆ›Ü›X[^™Q[XZ[
+][K™[XZ[
+HOOH[XZ[
+JH›İÈ™]È\œ›ÜŠº¬&{'`ÛÛÙÛH;'m:êe;'o:èg:äìzègzä';!(; çzâæ;'m;'¢;"­zââ:âéˆŠNÂˆÛÛœİ[œİ\˜[˜ÙTÙ][™ÜÈH™XY[œİ\˜[˜ÙTÙ][™ÜÊ›Ü›KXXÚ\‹YY]ŠNÂˆÛÛœİY[]HH˜[Y]SÜ[Û˜[XXÚ\’Y[]J]K˜š\]PÛÙK]K™Ù[™\ÛÙJNÂˆÛÛœİÈXØÛİ[[™Ô™Y™\™[˜ÙNˆÛYØXŞPXØÛİ[[™Ô™Y™\™[˜ÙK‹‹XXÚ\•Ú]İ]YØXŞT™Y™\™[˜ÙHHHXXÚ\ÂˆÛÛœİ\]YHÂˆ‹‹XXÚ\•Ú]İ]YØXŞT™Y™\™[˜ÙKˆ˜[YNˆ]K›˜[YKš[J
+Kˆ[XZ[ˆÛ™Nˆ]KœÛ™Kš[J
+Kˆ‹‹šY[]Kˆ[œİ\˜[˜ÙQ[œ›ÛYˆØš™Xİ˜[Y\Ê[œİ\˜[˜ÙTÙ][™ÜÊKœÛÛYJ
+][JHOˆ][K™[œ›ÛY
+Kˆ[œİ\˜[˜ÙTÙ][™ÜËˆY˜][[\ŞYYT^Nˆ[X™\Š]K™Y˜][[\ŞYYT^JKˆY˜][\Ú[™\ÜÔ^Nˆˆ\Ú[™\ÜÔ˜]\Îˆ™XY\Ú[™\ÜÔ˜]\ÊˆİXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠKˆ˜[œÜÜÛXŞNˆÂˆ™YÚ[Û“X™[ˆ]K˜[œÜÜ™YÚ[Û“X™[š[J
+Kˆ[š][[İ[ˆ[X™\Š]K˜[œÜÜ[š][[İ[
+Kˆ™X]Y[ˆ]K˜[œÜÜ™X]Y[ˆKˆİXš™XİÎˆ]KœİXš™XİËœÜ]
+‹ŠK›X\
+
+][JHOˆ][Kš[J
+JK™š[\Š›ÛÛX[ŠKˆÛÛ˜Xİİ[[X\Nˆ]K˜ÛÛ˜Xİİ[[X\Kš[J
+H»(l:¬m:ëî;!);(%H‹ˆ^[Y[^Nˆ[X™\Š]Kœ^[Y[^JKˆİ]\Îˆ]Kœİ]\Ëˆ^›Ùš[NˆÈ\[™[Ûİ[ˆ[X™\Š]K™\[™[Ûİ[
+KÚ[™[ÌŒˆ[X™\Š]K˜Ú[™[ÌŒ
+KÚ]Û[™Ô˜][Îˆ[X™\Š]KÚ]Û[™Ô˜][ÊHBˆNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™K\]UXXÚ\Š\]Y
+NÂˆ[]HXXÚ\‹˜XØÛİ[[™Ô™Y™\™[˜ÙNÂˆØš™Xİ˜\ÜÚYÛŠXXÚ\‹\]Y
+NÂˆÚİÕØ\İ
+	İXXÚ\‹›˜[Y_H;!(; çzâæ;(%zìí:éo;( ;'©{e¢;"­zââ:âé˜
+NÂˆ™[™\•XXÚ\œÊ
+NÂˆJNÂˆš[™\Ú[™\ÜÔ˜]QY]ÜŠˆİXXÚ\‹X\Ú[™\ÜË\˜]\ÈŠNÂŸB‚™[˜İ[ÛˆÜ[•^›Ùš[S[Ù[
+XXÚ\ŠHÂˆÛÛœİ›Ùš[HH^›Ùš[Q›Ü•XXÚ\ŠXXÚ\ŠNÂˆÜ[“[Ù[
+º­ï:èg;!£:äçH;&ä;,§;)å{"&;(%zìí‹ˆ]ˆÛ\ÜÏH››İXÙHH]K[XÚYOH˜Ø[İ[]ÜˆÚOÜ[º¬í{(':ã ; àz¬ ;(l{%ä:â¥:­ï:èg;'¤:ìî;'n;'m;cë;ej:ä*zââ:âéˆŒŒ;!.;'¤:á`;"&:â¥:¬!;'m;!.;%h{dg;!.;%h{%ä;!';'¤:á`:¬í{(':éo;( {&ª{eh:åc; «;&ª{ejzââ:âéÜÜ[Ù]‚ˆ›Ü›HYH^\›Ùš[KY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ›Ùš[KY\[™[Èº¬í{(':ã ; àz¬ ;(lH;"&ÛX™[[œ]YHœ›Ùš[KY\[™[Èˆ˜[YOH™\[™[Ûİ[ˆ\OH›[X™\ˆˆZ[HŒHˆİ\HŒHˆ˜[YOH‰ÙJ›Ùš[K™\[™[Ûİ[
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ›Ùš[KXÚ[™[ˆŒŒ;!.;'¤:á`;"&ÛX™[[œ]YHœ›Ùš[KXÚ[™[ˆˆ˜[YOH˜Ú[™[ÌŒˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJ›Ùš[K˜Ú[™[ÌŒ
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ›Ùš[K\˜][È»&ä;,§;)å{"&:îa;'*ÛX™[Ù[XİYHœ›Ùš[K\˜][Èˆ˜[YOHÚ]Û[™Ô˜][ÈÜ[Ûˆ˜[YOHŒˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHÈœÙ[XİYˆˆˆŸO	OÛÜ[ÛÜ[Ûˆ˜[YOHŒHˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHHÈœÙ[XİYˆˆˆŸOŒL	OÛÜ[ÛÜ[Ûˆ˜[YOHŒKŒˆˆ	Ü›Ùš[KÚ]Û[™Ô˜][ÈOOHKŒˆÈœÙ[XİYˆˆˆŸOŒLŒ	OÛÜ[ÛÜÙ[XİÜ[ˆÛ\ÜÏH™›Ü›KZ[»"è;,«{ef;)à;%b»'`:¬¯{&¬L	{'¡zââ:âéˆ:ìà:¬¯H;"è;,«{eg:îa;'*;'`;em:âîH:¬ï;!.:®,:¬!;(¡zèã;'o:®c;)à;( {&ª{ejzââ:âéÜÜ[Ù]‚ˆÙ›Ü›O‚ˆ»( ;'©H‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆİ^\›Ùš[KY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆXXÚ\‹^›Ùš[HHÂˆ\[™[Ûİ[ˆ[X™\Š]K™\[™[Ûİ[
+KˆÚ[™[ÌŒˆ[X™\Š]K˜Ú[™[ÌŒ
+KˆÚ]Û[™Ô˜][Îˆ[X™\Š]KÚ]Û[™Ô˜][ÊBˆNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+XXÚ\œÈ‹XXÚ\‹šYXXÚ\ŠNÂˆÚİÕØ\İ
+»&ä;,§;)å{"&;(%zìí:éo;( ;'©{e¢;"­zââ:âéˆŠNÂˆ™[™\•XXÚ\œÊ
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[“[ÛT^S[Ù[
+XXÚ\ŠHÂˆÛÛœİÙ^HH	Üİ]K›[ÛN‰İXXÚ\‹šYXÂˆÛÛœİİ\œ™[Hİ]K™]K›İ™\œšY\ÖÚÙ^WHßNÂˆÛÛœİÙ][™ÜÈHXXÚ\”^TÙ][™ÜÊXXÚ\ŠNÂˆÛÛœİ[[İ[ÈH[ÛT^P[[İ[ÊXXÚ\‹İ]K›[Û
+NÂˆÛÛœİÛÜšÓ[™\ÈHY\™ÙP\Ú[™\ÜÕÛÜšÓ[™\ÊÙ][™ÜË˜\Ú[™\ÜÔ˜]\Ë[[İ[Ë˜\Ú[™\ÜÕÛÜšÓ[™\ÊNÂˆÛÛœİYØXŞP\Ú[™\ÜĞ[[İ[H[[İ[Ë˜\Ú[™\ÜÑÜ›ÜÜÔ^Hˆ	‰ˆX[[İ[Ë˜\Ú[™\ÜÕÛÜšÓ[™\Ë›[™İˆÈ[[İ[Ë˜\Ú[™\ÜÑÜ›ÜÜÔ^BˆˆÂˆÜ[“[Ù[
+	İXXÚ\‹›˜[Y_H;&å;)à:®"{%hXˆ]ˆÛ\ÜÏH››İXÙHH]K[XÚYOHØ[]XØ\™ÈÚOÜ[»"è:¬è;%h{'`;%a:ç¦:êª:äè;)à:®"H;ekzêª{'f;ejz¬á;'¡zââ:âéˆ:­d;a­zîa0­û(ï;,*:èã0­ú®,;`à;)à:®"{'`;!.:ë-; «;fe{'n:¬¬:¬ï;%ä:éçºâ¥;,¦:é«:ì*{"ç{'a;!(;`ç{em;%o:®"{%ë:éo;fe{(%{eh;"&;'¢;"­zââ:âéÜÜ[Ù]‚ˆ	ÛYØXŞP\Ú[™\ÜĞ[[İ[È]ˆÛ\ÜÏH››İXÙHØ\›š[™ÈH]K[XÚYOHš\İÜHÚOÜ[º®,;(m:¬è;(%H; «;%á{!£:äçH	Ù›Ü›X]ÛÛŠYØXŞP\Ú[™\ÜĞ[[İ[
+_{'a;'o{%â;"­zââ:âéˆ;%a:ç¦;%ä:¬ï:êªp­û"ç:®"p­û"ç;"&:éo;( ;'©{ef:êm; â:¬á; ¬:ì*{"ç{'/:èg;(!;ff:ä*zââ:âéÜÜ[Ù]˜ˆˆŸBˆ›Ü›HYH›[ÛK\^KY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK\^KYY˜][Y[\ŞYYHº®,:ìî:­ï:èg;!£:äçOÛX™[[œ]YH›[ÛK\^KYY˜][Y[\ŞYYHˆ\OH^ˆ˜[YOH‰ÙJ›Ü›X]ÛÛŠÙ][™ÜË™Y˜][[\ŞYYT^JJ_Hˆ™XYÛ›HÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK\^KY[\ŞYYH‰Ù›Ü›X][Û
+İ]K›[Û
+_H:­ï:èg;!£:äçOÛX™[[œ]YH›[ÛK\^KY[\ŞYYHˆ˜[YOH™[\ŞYYQÜ›ÜÜÔ^Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJ[[İ[Ë™[\ŞYYQÜ›ÜÜÔ^J_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛKY[\ŞYYKZİ\œÈº­ï:èg;"&;%á{"ç:¬!ÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YH›[ÛKY[\ŞYYKZİ\œÈˆ˜[YOH™[\ŞYYUÛÜšÒİ\œÈˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJ[[İ[Ë™[\ŞYYUÛÜšÒİ\œÊ_HˆÏÜ[»"ç:¬!ÜÜ[Ù]Ù]‚ˆ	Û[ÛR[œİ\˜[˜ÙP˜\Ù\Ò[
+Ù][™ÜËš[œİ\˜[˜ÙTÙ][™ÜËİ\œ™[[[İ[Ë™[\ŞYYQÜ›ÜÜÔ^J_Bˆ	Ø\Ú[™\ÜÕÛÜšÑY]Ü’[
+ÛÜšÓ[™\Ë›[ÛKX\Ú[™\ÜË]ÛÜšÈŠ_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[[›Ü›K\ÙXİ[Û‹ZXY[™Èİ›Û™Ïº­d;a­zîa0­û(ï;,*:èãÜİ›Û™ÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º¬ï;!.;%ë:í :¬ ;(%{em;)à;)à;%b»%f:âé:êm;,¦:é«:ëî;fe{'n;'/:èg;( ;'©{eg:ä©;!.:ë-; «;%ä:¬£;fe{'n;ef;!.;&¥ÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK]˜[œÜÜ]š\Èºã ;)$z­d;a­H;'m;&ªH;f§û"&ÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YH›[ÛK]˜[œÜÜ]š\Èˆ˜[YOH˜[œÜÜš\Èˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJ[[İ[Ë˜[œÜÜš\Ê_HˆÏÜ[»f£ÜÜ[Ù]Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK]˜[œÜÜ][š]º­d;a­H{f£:®";%hOÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YH›[ÛK]˜[œÜÜ][š]ˆ˜[YOH˜[œÜÜ[š][[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJ[[İ[Ë˜[œÜÜ[š][[İ[
+_HˆÏÜ[»&äÜÜ[Ù]Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK]˜[œÜÜ]™X]Y[º­d;a­zîa;,¦:é«ÛX™[Ù[XİYH›[ÛK]˜[œÜÜ]™X]Y[ˆ˜[YOH˜[œÜÜ™X]Y[‰İ™X]Y[Ü[ÛœÊ[[İ[Ë˜[œÜÜ™X]Y[
+_OÜÙ[XİÙ]‚ˆX™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ›Ü›KYšY[[œ]˜[YOH˜[œÜÜ[œİ\˜[˜ÙPÛİ™\™Yˆ\OH˜ÚXÚØ›Şˆ	Ø[[İ[Ë˜[œÜÜ[œİ\˜[˜ÙPÛİ™\™YÈ˜ÚXÚÙYˆˆˆŸHÏˆ:­d;a­zîa:éo:ìí;eæ:®,;) ;%ä;cë;ejÛX™[‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK\\šÚ[™È»(ï;,*:èãÛX™[]ˆÛ\ÜÏHš[œ]\İY™š^[œ]YH›[ÛK\\šÚ[™Èˆ˜[YOHœ\šÚ[™Ğ[[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJ[[İ[Ëœ\šÚ[™Ğ[[İ[
+_HˆÏÜ[»&äÜÜ[Ù]Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›[ÛK\\šÚ[™Ë]™X]Y[»(ï;,*:èã;,¦:é«ÛX™[Ù[XİYH›[ÛK\\šÚ[™Ë]™X]Y[ˆ˜[YOHœ\šÚ[™Õ™X]Y[‰İ™X]Y[Ü[ÛœÊ[[İ[Ëœ\šÚ[™Õ™X]Y[
+_OÜÙ[XİÙ]‚ˆX™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ›Ü›KYšY[[œ]˜[YOHœ\šÚ[™Ò[œİ\˜[˜ÙPÛİ™\™Yˆ\OH˜ÚXÚØ›Şˆ	Ø[[İ[Ëœ\šÚ[™Ò[œİ\˜[˜ÙPÛİ™\™YÈ˜ÚXÚÙYˆˆˆŸHÏˆ;(ï;,*:èã:éo:ìí;eæ:®,;) ;%ä;cë;ejÛX™[‚ˆ	ØY][Û˜[X\›š[™ÜÑY]Ü’[
+[[İ[Ë˜Y][Û˜[X\›š[™ÜË›[ÛKXY][Û˜[YX\›š[™ÜÈŠ_Bˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH›[ÛK\^K[›İHºìà:¬¯H:êe:êªÛX™[[œ]YH›[ÛK\^K[›İHˆ˜[YOH™Ü›ÜÜÔ^S›İHˆX^[™İHŒŒˆ˜[YOH‰ÙJİ\œ™[™Ü›ÜÜÔ^S›İHˆŠ_HˆXÙZÛ\H»&"ˆ:ìí:¬%H;"&;%áH»"ç:¬!;cë;ejˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º¬';'n;(%zìí:à¦; à{!.:®"{%ë:à­;%ë{'a;( {)à:éä:¬è:ìà:¬¯H;'m;'(:éã:¬!:âê;g¢:®,:èg{ejzââ:âéÜÜ[Ù]‚ˆÙ›Ü›O‚ˆ»( ;'©H‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÛ[ÛK\^KY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆÛÛœİ\Ú[™\ÜÕÛÜšÓ[™\ÈH™XY\Ú[™\ÜÕÛÜšÓ[™\ÊˆÛ[ÛKX\Ú[™\ÜË]ÛÜšÈŠNÂˆÛÛœİİ™\œšYHHÂˆ‹‹˜İ\œ™[ˆYˆ	Üİ]K›[ÛWÉİXXÚ\‹šYXˆ[Ûˆİ]K›[ÛˆXXÚ\’YˆXXÚ\‹šYˆ[\ŞYYQÜ›ÜÜÔ^Nˆ[X™\Š]K™[\ŞYYQÜ›ÜÜÔ^JKˆ[\ŞYYUÛÜšÒİ\œÎˆ[X™\Š]K™[\ŞYYUÛÜšÒİ\œÈ
+Kˆ\Ú[™\ÜÑÜ›ÜÜÔ^Nˆ[ˆ\Ú[™\ÜÕÛÜšÓ[™\Ëˆ˜[œÜÜš\Îˆ[X™\Š]K˜[œÜÜš\È
+Kˆ˜[œÜÜ[š][[İ[ˆ[X™\Š]K˜[œÜÜ[š][[İ[
+Kˆ˜[œÜÜ™X]Y[ˆ]K˜[œÜÜ™X]Y[ˆ˜[œÜÜ[œİ\˜[˜ÙPÛİ™\™Yˆ›Ü›K™[[Y[Ë˜[œÜÜ[œİ\˜[˜ÙPÛİ™\™Y˜ÚXÚÙYˆ\šÚ[™Ğ[[İ[ˆ[X™\Š]Kœ\šÚ[™Ğ[[İ[
+Kˆ\šÚ[™Õ™X]Y[ˆ]Kœ\šÚ[™Õ™X]Y[ˆ\šÚ[™Ò[œİ\˜[˜ÙPÛİ™\™Yˆ›Ü›K™[[Y[Ëœ\šÚ[™Ò[œİ\˜[˜ÙPÛİ™\™Y˜ÚXÚÙYˆY][Û˜[X\›š[™ÜÎˆ™XYY][Û˜[X\›š[™ÜÊˆÛ[ÛKXY][Û˜[YX\›š[™ÜÈŠKˆÜ›ÜÜÔ^S›İNˆ]K™Ü›ÜÜÔ^S›İKš[J
+H[ˆNÂˆÈ›˜][Û˜[[œÚ[Û˜\ÙH‹šX[[œİ\˜[˜ÙP˜\ÙH‹™[\Ş[Y[[œİ\˜[˜ÙP˜\ÙH—K™›Ü‘XXÚ
+
+šY[
+HOˆÂˆYˆ
+Y›Ü›K™[[Y[ÖÙšY[JH™]\›Âˆİ™\œšYVÙšY[HH›Ü›K™[[Y[ÖÙšY[K˜[YHOOHˆˆÈ[ˆ[X™\Š›Ü›K™[[Y[ÖÙšY[K˜[YJNÂˆJNÂˆİ]K™]K›İ™\œšY\ÖÚÙ^WHHİ™\œšYNÂˆÛÛœİÛÜšÒ[œ]HXXÚ\‹˜]]ZYÈÂˆYˆ[ÛUÛÜšÒ[œ]Y
+İ]K›[ÛXXÚ\‹šY
+KˆXXÚ\’YˆXXÚ\‹šYˆXXÚ\•ZYˆXXÚ\‹˜]]ZYˆ[Ûˆİ]K›[Ûˆ[\ŞYYUÛÜšÒİ\œÎˆİ™\œšYK™[\ŞYYUÛÜšÒİ\œËˆ\Ú[™\ÜÒİ\œÎˆ\Ú[™\ÜÒİ\œÑœ›ÛUÛÜšÓ[™\ÊÙ][™ÜË˜\Ú[™\ÜÔ˜]\Ë\Ú[™\ÜÕÛÜšÓ[™\ÊKˆİX›Z]Y]ˆ™]È]J
+KÒTÓÔİš[™Ê
+BˆHˆ[ÂˆYˆ
+ÛÜšÒ[œ]
+Hİ]K™]K›[ÛUÛÜšÒ[œ]ÖÚÙ^WHHÛÜšÒ[œ]ÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™PYZ[“[ÛT^\›Û
+İ™\œšYKÛÜšÒ[œ]
+NÂˆÚİÕØ\İ
+	Ù›Ü›X][Û
+İ]K›[Û
+_H;)à:®"{%h{'a;( ;'©{e¢;"­zââ:âé˜
+NÂˆ™[™\”^\›Û[œ]Ê
+NÂˆJNÂˆš[™\Ú[™\ÜÕÛÜšÑY]ÜŠˆÛ[ÛKX\Ú[™\ÜË]ÛÜšÈŠNÂˆš[™Y][Û˜[X\›š[™ÜÑY]ÜŠˆÛ[ÛKXY][Û˜[YX\›š[™ÜÈŠNÂŸB‚™[˜İ[ÛˆÜ[”^\›ÛY\İY[[Ù[
+XXÚ\ŠHÂˆÛÛœİÙ^HH	Üİ]K›[ÛN‰İXXÚ\‹šYXÂˆÛÛœİİ\œ™[Hİ]K™]K›İ™\œšY\ÖÚÙ^WHßNÂˆÛÛœİÜ[Û˜[˜[YHH
+˜[YJHOˆİ\œ™[Û˜[YWHOH[ÈˆˆˆJİ\œ™[Û˜[YWJNÂˆÛÛœİÛÛXš[™YX[˜[YHHİ\œ™[šX[[™Û™Õ\›PØ\™HOH[ˆÈJİ\œ™[šX[[™Û™Õ\›PØ\™JBˆˆİ\œ™[šX[[œİ\˜[˜ÙHOH[İ\œ™[›Û™Õ\›PØ\™HOH[ˆÈJ[X™\Šİ\œ™[šX[[œİ\˜[˜ÙH
+H
+È[X™\Šİ\œ™[›Û™Õ\›PØ\™H
+JBˆˆˆÂˆÜ[“[Ù[
+	İXXÚ\‹›˜[Y_H:¬ï;!.0­ú¬í{(';(l;(%Xˆ]ˆÛ\ÜÏH››İXÙHH]K[XÚYOH˜Ú\˜ÛKY\]X[ÚOÜ[ºîa:¬ï;!.;&`;ef{'¤:®";)à;&ä;%h{'`:­ï:èg;!£:äçH:¬!;'m;!.;%h{dg;'f;&å:®"{%ë;%ä;!';(';&n:ä*zââ:âéˆ;"&:ãæH:¬í{(';%h{'a:îa;&ã:äd:êm;f!;'«;!.:®"0­û «;f£:ìí;eæ;(%{,a{'/:èg;'¤:ãæH:¬á; ¬;ejzââ:âéÜÜ[Ù]‚ˆ›Ü›HYHœ^\›ÛXY\İY[Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İ[›Û^X›Hº­ï:èg;!£:äçH:îa:¬ï;!.;%hOÛX™[[œ]YH˜Y\İ[›Û^X›Hˆ˜[YOH™[\ŞYYS›Û•^X›P[[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYS›Û•^X›P[[İ[
+_HˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İ\İY[[Ø[ˆ»ef{'¤:®";)à;&ä;%hOÛX™[[œ]YH˜Y\İ\İY[[Ø[ˆˆ˜[YOH™[\ŞYYTİY[Ø[”İ\Ü[[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYTİY[Ø[”İ\Ü[[İ[
+_HˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İY[\ŞYYK]^º­ï:èg;!£:äç{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İY[\ŞYYK]^ˆ˜[YOH™[\ŞYYR[˜ÛÛYU^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ™[\ŞYYR[˜ÛÛYU^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İY[\ŞYYK[ØØ[º­ï:èg;!£:äçH;)à:ì*{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İY[\ŞYYK[ØØ[ˆ˜[YOH™[\ŞYYSØØ[^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ™[\ŞYYSØØ[^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İ\[œÚ[Ûˆº­kzëï;%ì:®";"&:ãæz¬$ÛX™[[œ]YH˜Y\İ\[œÚ[Ûˆˆ˜[YOH›˜][Û˜[[œÚ[Ûˆˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ›˜][Û˜[[œÚ[ÛˆŠ_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İZX[XØ\™Hº¬m:¬%zìí;eæ
+û'©z®,;&¥;%¤H;"&:ãæz¬$ÛX™[[œ]YH˜Y\İZX[XØ\™Hˆ˜[YOHšX[[™Û™Õ\›PØ\™Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ØÛÛXš[™YX[˜[Y_HˆXÙZÛ\H»'¤:ãæHˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º¬ízâê:¬è;)à;!';'f:äd:­ï:èg;'¤:í :âí;%h{'a;ej{,ä;'¡zè){ejzââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İY[\Ş[Y[º¬è;&ªzìí;eæ;"&:ãæz¬$ÛX™[[œ]YH˜Y\İY[\Ş[Y[ˆ˜[YOH™[\Ş[Y[[œİ\˜[˜ÙHˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ™[\Ş[Y[[œİ\˜[˜ÙHŠ_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İX\Ú[™\ÜË]^» «;%á{!£:äç{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İX\Ú[™\ÜË]^ˆ˜[YOH˜\Ú[™\ÜÒ[˜ÛÛYU^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ˜\Ú[™\ÜÒ[˜ÛÛYU^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İX\Ú[™\ÜË[ØØ[» «;%á{!£:äçH;)à:ì*{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İX\Ú[™\ÜË[ØØ[ˆ˜[YOH˜\Ú[™\ÜÓØØ[^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ˜\Ú[™\ÜÓØØ[^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İ[İ\‹]^º®,;`à;!£:äç{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İ[İ\‹]^ˆ˜[YOH›İ\’[˜ÛÛYU^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ›İ\’[˜ÛÛYU^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Y\İ[İ\‹[ØØ[º®,;`à;!£:äçH;)à:ì*{!.;"&:ãæz¬$ÛX™[[œ]YH˜Y\İ[İ\‹[ØØ[ˆ˜[YOH›İ\“ØØ[^ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ›İ\“ØØ[^Š_HˆXÙZÛ\H»'¤:ãæHˆÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH˜Y\İXİ\İÛHº®,;`à:¬í{('ÛX™[[œ]YH˜Y\İXİ\İÛHˆ˜[YOH˜İ\İÛHˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÛÜ[Û˜[˜[YJ˜İ\İÛHŠ_HˆXÙZÛ\HŒˆÏÙ]‚ˆÙ›Ü›O‚ˆ»( ;'©H‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÜ^\›ÛXY\İY[Y›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆÛÛœİ]]ÛX]XÑšY[ÈHÂˆ™[\ŞYYR[˜ÛÛYU^‹™[\ŞYYSØØ[^‹›˜][Û˜[[œÚ[Ûˆ‹šX[[™Û™Õ\›PØ\™H‹ˆ™[\Ş[Y[[œİ\˜[˜ÙH‹˜\Ú[™\ÜÒ[˜ÛÛYU^‹˜\Ú[™\ÜÓØØ[^‹ˆ›İ\’[˜ÛÛYU^‹›İ\“ØØ[^‹˜İ\İÛH‚ˆNÂˆÛÛœİİ™\œšYHHÂˆ‹‹˜İ\œ™[ˆYˆ	Üİ]K›[ÛWÉİXXÚ\‹šYXˆ[Ûˆİ]K›[ÛˆXXÚ\’YˆXXÚ\‹šYˆ[\ŞYYS›Û•^X›P[[İ[ˆ[X™\Š]K™[\ŞYYS›Û•^X›P[[İ[
+Kˆ[\ŞYYTİY[Ø[”İ\Ü[[İ[ˆ[X™\Š]K™[\ŞYYTİY[Ø[”İ\Ü[[İ[
+BˆNÂˆ]]ÛX]XÑšY[Ë™›Ü‘XXÚ
+
+šY[
+HOˆÂˆİ™\œšYVÙšY[HH]VÙšY[HOOHˆˆÈ[ˆ[X™\Š]VÙšY[JNÂˆJNÂˆİ™\œšYKšX[[œİ\˜[˜ÙHH[Âˆİ™\œšYK›Û™Õ\›PØ\™HH[Âˆİ]K™]K›İ™\œšY\ÖÚÙ^WHHİ™\œšYNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+œ^\›Ûİ™\œšY\È‹İ™\œšYKšYİ™\œšYJNÂˆÚİÕØ\İ
+º¬ï;!.:®,;) :¬ï:¬í{(';(l;(%{'a;( ;'©{e¢;"­zââ:âéˆŠNÂˆ™[™\‘\Ú›Ø\™
+
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[•^ÛXŞS[Ù[
+
+HÂˆÛÛœİİ\œ™[H^ÛXŞQ›Ü“[Û
+İ]K›[Û
+NÂˆÜ[“[Ù[
+» â;!.:®":®,;) :äìzègH‹ˆ]ˆÛ\ÜÏH››İXÙHØ\›š[™ÈH]K[XÚYOHš\İÜHÚOÜ[ºäìzèg{eg:ì¡;(!;'`:¬ï:¬l:ê¡{!.;!';'«;f!;'a;'!;em;"&;(%{ef:¬l:à¦; «{(';ef;)à;%b»"­zââ:âéˆ:¬í{"çH;'¤:èã:éo;fe{'n;eg:ä©; â:ì¡;(!:¬ï;"ç;e¢{'o;'a;'¡zè){ef;!.;&¥ÜÜ[Ù]‚ˆ›Ü›HYH^\ÛXŞKY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH^]™\œÚ[Ûˆºì¡;(!QÛX™[[œ]YH^]™\œÚ[Ûˆˆ˜[YOH™\œÚ[Ûˆˆ]\›H–ĞKV˜K^ŒNK—ËWJÈˆXÙZÛ\H»&"ˆ•ËLŒËLKLHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH^[˜[YHº®,;) :ê¡OÛX™[[œ]YH^[˜[YHˆ˜[YOH›˜[YHˆ˜[YOHº­k{!.;,«H;&ä;,§;)å{"&:®,;) ˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH^YY™™Xİ]™H»"ç;e¢{'oÛX™[[œ]YH^YY™™Xİ]™Hˆ˜[YOH™Y™™Xİ]™Qœ›ÛHˆ\OH™]Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH^]X›K\™]š\Ú[Ûˆº¬!;'m;!.;%h{dg:¬';(%{'oÛX™[[œ]YH^]X›K\™]š\Ú[Ûˆˆ˜[YOHX›T™]š\Ú[Ûˆˆ\OH™]Hˆ˜[YOH‰ÙJİ\œ™[™[\Ş[Y[X›T™]š\Ú[ÛŠ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH^\Ûİ\˜ÙHº¬í{"çH:­ï:¬lT“ÛX™[[œ]YH^\Ûİ\˜ÙHˆ˜[YOHœÛİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJİ\œ™[œÛİ\˜Ù\ÏË–ÌOË\›ˆŠ_Hˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º­k{!.;,«p­ûfb;`ç{"©0­ú­kz¬ :ì¥zè.{(%zìí;!/;a,:äìHÛËšÜˆ:¬í{"çH;(ï;!£:éã:äìzèg{eh;"&;'¢;"­zââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜\Ú[™\ÜË\˜]H» «;%á{!£:äçH;!£:äç{!.;'*
+	JOÛX™[[œ]YH˜\Ú[™\ÜË\˜]Hˆ˜[YOH˜\Ú[™\ÜÒ[˜ÛÛYU^˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJ[X™\Šİ\œ™[˜\Ú[™\ÜËš[˜ÛÛYU^˜]JH
+ˆL
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›ØØ[\˜]H»)à:ì*{!£:äç{!.:îa;'*
+	JOÛX™[[œ]YH›ØØ[\˜]Hˆ˜[YOH›ØØ[[˜ÛÛYU^˜][Èˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJ[X™\Šİ\œ™[˜\Ú[™\ÜË›ØØ[[˜ÛÛYU^˜]SÙ’[˜ÛÛYU^
+H
+ˆL
+_Hˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[»!£:äç{!.;%h{%ä:¬ì{ef:â¥:îa;'*ÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›İ\‹Y^[œÙH»'o;"ç;( H:¬%{'f;ea;&¥:¬¯zîa;'*
+	JOÛX™[[œ]YH›İ\‹Y^[œÙHˆ˜[YOH›İ\‘^[œÙT˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJ[X™\Šİ\œ™[›İ\‹˜Ø]YÛÜšY\Ë[\Ü˜\SXİ\™K™^[œÙT˜]JH
+ˆL
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›İ\‹\˜]Hº®,;`à;!£:äçH;!£:äç{!.;'*
+	JOÛX™[[œ]YH›İ\‹\˜]Hˆ˜[YOH›İ\’[˜ÛÛYU^˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJ[X™\Šİ\œ™[›İ\‹˜Ø]YÛÜšY\Ë[\Ü˜\SXİ\™Kš[˜ÛÛYU^˜]JH
+ˆL
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›İ\‹[Z[š[][Hº®,;`à;!£:äçH:¬ï;!.;-g;( ;egÛX™[[œ]YH›İ\‹[Z[š[][Hˆ˜[YOH›İ\“Z[š[][U^X›R[˜ÛÛYHˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[›İ\‹˜Ø]YÛÜšY\Ë[\Ü˜\SXİ\™K›Z[š[][U^X›R[˜ÛÛYP[[İ[
+_Hˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[»ea;&¥:¬¯zîa;,*:¬$;fá:¬m:ìá;!£:äçz®";%hOÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Ú[[Û™H»'¤:á`zê¡H:¬í{(';%hOÛX™[[œ]YH˜Ú[[Û™Hˆ˜[YOH˜Ú[Ü™Y]Û™Hˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\Ş[Y[˜Ú[Ü™Y]Ë›Û™J_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Ú[]ÛÈ»'¤:á`ºê¡H:¬í{(';%hOÛX™[[œ]YH˜Ú[]ÛÈˆ˜[YOH˜Ú[Ü™Y]ÛÈˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\Ş[Y[˜Ú[Ü™Y]ËÛÊ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH˜Ú[[[Ü™HŒºê¡H;-":¬ïzê¡zâîH:¬í{(';%hOÛX™[[œ]YH˜Ú[[[Ü™Hˆ˜[YOH˜Ú[Ü™Y]Y][Û˜[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\Ş[Y[˜Ú[Ü™Y]Ë˜Y][Û˜[
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH^]X›KYš[Hº­ï:èg;!£:äçH:¬!;'m;!.;%h{dgÔÕÛX™[[œ]YH^]X›KYš[Hˆ˜[YOHX›Qš[Hˆ\OH™š[HˆXØÙ\H‹˜Üİ‹^ØÜİˆˆÏÜ[ˆÛ\ÜÏH™›Ü›KZ[ºîa;&ã:äd:êm;f!;'«;dg:éo:ìí{ «;ejzââ:âéˆ; àzâê;'fÔÕºéo:à­:è):ì&û%a; â:¬í{"çH;dg:¬$»'/:èg;"&;(%{eg:ä©;%ázèg:äç;eh;"&;'¢;"­zââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHšYÚZ[˜ÛÛYK\[\È»&å{,§:éã;&ä;-":¬ï; ¬;"çH”ÓÓÛX™[^\™XHYHšYÚZ[˜ÛÛYK\[\Èˆ˜[YOHšYÚ[˜ÛÛYT[\ÈˆÜ[ÚXÚÏH™˜[ÙHˆ™\]Z\™Y‰ÙJ”ÓÓ‹œİš[™ÚYJİ\œ™[™[\Ş[Y[šYÚ[˜ÛÛYPœ˜XÚÙ]Ë[ŠJ_Oİ^\™XOÜ[ˆÛ\ÜÏH™›Ü›KZ[»!£:äç{!.:ì¥H;"ç;e¢zè.H:ìá;dg»'f:¬è;%hH:®"{%ë:­k:¬!:¬ ; ¬;%hK;-":¬ï:®";%hH:îa;'*:¬ï;!.;'*;'¡zââ:âéÜÜ[Ù]‚ˆÙ›Ü›O‚ˆºäìzègH‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆİ^\ÛXŞKY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆYˆ
+İ]K™]K^ÛXÚY\ËœÛÛYJ
+ÛXŞJHOˆÛXŞK™\œÚ[ÛˆOOH]K™\œÚ[ÛŠJHÂˆ›İÈ™]È\œ›ÜŠº¬&{'`:ì¡;(!Q:¬ ;'m:ëî;'¢;"­zââ:âéˆŠNÂˆBˆYˆ
+Z\ÓÙ™šXÚX[Ûİ™\››Y[\›
+]KœÛİ\˜ÙU\›
+JHÂˆ›İÈ™]È\œ›ÜŠº¬í{"çHÛËšÜˆ;'¤:èã;(ï;!£:éo;'¡zè){em;(ï;!.;&¥ˆŠNÂˆB‚ˆÛÛœİYÚ[˜ÛÛYPœ˜XÚÙ]ÈH”ÓÓ‹œ\œÙJ]KšYÚ[˜ÛÛYT[\ÊNÂˆ˜[Y]RYÚ[˜ÛÛYPœ˜XÚÙ]ÊYÚ[˜ÛÛYPœ˜XÚÙ]ÊNÂˆ]X›HHÂˆX›T›İÜÎˆİXİ\™YÛÛ™Jİ\œ™[™[\Ş[Y[X›T›İÜÊKˆ^][“Z[[ÛˆİXİ\™YÛÛ™Jİ\œ™[™[\Ş[Y[^][“Z[[ÛŠBˆNÂˆÛÛœİX›Qš[HHØİ[Y[œ]Y\TÙ[XİÜŠˆİ^]X›KYš[HŠK™š[\ÏË–ÌNÂˆYˆ
+X›Qš[JHX›HH\œÙQ[\Ş[Y[^X›T›İÜÊÜİ”›İÜÕÓØš™XİÊ\œÙPÜİŠ]ØZ]X›Qš[K^
+
+JJJNÂ‚ˆÛÛœİØØ[˜][ÈH[X™\Š]K›ØØ[[˜ÛÛYU^˜][ÊHÈLÂˆÛÛœİÛXŞHHÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[
+KˆYˆ]K™\œÚ[Û‹ˆ™\œÚ[Ûˆ]K™\œÚ[Û‹ˆ˜[YNˆ]K›˜[YKˆY™™Xİ]™Qœ›ÛNˆ]K™Y™™Xİ]™Qœ›ÛKˆY™™Xİ]™UÎˆ[ˆ™\šYšYY]ˆ™]È]J
+KÒTÓÔİš[™Ê
+KœÛXÙJL
+Kˆİ]\ÎˆœX›\ÚY‹ˆZ[[ˆ˜[ÙKˆ[\Ş[Y[ˆÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[™[\Ş[Y[
+Kˆ‹‹X›KˆX›T™]š\Ú[Ûˆ]KX›T™]š\Ú[Û‹ˆÚ[Ü™Y]ÎˆÂˆÛ™Nˆ[X™\Š]K˜Ú[Ü™Y]Û™JKˆÛÎˆ[X™\Š]K˜Ú[Ü™Y]ÛÊKˆY][Û˜[ˆ[X™\Š]K˜Ú[Ü™Y]Y][Û˜[
+BˆKˆØØ[[˜ÛÛYU^˜]SÙ’[˜ÛÛYU^ˆØØ[˜][ËˆYÚ[˜ÛÛYPœ˜XÚÙ]ÂˆKˆ\Ú[™\ÜÎˆÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[˜\Ú[™\ÜÊKˆ[˜ÛÛYU^˜]Nˆ[X™\Š]K˜\Ú[™\ÜÒ[˜ÛÛYU^˜]JHÈLˆØØ[[˜ÛÛYU^˜]SÙ’[˜ÛÛYU^ˆØØ[˜][ÂˆKˆİ\ˆÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[›İ\ŠKˆØ]YÛÜšY\ÎˆÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[›İ\‹˜Ø]YÛÜšY\ÊKˆ[\Ü˜\SXİ\™NˆÂˆ‹‹œİXİ\™YÛÛ™Jİ\œ™[›İ\‹˜Ø]YÛÜšY\Ë[\Ü˜\SXİ\™JKˆ^[œÙT˜]Nˆ[X™\Š]K›İ\‘^[œÙT˜]JHÈLˆ[˜ÛÛYU^˜]Nˆ[X™\Š]K›İ\’[˜ÛÛYU^˜]JHÈLˆØØ[[˜ÛÛYU^˜]SÙ’[˜ÛÛYU^ˆØØ[˜][ËˆZ[š[][U^X›R[˜ÛÛYP[[İ[ˆ[X™\Š]K›İ\“Z[š[][U^X›R[˜ÛÛYJBˆBˆBˆKˆÛİ\˜Ù\ÎˆŞÈ]NˆºäìzègH:®,;) :¬í{"çH;'¤:èã‹\›ˆ]KœÛİ\˜ÙU\›WBˆNÂˆİ]K™]K^ÛXÚY\Ëœ\Ú
+ÛXŞJNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+^ÛXÚY\È‹ÛXŞKšYÛXŞJNÂˆÚİÕØ\İ
+» â;!.:®":®,;) ;'a:äìzèg{e¢;"­zââ:âéˆŠNÂˆ™[™\”Ù][™ÜÊ
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[’[œİ\˜[˜ÙTÛXŞS[Ù[
+
+HÂˆÛÛœİİ\œ™[H[œİ\˜[˜ÙTÛXŞQ›Ü“[Û
+İ]K›[Û
+NÂˆÛÛœİÛİ\˜ÙU\›H
+Ú[™
+HOˆİ\œ™[œÛİ\˜Ù\ÏË™š[™
+
+Ûİ\˜ÙJHOˆÛİ\˜ÙKšÚ[™OOHÚ[™
+OË\›ˆÂˆÜ[“[Ù[
+» â; «;f£:ìí;eæ:®,;) :äìzègH‹ˆ]ˆÛ\ÜÏH››İXÙHØ\›š[™ÈH]K[XÚYOHš\İÜHÚOÜ[º®,;(m:®,;) ;'`:¬ï:¬l:ê¡{!.;!';'«;f!;'a;'!;em;"&;(%{ef;)à;%b»"­zââ:âéˆ:¬ízâê;'f:¬í{"çH;&¥;'*:¬ï;"ç;e¢{'o;'a;fe{'n;eg:ä©; â:ì¡;(!;'a:äìzèg{ef;!.;&¥ÜÜ[Ù]‚ˆ›Ü›HYHš[œİ\˜[˜ÙK\ÛXŞKY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHš[œİ\˜[˜ÙK]™\œÚ[Ûˆºì¡;(!QÛX™[[œ]YHš[œİ\˜[˜ÙK]™\œÚ[Ûˆˆ˜[YOH™\œÚ[Ûˆˆ]\›H–ĞKV˜K^ŒNK—ËWJÈˆXÙZÛ\H»&"ˆS”ÕTSÑKLŒËLHˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHš[œİ\˜[˜ÙK[˜[YHº®,;) :ê¡OÛX™[[œ]YHš[œİ\˜[˜ÙK[˜[YHˆ˜[YOH›˜[YHˆ˜[YOH‰ÙJİ\œ™[›˜[YJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHš[œİ\˜[˜ÙKYY™™Xİ]™H»"ç;e¢{'oÛX™[[œ]YHš[œİ\˜[˜ÙKYY™™Xİ]™Hˆ˜[YOH™Y™™Xİ]™Qœ›ÛHˆ\OH™]Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ[œÚ[Û‹\˜]Hº­kzëï;%ì:®":­ï:èg;'¤:í :âí:éh
+	JOÛX™[[œ]YHœ[œÚ[Û‹\˜]Hˆ˜[YOHœ[œÚ[Û”˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJÛXŞT\˜Ù[[œ]
+İ\œ™[™[\ŞYYK›˜][Û˜[[œÚ[Û‹œ˜]JJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ[œÚ[Û‹[Z[š[][Hº­kzëï;%ì:®":®,;) ;!£:äç{&å;%hH;ef;egÛX™[[œ]YHœ[œÚ[Û‹[Z[š[][Hˆ˜[YOHœ[œÚ[Û“Z[š[][P˜\ÙHˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYK›˜][Û˜[[œÚ[Û‹›Z[š[][P˜\ÙH
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHœ[œÚ[Û‹[X^[][Hº­kzëï;%ì:®":®,;) ;!£:äç{&å;%hH; à{egÛX™[[œ]YHœ[œÚ[Û‹[X^[][Hˆ˜[YOHœ[œÚ[Û“X^[][P˜\ÙHˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒLˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYK›˜][Û˜[[œÚ[Û‹›X^[][P˜\ÙH
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHšX[\˜]Hº¬m:¬%zìí;eæ:­ï:èg;'¤:í :âí:éh
+	JOÛX™[[œ]YHšX[\˜]Hˆ˜[YOHšX[˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJÛXŞT\˜Ù[[œ]
+İ\œ™[™[\ŞYYKšX[[œİ\˜[˜ÙKœ˜]JJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHšX[[Z[š[][Hº¬m:¬%zìí;eæ:­ï:èg;'¤:í :âí;ef;eg;%hOÛX™[[œ]YHšX[[Z[š[][Hˆ˜[YOHšX[Z[š[][P[[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYKšX[[œİ\˜[˜ÙK›Z[š[][P[[İ[
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜHšX[[X^[][Hº¬m:¬%zìí;eæ:­ï:èg;'¤:í :âí; à{eg;%hOÛX™[[œ]YHšX[[X^[][Hˆ˜[YOHšX[X^[][P[[İ[ˆ\OH›[X™\ˆˆZ[HŒˆİ\HŒHˆ˜[YOH‰ÙJİ\œ™[™[\ŞYYKšX[[œİ\˜[˜ÙK›X^[][P[[İ[
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH›Û™Ë]\›K\˜]H»'©z®,;&¥;%¤H:îa;'*
+	JOÛX™[[œ]YH›Û™Ë]\›K\˜]Hˆ˜[YOH›Û™Õ\›PØ\™T˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJÛXŞT\˜Ù[[œ]
+İ\œ™[™[\ŞYYK›Û™Õ\›PØ\™T˜]JJ_Hˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º¬m:¬%zìí;eæ:èã;%ä:¬ì{ef:â¥:îa;'*ÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[X™[›ÜH™[\Ş[Y[\˜]Hº¬è;&ªzìí;eæ:­ï:èg;'¤:í :âí:éh
+	JOÛX™[[œ]YH™[\Ş[Y[\˜]Hˆ˜[YOH™[\Ş[Y[˜]Hˆ\OH›[X™\ˆˆZ[HŒˆX^HŒLˆİ\HŒŒHˆ˜[YOH‰ÙJÛXŞT\˜Ù[[œ]
+İ\œ™[™[\ŞYYK™[\Ş[Y[[œİ\˜[˜ÙKœ˜]JJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ[œÚ[Û‹\Ûİ\˜ÙHº­kzëï;%ì:®":¬í{"çH:­ï:¬lT“ÛX™[[œ]YHœ[œÚ[Û‹\Ûİ\˜ÙHˆ˜[YOHœ[œÚ[Û”Ûİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+›˜][Û˜[[œÚ[ÛˆŠJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ[œÚ[Û‹X›İ[™Ë\Ûİ\˜ÙHº­kzëï;%ì:®"; àp­ûef;eg:¬í{"çH:­ï:¬lT“ÛX™[[œ]YHœ[œÚ[Û‹X›İ[™Ë\Ûİ\˜ÙHˆ˜[YOHœ[œÚ[Û›İ[™ÔÛİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+›˜][Û˜[[œÚ[Û›İ[™ÈŠJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHšX[\Ûİ\˜ÙHº¬m:¬%zìí;eæ:¬í{"çH:­ï:¬lT“ÛX™[[œ]YHšX[\Ûİ\˜ÙHˆ˜[YOHšX[Ûİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+šX[[œİ\˜[˜ÙHŠJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHšX[X›İ[™Ë\Ûİ\˜ÙHº¬m:¬%zìí;eæ; àp­ûef;eg:¬í{"çH:­ï:¬lT“ÛX™[[œ]YHšX[X›İ[™Ë\Ûİ\˜ÙHˆ˜[YOHšX[›İ[™ÔÛİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+šX[[œİ\˜[˜ÙP›İ[™ÈŠJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH›Û™Ë]\›K\Ûİ\˜ÙH»'©z®,;&¥;%¤H:¬í{"çH:­ï:¬lT“ÛX™[[œ]YH›Û™Ë]\›K\Ûİ\˜ÙHˆ˜[YOH›Û™Õ\›PØ\™TÛİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+›Û™Õ\›PØ\™HŠJ_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH™[\Ş[Y[\Ûİ\˜ÙHº¬è;&ªzìí;eæ:¬í{"çH:­ï:¬lT“ÛX™[[œ]YH™[\Ş[Y[\Ûİ\˜ÙHˆ˜[YOH™[\Ş[Y[Ûİ\˜ÙU\›ˆ\OH\›ˆ˜[YOH‰ÙJÛİ\˜ÙU\›
+™[\Ş[Y[[œİ\˜[˜ÙHŠJ_Hˆ™\]Z\™YÏÜ[ˆÛ\ÜÏH™›Ü›KZ[º­kzëï;%ì:®":¬ízâê0­ú¬m:¬%zìí;eæ:¬ízâê0­ú¬è;&ªzán:ãæzí 0­úìí:¬m:ìí{)à:í 0­ú­kz¬ :ì¥zè.{(%zìí;!/;a,;(ï;!£:éã;eâ;&ª{ejzââ:âéÜÜ[Ù]‚ˆÙ›Ü›O‚ˆºäìzègH‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÚ[œİ\˜[˜ÙK\ÛXŞKY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆYˆ
+İ]K™]Kš[œİ\˜[˜ÙTÛXÚY\ËœÛÛYJ
+ÛXŞJHOˆÛXŞK™\œÚ[ÛˆOOH]K™\œÚ[ÛŠJHÂˆ›İÈ™]È\œ›ÜŠº¬&{'`; «;f£:ìí;eæ:ì¡;(!Q:¬ ;'m:ëî;'¢;"­zââ:âéˆŠNÂˆBˆÛÛœİÛİ\˜ÙU\›ÈHÂˆ]Kœ[œÚ[Û”Ûİ\˜ÙU\›ˆ]Kœ[œÚ[Û›İ[™ÔÛİ\˜ÙU\›ˆ]KšX[Ûİ\˜ÙU\›ˆ]KšX[›İ[™ÔÛİ\˜ÙU\›ˆ]K›Û™Õ\›PØ\™TÛİ\˜ÙU\›ˆ]K™[\Ş[Y[Ûİ\˜ÙU\›ˆNÂˆYˆ
+Ûİ\˜ÙU\›ËœÛÛYJ
+\›
+HOˆZ\ÓÙ™šXÚX[X›XÔÛİ\˜ÙU\›
+\›
+JJHÂˆ›İÈ™]È\œ›ÜŠº¬ízâê0­û(%zí 0­ú­kz¬ :ì¥zè.{(%zìí;!/;a,;'f:¬í{"çH;'¤:èã;(ï;!£:éo;'¡zè){em;(ï;!.;&¥ˆŠNÂˆBˆÛÛœİ[œÚ[Û“Z[š[][P˜\ÙHH[X™\Š]Kœ[œÚ[Û“Z[š[][P˜\ÙJNÂˆÛÛœİ[œÚ[Û“X^[][P˜\ÙHH[X™\Š]Kœ[œÚ[Û“X^[][P˜\ÙJNÂˆÛÛœİX[Z[š[][P[[İ[H[X™\Š]KšX[Z[š[][P[[İ[
+NÂˆÛÛœİX[X^[][P[[İ[H[X™\Š]KšX[X^[][P[[İ[
+NÂˆYˆ
+[œÚ[Û“Z[š[][P˜\ÙHˆ[œÚ[Û“X^[][P˜\ÙHX[Z[š[][P[[İ[ˆX[X^[][P[[İ[
+HÂˆ›İÈ™]È\œ›ÜŠ» «;f£:ìí;eæ; à{eg;%h{'`;ef;eg;%hzìí:âé;`k:¬l:à¦:¬&{%a;%o;ejzââ:âéˆŠNÂˆBˆÛÛœİÛXŞHHÂˆYˆ]K™\œÚ[Û‹ˆ™\œÚ[Ûˆ]K™\œÚ[Û‹ˆ˜[YNˆ]K›˜[YKˆY™™Xİ]™Qœ›ÛNˆ]K™Y™™Xİ]™Qœ›ÛKˆY™™Xİ]™UÎˆ[ˆ™\šYšYY]ˆ™]È]J
+KÒTÓÔİš[™Ê
+KœÛXÙJL
+Kˆİ]\ÎˆœX›\ÚY‹ˆZ[[ˆ˜[ÙKˆ[\ŞYYNˆÂˆ˜][Û˜[[œÚ[ÛˆÂˆ˜]Nˆ[X™\Š]Kœ[œÚ[Û”˜]JHÈLˆZ[š[][P˜\ÙNˆ[œÚ[Û“Z[š[][P˜\ÙKˆX^[][P˜\ÙNˆ[œÚ[Û“X^[][P˜\ÙBˆKˆX[[œİ\˜[˜ÙNˆÂˆ˜]Nˆ[X™\Š]KšX[˜]JHÈLˆZ[š[][P˜\ÙNˆˆX^[][P˜\ÙNˆ[X™\‹“PVÔĞQ‘WÒS•QÑT‹ˆZ[š[][P[[İ[ˆX[Z[š[][P[[İ[ˆX^[][P[[İ[ˆX[X^[][P[[İ[ˆKˆÛ™Õ\›PØ\™T˜]Nˆ[X™\Š]K›Û™Õ\›PØ\™T˜]JHÈLˆ[\Ş[Y[[œİ\˜[˜ÙNˆÂˆ˜]Nˆ[X™\Š]K™[\Ş[Y[˜]JHÈLˆZ[š[][P˜\ÙNˆˆX^[][P˜\ÙNˆ[X™\‹“PVÔĞQ‘WÒS•QÑT‚ˆBˆKˆÛİ\˜Ù\ÎˆÂˆÈÚ[™ˆ›˜][Û˜[[œÚ[Ûˆ‹]Nˆº­kzëï;%ì:®":ìí;eæ:èã;'*‹\›ˆ]Kœ[œÚ[Û”Ûİ\˜ÙU\›KˆÈÚ[™ˆ›˜][Û˜[[œÚ[Û›İ[™È‹]Nˆº­kzëï;%ì:®":®,;) ;!£:äç{&å;%hH; àp­ûef;eg‹\›ˆ]Kœ[œÚ[Û›İ[™ÔÛİ\˜ÙU\›KˆÈÚ[™ˆšX[[œİ\˜[˜ÙH‹]Nˆº¬m:¬%zìí;eæ:ìí;eæ:èã;'*‹\›ˆ]KšX[Ûİ\˜ÙU\›KˆÈÚ[™ˆšX[[œİ\˜[˜ÙP›İ[™È‹]Nˆº¬m:¬%zìí;eæ:èã; àp­ûef;eg‹\›ˆ]KšX[›İ[™ÔÛİ\˜ÙU\›KˆÈÚ[™ˆ›Û™Õ\›PØ\™H‹]Nˆ»'©z®,;&¥;%¤zìí;eæ:èã;'*‹\›ˆ]K›Û™Õ\›PØ\™TÛİ\˜ÙU\›KˆÈÚ[™ˆ™[\Ş[Y[[œİ\˜[˜ÙH‹]Nˆº¬è;&ªzìí;eæ:ìí;eæ:èã;'*‹\›ˆ]K™[\Ş[Y[Ûİ\˜ÙU\›BˆBˆNÂˆİ]K™]Kš[œİ\˜[˜ÙTÛXÚY\Ëœ\Ú
+ÛXŞJNÂˆYˆ
+İ]KœİÜ™JH]ØZ]İ]KœİÜ™KœØ]™QØİ[Y[
+š[œİ\˜[˜ÙTÛXÚY\È‹ÛXŞKšYÛXŞJNÂˆÚİÕØ\İ
+» â; «;f£:ìí;eæ:®,;) ;'a:äìzèg{e¢;"­zââ:âéˆŠNÂˆ™[™\”Ù][™ÜÊ
+NÂˆJNÂŸB‚™[˜İ[ÛˆİÛ›ØY^X›U[\]J
+HÂˆÛÛœİÛXŞHH^ÛXŞQ›Ü“[Û
+İ]K›[Û
+NÂˆÛÛœİXY\œÈHÈ›Z[“[ÛT^H‹›X^[ÛT^H‹‹‹\œ˜^K™œ›ÛJÈ[™İˆLHK
+Ë[™^
+HOˆ\[™[	Ú[™^
+È_X
+WNÂˆÛÛœİ›İÜÈHÚXY\œË‹‹œÛXŞK™[\Ş[Y[X›T›İÜË›X\
+
+ÛZ[š[][KX^[][K^\×JHOˆÛZ[š[][KX^[][K‹‹^\×JWNÂˆ›İÜËœ\Ú
+ÌLL‹‹œÛXŞK™[\Ş[Y[^][“Z[[Û—JNÂˆİÛ›ØYÜİŠ[\Ş[Y[]^]X›KIÜÛXŞK™[\Ş[Y[X›T™]š\Ú[ÛŸK˜Üİ˜›İÜÊNÂˆÚİÕØ\İ
+»f!;'«:­ï:èg;!£:äçH:¬!;'m;!.;%h{dg:éo;( ;'©{e¢;"­zââ:âéˆŠNÂŸB‚™[˜İ[Ûˆ˜[Y]RYÚ[˜ÛÛYPœ˜XÚÙ]Êœ˜XÚÙ]ÊHÂˆYˆ
+P\œ˜^Kš\Ğ\œ˜^Jœ˜XÚÙ]ÊHXœ˜XÚÙ]Ë›[™İœ˜XÚÙ]Ë˜]
+LJK›X^OOH[
+HÂˆ›İÈ™]È\œ›ÜŠº¬è;%hH:®"{%ë; ¬;"ç{'f:éâ;)à:éâH:­k:¬!;'`X^:¬ [;'m;%­;%o;ejzââ:âéˆŠNÂˆBˆÛÛœİ[Y\šXÒÙ^\ÈHÈ™^Ù\ÜÑœ›ÛH‹™^Ù\ÜÑ˜XİÜˆ‹œ˜]H‹˜˜\ÙPY][Ûˆ—NÂˆYˆ
+œ˜XÚÙ]ËœÛÛYJ
+œ˜XÚÙ]
+HOˆ[Y\šXÒÙ^\ËœÛÛYJ
+Ù^JHOˆS[X™\‹š\Ñš[š]J[X™\Šœ˜XÚÙ]ÚÙ^WJJJJJHÂˆ›İÈ™]È\œ›ÜŠº¬è;%hH:®"{%ë; ¬;"çH”ÓÓ»'f;"*û'¤:éo;fe{'n;em;(ï;!.;&¥ˆŠNÂˆBŸB‚™[˜İ[ÛˆÜ[”X›\Ú[Ù[
+
+HÂˆÛÛœİİ\œ™[[ˆH[‘›Ü“[Û
+İ]K›[Û
+NÂˆYˆ
+İ\œ™[[‹œİ]\ÈOOHœX›\ÚYŠH™]\›ÂˆÛÛœİ™]š\Ú[ÛˆH™^^\›Û™]š\Ú[ÛŠİ\œ™[[ŠNÂˆÛÛœİ\Ô™Z\ÜİYHHİ\œ™[[‹œİ]\ÈOOH˜Ø[˜Ù[YÂˆÜ[“[Ù[
+\Ô™Z\ÜİYHÈ»"&;(%H:®"{%ë:ê¡{!.;!';'«:ì';e¢Hˆˆº®"{%ë;fe{(%H:ì#È:ê¡{!.;!':¬íz¬'‹]ˆÛ\ÜÏH››İXÙHØ\›š[™ÈH]K[XÚYOH›ØÚÈÚOÜ[‰Ù›Ü›X][Û
+İ]K›[Û
+_H:®"{%ë:éo	Ü™]š\Ú[ÛŸ{,*;fe{(%zìî;'/:èg:ì';e¢{ejzââ:âéˆ	Ú\Ô™Z\ÜİYHÈ»-ê;!£:ä';'m;(!;fe{(%zìî;'`;'m:è){%ä:­î:ã :èg:ìí;(m:ä*zââ:âéˆˆˆ»fe{(%H;fá;"&;(%{ef:è):êm;-ê;!£; «;'(:éo:àª:®,:¬è; â;,*;"&:èg;'«:ì';e¢{em;%o;ejzââ:âéˆŸOÜÜ[Ù]X™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ[œ]YHœX›\ÚXÛÛ™š\›Hˆ\OH˜ÚXÚØ›ŞˆÏˆ:¬á; ¬:¬¬:¬ï;&`:¬í{(';%hK:ì';e¢H;,*;"&:éo:êª:äd:¬ ;a¨;e¢;"­zââ:âéÛX™[˜\Ô™Z\ÜİYHÈ»'«:ì';e¢Hˆˆ»fe{(%H‹\Ş[˜È
+
+HOˆÂˆYˆ
+YØİ[Y[œ]Y\TÙ[XİÜŠˆÜX›\ÚXÛÛ™š\›HŠK˜ÚXÚÙY
+HÈÚİÕØ\İ
+º¬ ;a¨;fe{'n;'a;!(;`ç{em;(ï;!.;&¥ˆŠNÈ™]\›ˆ˜[ÙNÈBˆÛÛœİZ\ÜÚ[™Ò[œİ\™YØ[\HHXİ]™UXXÚ\œÊ
+K™š[\Š
+XXÚ\ŠHOˆÂˆÛÛœİÙ][™ÜÈHXXÚ\”^TÙ][™ÜÊXXÚ\ŠNÂˆ™]\›ˆÙ][™ÜËš[œİ\˜[˜ÙQ[œ›ÛY	‰ˆ[ÛT^P[[İ[ÊXXÚ\‹İ]K›[Û
+K™[\ŞYYQÜ›ÜÜÔ^HHÂˆJNÂˆYˆ
+Z\ÜÚ[™Ò[œİ\™YØ[\K›[™İ
+H›İÈ™]È\œ›ÜŠ:­ï:èg;!£:äçH;&å:®"{'m;'¡zè)zä&;)à;%b»'`:ìí;eæ:¬ ;'¡H;!(; çzâæ;'m;'¢;"­zââ:âéˆ	ÛZ\ÜÚ[™Ò[œİ\™YØ[\K›X\
+
+XXÚ\ŠHOˆXXÚ\‹›˜[YJKš›Ú[Š‹Š_X
+NÂˆÛÛœİ^\›ÛÈH^\›ÛÑ›Ü“[Û
+İ]K›[Û
+NÂˆYˆ
+\^\›ÛË›[™İ
+H›İÈ™]È\œ›ÜŠ»'m:ì¢:âë;)à:®"{%h{'m;'¡zè)zä';!(; çzâæ;'m;%á»"­zââ:âéˆŠNÂˆÛÛœİ[˜ÛÛ™š\›YY][\ÈH^\›ÛË™›]X\
+
+ÈXXÚ\‹^\›ÛJHOˆ^\›Û[˜ÛÛ™š\›YYX\›š[™Ó[™\Ë›X\
+
+[™JHOˆ	İXXÚ\‹›˜[Y_H	Û[™KœİXš™Xİ˜[Y_X
+JNÂˆYˆ
+[˜ÛÛ™š\›YY][\Ë›[™İ
+H›İÈ™]È\œ›ÜŠ:¬ï;!.;,¦:é«:¬ ;fe{'n:ä&;)à;%b»'`;)à:®"H;ekzêª{'m;'¢;"­zââ:âéˆ	İ[˜ÛÛ™š\›YY][\Ëš›Ú[Š‹Š_X
+NÂˆÛÛœİZ\ÜÚ[™ĞXØÛİ[ÈH^\›ÛË™š[\Š
+ÈXXÚ\ˆJHOˆ]XXÚ\‹˜]]ZY
+NÂˆYˆ
+İ]KœİÜ™H	‰ˆZ\ÜÚ[™ĞXØÛİ[Ë›[™İ
+H›İÈ™]È\œ›ÜŠ:èg:­î;'nRQ:¬ ;%ì:¬¬:ä&;)à;%b»'`;!(; çzâæ;'m;'¢;"­zââ:âéˆ	ÛZ\ÜÚ[™ĞXØÛİ[Ë›X\
+
+ÈXXÚ\ˆJHOˆXXÚ\‹›˜[YJKš›Ú[Š‹Š_X
+NÂˆÛÛœİX›\ÚY]H™]È]J
+KÒTÓÔİš[™Ê
+NÂˆÛÛœİ[ˆHÈ‹‹˜İ\œ™[[‹İ]\ÎˆœX›\ÚY‹™]š\Ú[Û‹™[X\ÙRYˆ	Üİ]K›[ÛWİ‰Ü™]š\Ú[ÛŸXX›\ÚY]Ø[˜Ù[][Û’Yˆ[Ø[˜Ù[][Û”™X\ÛÛˆ[Ø[˜Ù[Y]ˆ[NÂˆÛÛœİ^\Û\ÈH^\›ÛË›X\
+
+ÈXXÚ\‹^\›ÛJHOˆ
+ÂˆYˆ^\Û\Y
+İ]K›[ÛXXÚ\‹šY
+Kˆ™\œÚ[Û’Yˆ^\Û\™\œÚ[Û’Y
+İ]K›[ÛXXÚ\‹šY™]š\Ú[ÛŠKˆ]NˆÂˆ[Ûˆİ]K›[ÛˆXXÚ\’YˆXXÚ\‹šYˆXXÚ\•ZYˆXXÚ\‹˜]]ZYˆXXÚ\“˜[YNˆXXÚ\‹›˜[YKˆİ]\ÎˆœX›\ÚY‹ˆ™]š\Ú[Û‹ˆ™[X\ÙRYˆ[‹œ™[X\ÙRYˆÛXŞU™\œÚ[Ûˆ^\›ÛœÛXŞU™\œÚ[Û‹ˆ^ÛXŞU™\œÚ[Ûˆ^\›Û^ÛXŞU™\œÚ[Û‹ˆ[œİ\˜[˜ÙTÛXŞU™\œÚ[Ûˆ^\›Ûš[œİ\˜[˜ÙTÛXŞU™\œÚ[Û‹ˆØ[İ[][Ûˆ^\›ÛˆX›\ÚY]ˆBˆJJNÂˆYˆ
+İ]KœİÜ™JHÂˆ]ØZ]İ]KœİÜ™KœX›\Ú^\›Û[Šˆ[‹ˆ^\Û\ËˆÂˆYˆÜ\Ëœ˜[™ÛUURQ
+
+Kˆ]NˆÈXİ[Ûˆ\Ô™Z\ÜİYHÈ”VT“ÓÔ‘TP“TÒQˆˆ”VT“ÓÔP“TÒQ‹[Ûˆİ]K›[Û™]š\Ú[Û‹XİÜ•ZYˆİ]K\Ù\‹ZYÜ™X]Y]ˆ[‹œX›\ÚY]BˆBˆ
+NÂˆBˆ^\Û\Ë™›Ü‘XXÚ
+
+^\Û\
+HOˆÂˆÛÛœİİ\œ™[[™^Hİ]K™]Kœ^\Û\Ë™š[™[™^
+
+][JHOˆ][KšYOOH^\Û\šY
+NÂˆÛÛœİİ\œ™[HÈYˆ^\Û\šY‹‹œİXİ\™YÛÛ™J^\Û\™]JHNÂˆYˆ
+İ\œ™[[™^H
+Hİ]K™]Kœ^\Û\ÖØİ\œ™[[™^HHİ\œ™[Âˆ[ÙHİ]K™]Kœ^\Û\Ëœ\Ú
+İ\œ™[
+NÂˆİ]K™]Kœ^\Û\™\œÚ[ÛœËœ\Ú
+ÈYˆ^\Û\™\œÚ[Û’Y‹‹œİXİ\™YÛÛ™J^\Û\™]JHJNÂˆJNÂˆÛÛœİ[’[™^Hİ]K™]Kœ^\›Û[œË™š[™[™^
+
+][JHOˆ][K›[ÛOOHİ]K›[Û
+NÂˆYˆ
+[’[™^H
+Hİ]K™]Kœ^\›Û[œÖÜ[’[™^HH[Âˆ[ÙHİ]K™]Kœ^\›Û[œËœ\Ú
+[ŠNÂˆÚİÕØ\İ
+\Ô™Z\ÜİYHÈ	Ü™]š\Ú[ÛŸ{,*;"&;(%H:ê¡{!.;!':éo;'«:ì';e¢{e¢;"­zââ:âé˜ˆº®"{%ë:éo;fe{(%{ef:¬è:ê¡{!.;!':éo:¬íz¬';e¢;"­zââ:âéˆŠNÂˆ™[™\‘\Ú›Ø\™
+
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[Ø[˜Ù[^\›Û[Ù[
+
+HÂˆÛÛœİİ\œ™[[ˆH[‘›Ü“[Û
+İ]K›[Û
+NÂˆYˆ
+İ\œ™[[‹œİ]\ÈOOHœX›\ÚYŠH™]\›ÂˆÛÛœİ™]š\Ú[ÛˆH\Y˜Xİ™]š\Ú[ÛŠİ\œ™[[ŠNÂˆÜ[“[Ù[
+º®"{%ë;fe{(%H;-ê;!£‹ˆ]ˆÛ\ÜÏH››İXÙHØ\›š[™ÈH]K[XÚYOHœÚY[X[\ÚOÜ[‰Ù›Ü›X][Û
+İ]K›[Û
+_H	Ü™]š\Ú[ÛŸ{,*;fe{(%zìî;'a;-ê;!£;ejzââ:âéˆ:®,;(m:ê¡{!.;!':â¥;'m:è){'/:èg:ìí;(m:ä&:¬è;!(; çzâæ;fe:êm;%ä;!':â¥;)¢{"ç:à­:è):¬$zââ:âéÜÜ[Ù]‚ˆ›Ü›HYH˜Ø[˜Ù[\^\›ÛY›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜH˜Ø[˜Ù[\™X\ÛÛˆ»-ê;!£; «;'(ÛX™[^\™XHYH˜Ø[˜Ù[\™X\ÛÛˆˆ˜[YOHœ™X\ÛÛˆˆZ[›[™İHHˆX^[™İHLˆXÙZÛ\H»&"ˆ;&å;)à:®"{%hH;"&;(%H;ea;&¥ˆ™\]Z\™Yİ^\™XOÜ[ˆÛ\ÜÏH™›Ü›KZ[º¬';'n;(%zìí:éo;( {)à:éä:¬è:ìà:¬¯{'m;ea;&¥;eg;'m;'(:éã:®,:èg{ef;!.;&¥ÜÜ[Ù]‚ˆX™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ[[œ]˜[YOH˜ÛÛ™š\›YYˆ\OH˜ÚXÚØ›ŞˆÏˆ;!(; çzâæ;%ä:¬£:¬íz¬':ä':ê¡{!.;!':¬ ;-ê;!£:ä':âé:â¥;($;'a;fe{'n;e¢;"­zââ:âéÛX™[‚ˆÙ›Ü›O‚ˆ»fe{(%H;-ê;!£‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆØØ[˜Ù[\^\›ÛY›Ü›HŠNÂˆYˆ
+Y›Ü›Kœ™\Ü˜[Y]J
+JH™]\›ˆ˜[ÙNÂˆYˆ
+Y›Ü›K™[[Y[Ë˜ÛÛ™š\›YY˜ÚXÚÙY
+HÈÚİÕØ\İ
+»-ê;!£;fe{'n;'a;!(;`ç{em;(ï;!.;&¥ˆŠNÈ™]\›ˆ˜[ÙNÈBˆÛÛœİ™X\ÛÛˆH™]È›Ü›Q]J›Ü›JK™Ù]
+œ™X\ÛÛˆŠKš[J
+NÂˆÛÛœİØ[˜Ù[Y]H™]È]J
+KÒTÓÔİš[™Ê
+NÂˆÛÛœİØ[˜Ù[][Û’YH	Üİ]K›[ÛWİ‰Ü™]š\Ú[ÛŸXÂˆ]İ\œ™[^\Û\ÈHİ]K™]Kœ^\Û\Ë™š[\Š
+][JHOˆ][K›[ÛOOHİ]K›[Û	‰ˆ][Kœİ]\ÈOOHœX›\ÚYŠNÂˆYˆ
+Xİ\œ™[^\Û\Ë›[™İ
+HÂˆİ\œ™[^\Û\ÈH^\›ÛÑ›Ü“[Û
+İ]K›[Û
+K›X\
+
+ÈXXÚ\‹^\›ÛJHOˆ
+ÂˆYˆ^\Û\Y
+İ]K›[ÛXXÚ\‹šY
+K[Ûˆİ]K›[ÛXXÚ\’YˆXXÚ\‹šYˆXXÚ\•ZYˆXXÚ\‹˜]]ZYXXÚ\“˜[YNˆXXÚ\‹›˜[YKİ]\ÎˆœX›\ÚY‹ˆ™]š\Ú[Û‹™[X\ÙRYˆİ\œ™[[‹œ™[X\ÙRY	Üİ]K›[ÛWİ‰Ü™]š\Ú[ÛŸXˆØ[İ[][Ûˆ^\›ÛX›\ÚY]ˆİ\œ™[[‹œX›\ÚY]ˆJJNÂˆBˆÛÛœİ\˜Ú]™\ÈHİ\œ™[^\Û\Âˆ›X\
+
+][JHOˆÂˆÛÛœİÈY‹‹™]HHH][NÂˆ™]\›ˆÈYˆ^\Û\™\œÚ[Û’Y
+İ]K›[Û][KXXÚ\’Y™]š\Ú[ÛŠK]NˆÈ‹‹™]Kİ]\ÎˆœX›\ÚY‹™]š\Ú[ÛˆHNÂˆJBˆ™š[\Š
+\˜Ú]™JHOˆ\İ]K™]Kœ^\Û\™\œÚ[ÛœËœÛÛYJ
+][JHOˆ][KšYOOH\˜Ú]™KšY
+JNÂˆÛÛœİ[ˆHÈ‹‹˜İ\œ™[[‹İ]\Îˆ˜Ø[˜Ù[Y‹™]š\Ú[Û‹Ø[˜Ù[][Û’YØ[˜Ù[][Û”™X\ÛÛˆ™X\ÛÛ‹Ø[˜Ù[Y]NÂˆÛÛœİØ[˜Ù[][ÛˆHÂˆYˆØ[˜Ù[][Û’Yˆ]NˆÈ[Ûˆİ]K›[Û™]š\Ú[Û‹™X\ÛÛ‹™[X\ÙRYˆİ\œ™[[‹œ™[X\ÙRY	Üİ]K›[ÛWİ‰Ü™]š\Ú[ÛŸX^\Û\YÎˆİ\œ™[^\Û\Ë›X\
+
+][JHOˆ][KšY
+KXİÜ•ZYˆİ]K\Ù\‹ZYBˆNÂˆYˆ
+İ]KœİÜ™JHÂˆ]ØZ]İ]KœİÜ™K˜Ø[˜Ù[^\›Û[Šˆ[‹ˆİ\œ™[^\Û\Ë›X\
+
+][JHOˆ
+ÈYˆ][KšYJJKˆ\˜Ú]™\ËˆØ[˜Ù[][Û‹ˆÈYˆÜ\Ëœ˜[™ÛUURQ
+
+K]NˆÈXİ[Ûˆ”VT“ÓĞĞSÑSQ‹[Ûˆİ]K›[Û™]š\Ú[Û‹™X\ÛÛ‹XİÜ•ZYˆİ]K\Ù\‹ZYHBˆ
+NÂˆBˆİ\œ™[^\Û\Ë™›Ü‘XXÚ
+
+][JHOˆØš™Xİ˜\ÜÚYÛŠ][KÈİ]\Îˆ˜Ø[˜Ù[Y‹Ø[˜Ù[][Û’YØ[˜Ù[][Û”™X\ÛÛˆ™X\ÛÛ‹Ø[˜Ù[Y]JJNÂˆ\˜Ú]™\Ë™›Ü‘XXÚ
+
+\˜Ú]™JHOˆİ]K™]Kœ^\Û\™\œÚ[ÛœËœ\Ú
+ÈYˆ\˜Ú]™KšY‹‹˜\˜Ú]™K™]HJJNÂˆİ]K™]Kœ^\›ÛØ[˜Ù[][ÛœËœ\Ú
+ÈYˆØ[˜Ù[][Û‹šY‹‹˜Ø[˜Ù[][Û‹™]KÜ™X]Y]ˆØ[˜Ù[Y]JNÂˆÛÛœİ[’[™^Hİ]K™]Kœ^\›Û[œË™š[™[™^
+
+][JHOˆ][K›[ÛOOHİ]K›[Û
+NÂˆYˆ
+[’[™^H
+Hİ]K™]Kœ^\›Û[œÖÜ[’[™^HH[ÂˆÚİÕØ\İ
+»fe{(%zìî;'a;-ê;!£;e¢;"­zââ:âéˆ;"&;(%H;fá; â;,*;"&:èg;'«:ì';e¢{ef;!.;&¥ˆŠNÂˆ™[™\‘\Ú›Ø\™
+
+NÂˆJNÂŸB‚™[˜İ[ÛˆÜ[“[Ù[
+]K›ÙKİX›Z]X™[Û”İX›Z]
+HÂˆ[[Y[Ë›[Ù[›Ûİš[›™\’SH]ˆÛ\ÜÏH›[Ù[X˜XÚÙ›ÜÙXİ[ÛˆÛ\ÜÏH›[Ù[ˆ›ÛOH™X[ÙÈˆ\šXK[[Ù[HYHˆ\šXK[X™[YOH›[Ù[]]HXY\ˆÛ\ÜÏH›[Ù[ZXY\ˆˆYH›[Ù[]]H‰ÙJ]J_OÚ]ÛˆÛ\ÜÏHšXÛÛ‹X]Ûˆˆ\OH˜]Ûˆˆ\šXK[X™[Hºâêú®,ˆ]KXÛÜÙK[[Ù[H]K[XÚYOHÚOØ]ÛÚXY\]ˆÛ\ÜÏH›[Ù[X›ÙH‰Ø›Ù_OÙ]›Ûİ\ˆÛ\ÜÏH›[Ù[Y›Ûİ\ˆ]ÛˆÛ\ÜÏH˜]Ûˆ]Û‹\ÙXÛÛ™\Hˆ\OH˜]Ûˆˆ]KXÛÜÙK[[Ù[‰ÜİX›Z]X™[È»-ê;!£ˆˆºâêú®,ŸOØ]Û‰ÜİX›Z]X™[È]ÛˆÛ\ÜÏH˜]Ûˆ]Û‹\š[X\Hˆ\OH˜]Ûˆˆ]K\İX›Z][[Ù[‰ÙJİX›Z]X™[
+_OØ]Û˜ˆˆŸOÙ›Ûİ\ÜÙXİ[ÛÙ]˜Âˆ[[Y[Ë›[Ù[›Ûİœ]Y\TÙ[XİÜ[
+–Ù]KXÛÜÙK[[Ù[HŠK™›Ü‘XXÚ
+
+]ÛŠHOˆ]Û‹˜Y]™[\İ[™\Š˜ÛXÚÈ‹ÛÜÙS[Ù[
+JNÂˆ[[Y[Ë›[Ù[›Ûİœ]Y\TÙ[XİÜŠ‹›[Ù[X˜XÚÙ›ÜŠK˜Y]™[\İ[™\Š˜ÛXÚÈ‹
+]™[
+HOˆÈYˆ
+]™[\™Ù]˜Û\ÜÓ\İ˜ÛÛZ[œÊ›[Ù[X˜XÚÙ›ÜŠJHÛÜÙS[Ù[
+
+NÈJNÂˆÛÛœİİX›Z]H[[Y[Ë›[Ù[›Ûİœ]Y\TÙ[XİÜŠ–Ù]K\İX›Z][[Ù[HŠNÂˆYˆ
+İX›Z]
+HİX›Z]˜Y]™[\İ[™\Š˜ÛXÚÈ‹\Ş[˜È
+
+HOˆÂˆİX›Z]™\ØX›YHYNÂˆHÂˆÛÛœİ™\İ[H]ØZ]Û”İX›Z]
+
+NÂˆYˆ
+™\İ[OOH˜[ÙJHÛÜÙS[Ù[
+
+NÂˆHØ]Ú
+\œ›ÜŠHÂˆÚİÕØ\İ
+\œ›Ü‹›Y\ÜØYÙH»( ;'©{ef;)à:ê®ûe¢;"­zââ:âéˆŠNÂˆHš[˜[HÂˆİX›Z]™\ØX›YH˜[ÙNÂˆBˆJNÂˆ™Yœ™\ÚXÛÛœÊ
+NÂˆ[[Y[Ë›[Ù[›Ûİœ]Y\TÙ[XİÜŠš[œ]Ù[Xİ]ÛˆŠOË™›Øİ\Ê
+NÂŸB‚™[˜İ[ÛˆÛÜÙS[Ù[
+
+HÈ[[Y[Ë›[Ù[›Ûİš[›™\’SHˆÈB‚™[˜İ[Ûˆ^ÜYÙ\Š
+HÂˆÛÛœİ›İÜÈHÖÈº®"{%ë;&å‹»!,zê¡H‹»%ì:ço{,¦‹» çzáa;&å;'o0­û!,zìá:ì¢;f.‹»"è:¬è;%hH‹»"&;%á{"ç:¬!‹º¬%{ «:èã‹º¬%{ «:èã;!.;%hz¬í{('‹º­d;a­H;f§û"&‹º­d;a­zîa‹»(ï;,*:èã‹º®,;`à‹»-¥:¬ ;)à:®"H;&ä;,§;)å{"&‹»!.;%hz¬í{(';ejz¬á‹»!£:äç{!.‹»)à:ì*{!£:äç{!.‹º¬m:¬%Jû&¥;%¤H‹º­kzëï;%ì:®"‹º¬è;&ªzìí;eæ‹ºìí;eæ:èã;ejz¬á‹º­kzëï;%ì:®";"è:¬è:®,;) ;%hH‹º¬m:¬%zìí;eæ;"è:¬è:®,;) ;%hH‹º¬è;&ªzìí;eæ;"è:¬è:®,;) ;%hH‹º®,;`à:¬í{('‹º¬í{(';%hH;ejz¬á‹»)à:®"{%hH—WNÂˆ^\›ÛÑ›Ü“[Û
+İ]K›[Û
+K™›Ü‘XXÚ
+
+ÈXXÚ\‹^\›ÛJHOˆÂˆÛÛœİ™\ÜHXØÛİ[[™Ô™\Ü›ÜŠ^\›Û
+NÂˆÛÛœİ˜\Ù\ÈH[œİ\˜[˜ÙP˜\Ù\Ñ›ÜŠ^\›Û
+NÂˆ›İÜËœ\Ú
+Âˆİ]K›[ÛXXÚ\‹›˜[YKXXÚ\‹œÛ™Hˆ‹›Ü›X]XXÚ\’Y[]JXXÚ\ŠKˆ™\Üœ™\ÜYÜ›ÜÜË™\Ü˜Û\ÜÒİ\œË™\Ü›Xİ\™Q™YQÜ›ÜÜË™\Ü›Xİ\™UÚ]Û[™Ëˆ™\Ü˜[œÜÜš\Ë™\Ü˜[œÜÜ[[İ[™\Üœ\šÚ[™Ğ[[İ[™\Ü›İ\”^[Y[[[İ[ˆ™\Ü˜Y][Û˜[^[Y[Ú]Û[™Ë™\Ü›Xİ\™UÚ]Û[™È
+È™\Ü˜Y][Û˜[^[Y[Ú]Û[™Ëˆ™\Ü™[\ŞYYR[˜ÛÛYU^™\Ü™[\ŞYYSØØ[^™\ÜšX[[™Û™Õ\›PØ\™Kˆ™\Ü›˜][Û˜[[œÚ[Û‹™\Ü™[\Ş[Y[[œİ\˜[˜ÙK™\Üš[œİ\˜[˜ÙUİ[ˆ˜\Ù\Ë›˜][Û˜[[œÚ[Û‹˜\Ù\ËšX[[œİ\˜[˜ÙKˆ˜\Ù\Ë™[\Ş[Y[[œİ\˜[˜ÙK^\›Û™YXİ[ÛœË˜İ\İÛKˆ^\›Ûİ[YXİ[ÛœË^\›Û›™]ˆJNÂˆJNÂˆİÛ›ØYÜİŠXØY[^K\^\›ÛIÜİ]K›[ÛK˜Üİ˜›İÜÊNÂˆÚİÕØ\İ
+º®"{%ë:à­;%ë{!'ÔÕºéo;( ;'©{e¢;"­zââ:âéˆŠNÂŸB‚˜\Ş[˜È[˜İ[ÛˆİÛ›ØYİ\œ™[^\Û\
+]™[
+HÂˆÛÛœİ]ÛˆH]™[˜İ\œ™[\™Ù]Âˆ]Û‹™\ØX›YHYNÂˆHÂˆÛÛœİXXÚ\ˆHXXÚ\RY
+İ]K\Ù\‹œ›ÛHOOHXXÚ\ˆˆÈİ]K\Ù\‹XXÚ\’Yˆİ]KœÙ[XİYXXÚ\’Y
+NÂˆÛÛœİš[HH]ØZ]Ü™X]Pİ\œ™[^\Û\ŠXXÚ\ŠNÂˆİÛ›ØYš[Jš[JNÂˆÚİÕØ\İ
+º®"{%ë:ê¡{!.;!'ºéo;( ;'©{e¢;"­zââ:âéˆŠNÂˆHØ]Ú
+\œ›ÜŠHÂˆÚİÕØ\İ
+\œ›Ü‹›Y\ÜØYÙH”ºéo:éã:äé;)à:ê®ûe¢;"­zââ:âéˆŠNÂˆHš[˜[HÂˆ]Û‹™\ØX›YH˜[ÙNÂˆBŸB‚™[˜İ[ÛˆÜ™X]Pİ\œ™[^\Û\ŠXXÚ\ŠHÂˆYˆ
+]XXÚ\ŠH›İÈ™]È\œ›ÜŠ»!(; çzâæ;(%zìí:éo;,/»)à:ê®ûe¢;"­zââ:âéˆŠNÂˆ™]\›ˆÜ™X]T^\Û\‘š[J[[Y[Ë˜ÛÛ[œ]Y\TÙ[XİÜŠ‹œ^\Û\\ÚY]ŠKÂˆXØY[^S˜[YNˆ\ÛÛ™šYË˜XØY[^S˜[YKˆXXÚ\“˜[YNˆXXÚ\‹›˜[YKˆ[Ûˆİ]KœÙ[XİY^\Û\[ÛˆJNÂŸB‚™[˜İ[ÛˆÜ[”^\Û\[XZ[[Ù[
+XXÚ\‹^\›Û[ŠHÂˆYˆ
+]XXÚ\ˆ\^\›Û[‹œİ]\ÈOOHœX›\ÚYŠHÂˆÚİÕØ\İ
+»fe{(%zä':®"{%ë:ê¡{!.;!':éã;'m:êe;'o:èg:ì';!¨{eh;"&;'¢;"­zââ:âéˆŠNÂˆ™]\›ÂˆBˆÛÛœİ™]š\Ú[ÛˆH\Y˜Xİ™]š\Ú[ÛŠİ\œ™[^\Û\
+XXÚ\‹šYİ]KœÙ[XİY^\Û\[Û
+H[ŠNÂˆÛÛœİ™]š\Ú[Û“X™[H™]š\Ú[ÛˆˆHÈ;"&;(%H	Ü™]š\Ú[ÛŸ{,*ˆˆÂˆÛÛœİİXš™XİHÉØ\ÛÛ™šYË˜XØY[^S˜[Y_WH	Ù›Ü›X][Û
+İ]KœÙ[XİY^\Û\[Û
+_H:®"{%ë:ê¡{!.;!'	Ü™]š\Ú[Û“X™[XÂˆÛÛœİ›ÙHH;%b:áe{ef;!.;&¥	İXXÚ\‹›˜[Y_H;!(; çzâæ——‰Ø\ÛÛ™šYË˜XØY[^S˜[Y_H	Ù›Ü›X][Û
+İ]KœÙ[XİY^\Û\[Û
+_H:®"{%ë:ê¡{!.;!'	Ü™]š\Ú[Û“X™[zéo;,ª:í ;ejzââ:âé—ºäìzègzä'ÛÛÙÛH:¬á;(%{'/:èg:èg:­î;'n;ef:êm;cë;a.;%ä;!':ãá;)à:à§:ê¡{!.;!':éo;fe{'n;eh;"&;'¢;"­zââ:âé—‰ÜÜ[\›
+
+_W—º¬$; «;ejzââ:âé˜ÂˆÛÛœİš[[˜[YHH^\Û\š[[˜[YJ\ÛÛ™šYË˜XØY[^S˜[YKXXÚ\‹›˜[YKİ]KœÙ[XİY^\Û\[Û
+NÂˆÜ[“[Ù[
+º®"{%ë:ê¡{!.;!';'m:êe;'o:ì';!¨H‹ˆ]ˆÛ\ÜÏH››İXÙHÛÛ\XİH]K[XÚYOHœÚY[XÚXÚÈÚOÜ[ºì';!¨{eh:åc:­ :é«;'¤ÛÛÙÛH:¬á;(%{%äÛXZ[;(!;!¨H:­£;eg:éã;&¥;,«{ejzââ:âéˆ:­£;eg;a¨;`l:¬ï;,ª:í ;c#;'o;'`;( ;'©{ef;)à;%b»"­zââ:âéÜÜ[Ù]‚ˆ]ˆÛ\ÜÏH™[]™\K\İ[[X\H‚ˆ]Ü[»"&;"è;'¤ÜÜ[İ›Û™Ï‰ÙJXXÚ\‹›˜[YJ_OÜİ›Û™ÏÛX[‰ÙJXXÚ\‹™[XZ[
+_OÜÛX[Ù]‚ˆ]Ü[»,ª:í ;c#;'oÜÜ[İ›Û™Ï‰ÙJš[[˜[YJ_OÜİ›Û™ÏÛX[‰Ù›Ü›X]ÛÛŠ^\›Û›™]
+_OÜÛX[Ù]‚ˆÙ]‚ˆ›Ü›HYHœ^\Û\Y[XZ[Y›Ü›HˆÛ\ÜÏH™›Ü›KYÜšY‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ^\Û\Y[XZ[]Èºì&úâ¥;(ï;!£ÛX™[[œ]YHœ^\Û\Y[XZ[]Èˆ˜[YOHÈˆ\OH™[XZ[ˆ˜[YOH‰ÙJXXÚ\‹™[XZ[
+_Hˆ™XYÛ›H™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ^\Û\Y[XZ[\İXš™Xİ»(':êªOÛX™[[œ]YHœ^\Û\Y[XZ[\İXš™Xİˆ˜[YOHœİXš™Xİˆ˜[YOH‰ÙJİXš™Xİ
+_Hˆ™\]Z\™YÏÙ]‚ˆ]ˆÛ\ÜÏH™›Ü›KYšY[[X™[›ÜHœ^\Û\Y[XZ[X›ÙHºìî:ë.ÛX™[^\™XHYHœ^\Û\Y[XZ[X›ÙHˆ˜[YOH˜›ÙHˆ›İÜÏHÈˆ™\]Z\™Y‰ÙJ›ÙJ_Oİ^\™XOÙ]‚ˆX™[Û\ÜÏH˜ÚXÚØ›Ş\›İÈ[[œ]˜[YOH˜ÛÛ™š\›YYˆ\OH˜ÚXÚØ›ŞˆÏˆ;"&;"è;'¤:®";%hK:¬í{(':à­;%ëz¬ï;,ª:í ;c#;'o;'a;fe{'n;e¢;"­zââ:âéÛX™[‚ˆÙ›Ü›O‚ˆ]ˆÛ\ÜÏH™[XZ[Y˜[˜XÚÈÜ[‘ÛXZ[Tzéo; «;&ª{ef;)à;%b»'a:åcÜÜ[]ÛˆÛ\ÜÏH˜]Ûˆ]Û‹\ÙXÛÛ™\Hˆ\OH˜]Ûˆˆ]KYİÛ›ØYXÛÛ\ÜÙOH]K[XÚYOH™^\›˜[[[šÈÚO”ˆ;( ;'©H;fá:êe;'o;%lH;%í:®,Ø]ÛÙ]‚ˆ‘ÛXZ[:èg:ì';!¨H‹\Ş[˜È
+
+HOˆÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÜ^\Û\Y[XZ[Y›Ü›HŠNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆYˆ
+Y›Ü›K™[[Y[Ë˜ÛÛ™š\›YY˜ÚXÚÙY
+HÂˆÚİÕØ\İ
+ºì';!¨H;(!;fe{'n;ekzêª{'a;!(;`ç{em;(ï;!.;&¥ˆŠNÂˆ™]\›ˆ˜[ÙNÂˆBˆYˆ
+\İ]KœİÜ™JH›İÈ™]È\œ›ÜŠºãl:êª;%ä;!':â¥;"é;(':êe;'o;'a:ì';!¨{ef;)à;%b»"­zââ:âéˆš\™X˜\ÙH;%ì:¬¬;fá; «;&ª{em;(ï;!.;&¥ˆŠNÂ‚ˆ]ØZ]İ]KœİÜ™K˜]]Üš^™QÛXZ[Ù[™
+
+NÂˆÛÛœİš[HH]ØZ]Ü™X]Pİ\œ™[^\Û\ŠXXÚ\ŠNÂˆÛÛœİ˜]ÈHZ[ÛXZ[Y\ÜØYÙJÂˆÎˆ]KËˆİXš™Xİˆ]KœİXš™Xİˆ›ÙNˆ]K˜›ÙKˆ]XÚY[˜[YNˆš[K›˜[YKˆ]XÚY[]\Îˆ]ØZ]š[UĞ]\Êš[JBˆJNÂˆÛÛœİ™\İ[H]ØZ]İ]KœİÜ™KœÙ[™ÛXZ[Y\ÜØYÙJ˜]ÊNÂˆÛÛœİ[]™\Q]HHÂˆ^\Û\Yˆ^\Û\Y
+İ]KœÙ[XİY^\Û\[ÛXXÚ\‹šY
+KˆXXÚ\’YˆXXÚ\‹šYˆ[Ûˆİ]KœÙ[XİY^\Û\[Ûˆ™]š\Ú[Û‹ˆ™XÚ\Y[[XZ[ˆ]KËˆÚ[›™[ˆ™ÛXZ[Ø]XÚY[‹ˆÛXZ[Y\ÜØYÙRYˆ™\İ[šYˆNÂˆHÂˆÛÛœİØ]™YH]ØZ]İ]KœİÜ™Kœ™XÛÜ™^\Û\[]™\J[]™\Q]JNÂˆİ]K™]Kœ^\Û\[]™\šY\Ëœ\Ú
+Ø]™Y
+NÂˆÚİÕØ\İ
+	İXXÚ\‹›˜[Y_H;!(; çzâæ;%ä:¬£:®"{%ë:ê¡{!.;!':éo:ì';!¨{e¢;"­zââ:âé˜
+NÂˆHØ]Ú
+\œ›ÜŠHÂˆÛÛœÛÛK™\œ›ÜŠº®"{%ë:ê¡{!.;!':ì';!¨H;'m:è)H;( ;'©H;"é;c*‹\œ›ÜŠNÂˆÚİÕØ\İ
+ºêe;'o;'`:ì';!¨zä$;)à:éã:ì';!¨H;'m:è){'a;( ;'©{ef;)à:ê®ûe¢;"­zââ:âéˆŠNÂˆBˆ™[™\”^\Û\Ê
+NÂˆJNÂ‚ˆ[[Y[Ë›[Ù[›Ûİœ]Y\TÙ[XİÜŠ–Ù]KYİÛ›ØYXÛÛ\ÜÙWHŠK˜Y]™[\İ[™\Š˜ÛXÚÈ‹\Ş[˜È
+]™[
+HOˆÂˆÛÛœİ]ÛˆH]™[˜İ\œ™[\™Ù]ÂˆÛÛœİ›Ü›HHØİ[Y[œ]Y\TÙ[XİÜŠˆÜ^\Û\Y[XZ[Y›Ü›HŠNÂˆÛÛœİ]HHØš™Xİ™œ›ÛQ[šY\Ê™]È›Ü›Q]J›Ü›JJNÂˆ]Û‹™\ØX›YHYNÂˆHÂˆİÛ›ØYš[J]ØZ]Ü™X]Pİ\œ™[^\Û\ŠXXÚ\ŠJNÂˆÚ[™İË›ØØ][Û‹š™YˆHXZ[Î‰Ù[˜ÛÙUT’PÛÛ\Û™[
+]KÊ_OÜİXš™XİIÙ[˜ÛÙUT’PÛÛ\Û™[
+]KœİXš™Xİ
+_I˜›ÙOIÙ[˜ÛÙUT’PÛÛ\Û™[
+]K˜›ÙJ_XÂˆÚİÕØ\İ
+”ºéo;( ;'©{e¢;"­zââ:âéˆ;%í:é¬:êe;'o;%ä;c#;'o;'a;,ª:í ;em;(ï;!.;&¥ˆŠNÂˆHØ]Ú
+\œ›ÜŠHÂˆÚİÕØ\İ
+\œ›Ü‹›Y\ÜØYÙH”ºéo:éã:äé;)à:ê®ûe¢;"­zââ:âéˆŠNÂˆHš[˜[HÂˆ]Û‹™\ØX›YH˜[ÙNÂˆBˆJNÂŸB‚˜\Ş[˜È[˜İ[ÛˆÛÜTÜ[[šÊ
+HÂˆ]ØZ]ÛÜU^
+Ü[\›
+
+JNÂˆÚİÕØ\İ
+»!(; çzâæ;cë;a.:éà{`k:éo:ìí{ «;e¢;"­zââ:âéˆŠNÂŸB‚˜\Ş[˜È[˜İ[ÛˆÛÜT^\Û\›İXÙJ
+HÂˆÛÛœİY\ÜØYÙHH;%b:áe{ef;!.;&¥ˆ	Ø\ÛÛ™šYË˜XØY[^S˜[Y_H	Ù›Ü›X][Û
+İ]K›[Û
+_H:®"{%ë:ê¡{!.;!':¬ :ì';e¢zä&;%â;"­zââ:âé—»%a:ç¦:éà{`k;%ä;!':äìzègzä'ÛÛÙÛH:¬á;(%{'/:èg:èg:­î;'n;em;fe{'n;em;(ï;!.;&¥—‰ÜÜ[\›
+
+_XÂˆ]ØZ]ÛÜU^
+Y\ÜØYÙJNÂˆÚİÕØ\İ
+º®"{%ë:ê¡{!.;!';%b:à­:ë.:¬ï:èg:­î;'n:éà{`k:éo:ìí{ «;e¢;"­zââ:âéˆŠNÂŸB‚˜\Ş[˜È[˜İ[ÛˆÛÜU^
+˜[YJHÂˆYˆ
+˜]šYØ]Ü‹˜Û\›Ø\™ËÜš]U^
+HÂˆ]ØZ]˜]šYØ]Ü‹˜Û\›Ø\™Üš]U^
+˜[YJNÂˆ™]\›ÂˆBˆÛÛœİ^\™XHHØİ[Y[˜Ü™X]Q[[Y[
+^\™XHŠNÂˆ^\™XK˜[YHH˜[YNÂˆ^\™XKœİ[KœÜÚ][ÛˆH™š^YÂˆ^\™XKœİ[K›ÜXÚ]HHŒÂˆØİ[Y[˜›ÙK˜\[™
+^\™XJNÂˆ^\™XKœÙ[Xİ
+
+NÂˆØİ[Y[™^XĞÛÛ[X[™
+˜ÛÜHŠNÂˆ^\™XKœ™[[İ™J
+NÂŸB‚™[˜İ[ÛˆÜ[\›
+
+HÂˆ™]\›ˆ\ÛÛ™šYËœÜ[\›™]ÈT“
+‹ˆ‹Ú[™İË›ØØ][Û‹š™YŠKš™YÂŸB‚˜\Ş[˜È[˜İ[Ûˆ™XÛÜ™^\Û\šY]ÙY
+XXÚ\’Y[Û
+HÂˆYˆ
+™XÙZ\›ÜŠXXÚ\’Y[Û
+JH™]\›ÂˆÛÛœİİ\œ™[Hİ\œ™[^\Û\
+XXÚ\’Y[Û
+NÂˆÛÛœİ™]š\Ú[ÛˆH\Y˜Xİ™]š\Ú[ÛŠİ\œ™[[‘›Ü“[Û
+[Û
+JNÂˆÛÛœİİ\œ™[^\Û\YH^\Û\Y
+[ÛXXÚ\’Y
+NÂˆÛÛœİ™XÙZ\HÈYˆ	Øİ\œ™[^\Û\YWİ‰Ü™]š\Ú[ÛŸWÉÜİ]K\Ù\‹ZYX^\Û\Yˆİ\œ™[^\Û\YXXÚ\’YXXÚ\•ZYˆİ]K\Ù\‹ZY[Û™]š\Ú[Û‹šY]ÙY]ˆ™]È]J
+KÒTÓÔİš[™Ê
+HNÂˆİ]K™]Kœ^\Û\™XÙZ\Ëœ\Ú
+™XÙZ\
+NÂˆYˆ
+İ]KœİÜ™JHÂˆHÂˆ]ØZ]İ]KœİÜ™Kœ™XÛÜ™^\Û\šY]Êİ\œ™[^\Û\YXXÚ\’Y[Û™]š\Ú[ÛŠNÂˆHØ]Ú
+\œ›ÜŠHÂˆİ]K™]Kœ^\Û\™XÙZ\ÈHİ]K™]Kœ^\Û\™XÙZ\Ë™š[\Š
+][JHOˆ][KšYOOH™XÙZ\šY
+NÂˆÛÛœÛÛK™\œ›ÜŠº®"{%ë:ê¡{!.;!';%í:ç£:®,:ègH;( ;'©H;"é;c*‹\œ›ÜŠNÂˆBˆBŸB‚™[˜İ[Ûˆ™XÙZ\›ÜŠXXÚ\’Y[Û
+HÂˆÛÛœİ™]š\Ú[ÛˆH\Y˜Xİ™]š\Ú[ÛŠİ\œ™[^\Û\
+XXÚ\’Y[Û
+H[‘›Ü“[Û
+[Û
+JNÂˆ™]\›ˆİ\œ™[\Y˜Xİ›Ü”™]š\Ú[ÛŠİ]K™]Kœ^\Û\™XÙZ\ËXXÚ\’Y[Û™]š\Ú[ÛŠNÂŸB‚™[˜İ[Ûˆ[]™\Q›ÜŠXXÚ\’Y[Û
+HÂˆÛÛœİ™]š\Ú[ÛˆH\Y˜Xİ™]š\Ú[ÛŠİ\œ™[^\Û\
+XXÚ\’Y[Û
+H[‘›Ü“[Û
+[Û
+JNÂˆ™]\›ˆİ\œ™[\Y˜Xİ›Ü”™]š\Ú[ÛŠİ]K™]Kœ^\Û\[]™\šY\ËXXÚ\’Y[Û™]š\Ú[ÛŠNÂŸB‚™[˜İ[Ûˆ›Ü›X]šY]ÙY]
+˜[YJHÂˆÛÛœİ]HH˜[YOËÑ]HÈ˜[YKÑ]J
+Hˆ™]È]J˜[YJNÂˆ™]\›ˆ[X™\‹š\Ó˜SŠ]K™Ù][YJ
+JHÈ»%í:ç£;"ç:¬!:®,:ègHˆˆ]KÓØØ[Tİš[™ÊšÛËRÔˆŠNÂŸB‚™[˜İ[Ûˆ›Ü›X][]™\P]
+˜[YJHÂˆÛÛœİ]HH˜[YOËÑ]HÈ˜[YKÑ]J
+Hˆ™]È]J˜[YJNÂˆ™]\›ˆ[X™\‹š\Ó˜SŠ]K™Ù][YJ
+JHÈºì';!¨H;"ç:¬!:®,:ègHˆˆ]KÓØØ[Tİš[™ÊšÛËRÔˆŠNÂŸB‚™[˜İ[Ûˆ›Ü›X]]U[YJ˜[YJHÂˆÛÛœİ]HH˜[YOËÑ]HÈ˜[YKÑ]J
+Hˆ™]È]J˜[YJNÂˆ™]\›ˆ[X™\‹š\Ó˜SŠ]K™Ù][YJ
+JHÈ»"ç:¬!;fe{'n;ea;&¥ˆˆ]KÓØØ[Tİš[™ÊšÛËRÔˆŠNÂŸB‚™[˜İ[Ûˆ[]™\U[YJ˜[YJHÂˆÛÛœİ]HH˜[YOËÑ]HÈ˜[YKÑ]J
+Hˆ™]È]J˜[YJNÂˆ™]\›ˆ[X™\‹š\Ó˜SŠ]K™Ù][YJ
+JHÈˆ]K™Ù][YJ
+NÂŸB‚™[˜İ[ÛˆY]šXÊXÛÛ‹X™[˜[YK[\ŠHÈ™]\›ˆ]ˆÛ\ÜÏH›Y]šXÈÜ[ˆÛ\ÜÏH›Y]šXË[X™[H]K[XÚYOH‰ÚXÛÛŸHÚO‰ÙJX™[
+_OÜÜ[İ›Û™Ï‰ÙJ˜[YJ_OÜİ›Û™ÏÛX[‰ÙJ[\Š_OÜÛX[Ù]˜ÈB™[˜İ[Ûˆ›ÙÜ™\ÜÔİ\
+[X™\‹]K]Z[Xİ]™KÛÛ\]JHÈ™]\›ˆ]ˆÛ\ÜÏHœ›ÙÜ™\ÜË\İ\	ØXİ]™HÈ˜Xİ]™HˆˆˆŸH	ØÛÛ\]HÈ˜ÛÛ\]HˆˆˆŸHİ›Û™Ï‰ÙJ[X™\Š_Kˆ	ÙJ]J_OÜİ›Û™ÏÜ[‰ÙJ]Z[
+_OÜÜ[Ù]˜ÈB™[˜İ[Ûˆ\œÛÛÙ[
+XXÚ\ŠHÈ™]\›ˆ]ˆÛ\ÜÏHœ\œÛÛ‹XÙ[Ü[ˆÛ\ÜÏH˜]˜]\ˆ‰ÙJXXÚ\‹›˜[YKœÛXÙJJJ_OÜÜ[Ü[ˆÛ\ÜÏHœ\œÛÛ‹[Y]Hİ›Û™Ï‰ÙJXXÚ\‹›˜[YJ_OÜİ›Û™ÏÜ[‰ÙJXXÚ\‹™[XZ[
+_OÜÜ[ÜÜ[Ù]˜ÈB™[˜İ[Ûˆ[\T›İÊÛÛ[[œÊHÈ™]\›ˆÛÛÜ[H‰ØÛÛ[[œßH]ˆÛ\ÜÏH™[\K\İ]H»dg;"ç;eh:à­;%ë{'m;%á»"­zââ:âéÙ]İİ˜ÈB™[˜İ[Ûˆİ]\ÓX™[
+İ]\ÊHÈ™]\›ˆ
+È˜Yˆº¬ ;a¨;)$H‹™XYNˆ»fe{(%H:ã :®,‹X›\ÚYˆºì';e¢H;&a:èã‹Ø[˜Ù[Yˆ»-ê;!£;fá;"&;(%H‹ZYˆ»)à:®"H;&a:èãˆJVÜİ]\×Hİ]\ÎÈB™[˜İ[Ûˆ›ÛSX™[
+›ÛJHÈ™]\›ˆ
+ÈYZ[ˆº­ :é«;'¤‹XXÚ\ˆ»!(; çzâæˆJVÜ›ÛWH›ÛNÈB™[˜İ[Ûˆİ\œ™[Ø[[™\“[Û
+
+HÂˆÛÛœİÙ^HH™]È]J
+NÂˆ™]\›ˆ	İÙ^K™Ù][YX\Š
+_KIÔİš[™ÊÙ^K™Ù][Û
+
+H
+ÈJKœYİ\
+‹ŒŠ_XÂŸB™[˜İ[Ûˆ˜]T\˜Ù[
+˜]JHÈ™]\›ˆ	Ê
+[X™\Š˜]JH
+H
+ˆL
+KÓØØ[Tİš[™ÊšÛËRÔˆ‹ÈX^[][Qœ˜Xİ[Û‘YÚ]ÎˆÈJ_IXÈB™[˜İ[ÛˆÛXŞT\˜Ù[[œ]
+˜]JHÈ™]\›ˆ[X™\Š
+
+[X™\Š˜]JH
+H
+ˆL
+KÑš^Y
+ÊJNÈB™[˜İ[Ûˆ^›Ùš[Q›Ü•XXÚ\ŠXXÚ\ŠHÈ™]\›ˆÈ\[™[Ûİ[ˆKÚ[™[ÌŒˆÚ]Û[™Ô˜][ÎˆK‹‹ŠXXÚ\‹^›Ùš[HßJHNÈB™[˜İ[ÛˆÛYÊ˜[YJHÈ™]\›ˆİš[™Ê˜[YJKš[J
+KÓİÙ\Ø\ÙJ
+Kœ™\XÙJ×ÊËÙË‹HŠKœ™\XÙJÖ×˜K^ŒNz¬ {g¨ËWKÙËˆŠNÈB™[˜İ[ÛˆYXİ[Û“X™[Ê
+HÈ™]\›ˆÈ˜][Û˜[[œÚ[Ûˆº­kzëï;%ì:®"‹X[[œİ\˜[˜ÙNˆº¬m:¬%zìí;eæ‹Û™Õ\›PØ\™Nˆ»'©z®,;&¥;%¤zìí;eæ‹[\Ş[Y[[œİ\˜[˜ÙNˆº¬è;&ªzìí;eæ‹[\ŞYYR[˜ÛÛYU^ˆº­ï:èg;!£:äç{!.‹[\ŞYYSØØ[^ˆº­ï:èg;!£:äçH;)à:ì*{!.‹\Ú[™\ÜÒ[˜ÛÛYU^ˆ» «;%á{!£:äç{!.‹\Ú[™\ÜÓØØ[^ˆ» «;%á{!£:äçH;)à:ì*{!.‹İ\’[˜ÛÛYU^ˆº®,;`à;!£:äç{!.‹İ\“ØØ[^ˆº®,;`à;!£:äçH;)à:ì*{!.‹İ\İÛNˆº®,;`à:¬í{('ˆNÈB™[˜İ[ÛˆØY™R\›
+˜[YJHÈHÈÛÛœİ\›H™]ÈT“
+˜[YJNÈ™]\›ˆÈšˆ‹šÎˆ—Kš[˜ÛY\Ê\›œ›İØÛÛ
+HÈ\›š™YˆˆˆÈÈHØ]ÚÈ™]\›ˆˆÈÈHB™[˜İ[Ûˆ\ÓÙ™šXÚX[Ûİ™\››Y[\›
+˜[YJHÈHÈÛÛœİÜİH™]ÈT“
+˜[YJKšÜİ˜[YKÓİÙ\Ø\ÙJ
+NÈ™]\›ˆÜİOOH™ÛËšÜˆˆÜİ™[™ÕÚ]
+‹™ÛËšÜˆŠNÈHØ]ÚÈ™]\›ˆ˜[ÙNÈHB™[˜İ[Ûˆ\ÓÙ™šXÚX[X›XÔÛİ\˜ÙU\›
+˜[YJHÂˆHÂˆÛÛœİÜİH™]ÈT“
+˜[YJKšÜİ˜[YKÓİÙ\Ø\ÙJ
+NÂˆ™]\›ˆÜİOOH›œË›Ü‹šÜˆˆÜİ™[™ÕÚ]
+‹›œË›Ü‹šÜˆŠBˆÜİOOH›š\Ë›Ü‹šÜˆˆÜİ™[™ÕÚ]
+‹›š\Ë›Ü‹šÜˆŠBˆÜİOOH›]Ë™ÛËšÜˆˆÜİ™[™ÕÚ]
+‹›]Ë™ÛËšÜˆŠBˆÜİOOH™ÛËšÜˆˆÜİ™[™ÕÚ]
+‹™ÛËšÜˆŠNÂˆHØ]ÚÂˆ™]\›ˆ˜[ÙNÂˆBŸB™[˜İ[ÛˆÙ]ÙÚ[”İ]\ÊY\ÜØYÙK\Ñ\œ›ÜˆHYJHÈ[[Y[Ë›ÙÚ[”İ]\Ë^ÛÛ[HY\ÜØYÙNÈ[[Y[Ë›ÙÚ[”İ]\Ëœİ[K˜ÛÛÜˆH\Ñ\œ›ÜˆÈ˜\ŠKY[™Ù\ŠHˆˆ˜\ŠK[]]Y
+HÈB™[˜İ[ÛˆÚİÕØ\İ
+Y\ÜØYÙJHÈÛÛœİØ\İHØİ[Y[˜Ü™X]Q[[Y[
+™]ˆŠNÈØ\İ˜Û\ÜÓ˜[YHHØ\İÈØ\İ^ÛÛ[HY\ÜØYÙNÈ[[Y[ËØ\İ›Ûİ˜\[™
+Ø\İ
+NÈÙ][Y[İ]
+
+
+HOˆØ\İœ™[[İ™J
+KÌŒ
+NÈB™[˜İ[Ûˆ™Yœ™\ÚXÛÛœÊ
+HÈYˆ
+Ú[™İË›XÚYJHÚ[™İË›XÚYK˜Ü™X]RXÛÛœÊ
+NÈ[ÙHÙ][Y[İ]
+
+
+HOˆÚ[™İË›XÚYOË˜Ü™X]RXÛÛœÊ
+KÌ
+NÈB

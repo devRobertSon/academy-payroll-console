@@ -41,6 +41,7 @@ async function checkRequiredFiles() {
     "src/data/help-content.js",
     "src/lib/help-assistant.js",
     "src/lib/teacher-self-service.js",
+    "src/lib/admin-notifications.js",
     ".nojekyll"
   ];
   for (const path of required) {
@@ -86,7 +87,10 @@ async function checkHtmlAssets() {
   } else {
     for (const modulePath of [
       "./config.js",
+      "./data/help-content.js",
       "./data/demo-data.js",
+      "./data/nts-tax-policy.js",
+      "./lib/admin-notifications.js",
       "./lib/firebase-store.js",
       "./lib/payroll.js",
       "./lib/teacher-identity.js",
@@ -213,10 +217,10 @@ async function checkTeacherSelfService() {
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   const guide = await readFile(join(root, "docs", "user-guide.md"), "utf8");
 
-  for (const surface of ["workHours", "renderWorkHours", "openTeacherSelfProfileModal", "teacherMonthlyInputs"]) {
+  for (const surface of ["workHours", "renderWorkHours", "openTeacherSelfProfileModal", "teacherMonthlyInputs", "openAdminNotifications", "notification-button"]) {
     if (!app.includes(surface)) failures.push(`Teacher self-service surface is missing: ${surface}`);
   }
-  for (const operation of ["saveTeacherProfile", "saveTeacherMonthlyInput", "saveAdminMonthlyPayroll"]) {
+  for (const operation of ["saveTeacherProfile", "saveTeacherMonthlyInput", "saveAdminMonthlyPayroll", "markAdminNotificationRead"]) {
     if (!store.includes(`async function ${operation}`)) failures.push(`Teacher self-service store operation is missing: ${operation}`);
   }
   for (const safeguard of [
@@ -226,6 +230,25 @@ async function checkTeacherSelfService() {
     "request.resource.data.diff(resource.data).affectedKeys().hasOnly"
   ]) {
     if (!rules.includes(safeguard)) failures.push(`Teacher self-service security rule is missing: ${safeguard}`);
+  }
+  for (const safeguard of [
+    "match /adminNotifications/{notificationId}",
+    "validTeacherWorkHoursNotification(notificationId)",
+    "request.resource.data.type == 'teacher_monthly_input_submitted'",
+    "existsAfter(/databases/$(database)/documents/teacherMonthlyInputs/$(request.resource.data.month + '_' + account().teacherId))",
+    ".data.updatedAt == request.time",
+    "request.resource.data.status == 'read'",
+    "'status', 'readAt', 'readBy'"
+  ]) {
+    if (!rules.includes(safeguard)) failures.push(`Admin notification security rule is missing: ${safeguard}`);
+  }
+  for (const workflow of [
+    'loadOptionalCollection("adminNotifications")',
+    'workHoursNotificationId(input.month, input.teacherId)',
+    'state.view = "payrollInputs"',
+    "openMonthlyPayModal(teacher)"
+  ]) {
+    if (!app.includes(workflow) && !store.includes(workflow)) failures.push(`Admin notification workflow is missing: ${workflow}`);
   }
   for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "businessRates", "insuranceSettings", "taxProfile"]) {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
@@ -338,4 +361,3 @@ async function exists(path) {
     return false;
   }
 }
-

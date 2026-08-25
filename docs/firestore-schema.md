@@ -8,6 +8,7 @@
 | `accessRequests` | 승인 요청 조회·처리 | 미등록 본인 요청 생성·조회 |
 | `teachers` | 관리 | 연결된 본인 조회, 허용된 기본 정보 수정 |
 | `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간 조회·수정 |
+| `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간 제출 알림 생성·갱신 |
 | `rateRules` | 관리 | 차단 |
 | `workEntries` | 관리 | 차단 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
@@ -99,6 +100,23 @@
 ```
 
 이 문서에는 급여액, 시급, 소득 구분이나 보험 정보가 없습니다. `businessHours`의 키는 관리자가 `teachers.businessRates`에 등록한 시급 항목 ID이고 값만 선생님이 입력합니다. 계산 시 등록된 ID의 시수만 사용하며 알 수 없는 키는 무시합니다. 선생님은 본인 UID·teacherId의 문서만 읽고 쓸 수 있고, `payrollRuns/{month}`가 `published`이면 쓰기가 거부됩니다.
+
+### `adminNotifications/{work-hours_yyyy-mm_teacherId}`
+
+```json
+{
+  "type": "teacher_monthly_input_submitted",
+  "teacherId": "teacherId",
+  "teacherUid": "Firebase Authentication UID",
+  "month": "2026-08",
+  "status": "unread | read",
+  "submittedAt": "server timestamp",
+  "readAt": null,
+  "readBy": null
+}
+```
+
+선생님이 수업시간을 저장하면 같은 batch에서 관리자 알림을 생성합니다. 같은 선생님·같은 월은 문서 하나를 다시 `unread`로 갱신하므로 중복 알림이 쌓이지 않습니다. 선생님은 본인 제출 알림만 만들 수 있고 알림을 읽을 수는 없습니다. 관리자는 전체 알림을 읽고 `status`, `readAt`, `readBy`만 변경할 수 있습니다. 급여액, 시급, 연락처는 알림에 저장하지 않습니다.
 
 ### `accessRequests/{uid}`
 
@@ -326,4 +344,3 @@
 ```
 
 관리자만 생성·조회할 수 있으며 수정과 삭제는 허용하지 않습니다. 급여명세서 본문, PDF, Gmail OAuth 토큰은 저장하지 않습니다. 규칙은 연결된 `payslips` 문서가 `published` 상태이고 선생님과 급여월이 일치하는지 다시 확인합니다.
-

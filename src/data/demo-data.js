@@ -33,6 +33,20 @@ export const demoAccessRequests = [
   }
 ];
 
+export const demoAdminNotifications = [
+  {
+    id: "work-hours_2026-08_teacher-03",
+    type: "teacher_monthly_input_submitted",
+    teacherId: "teacher-03",
+    teacherUid: "demo-teacher-03",
+    month: "2026-08",
+    status: "unread",
+    submittedAt: "2026-08-26T09:30:00Z",
+    readAt: null,
+    readBy: null
+  }
+];
+
 export const demoTeachers = [
   {
     id: "teacher-01",
@@ -233,4 +247,3 @@ function monthEntries(month, rows) {
     source: "demo"
   }));
 }
-

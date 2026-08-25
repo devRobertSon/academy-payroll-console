@@ -74,6 +74,27 @@ service cloud.firestore {
         || get(/databases/$(database)/documents/payrollRuns/$(month)).data.status != 'published';
     }
 
+    function validTeacherWorkHoursNotification(notificationId) {
+      return activeAccount()
+        && account().role == 'teacher'
+        && notificationId == 'work-hours_' + request.resource.data.month + '_' + account().teacherId
+        && request.resource.data.keys().hasOnly([
+          'type', 'teacherId', 'teacherUid', 'month', 'status',
+          'submittedAt', 'readAt', 'readBy'
+        ])
+        && request.resource.data.type == 'teacher_monthly_input_submitted'
+        && request.resource.data.teacherId == account().teacherId
+        && request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && request.resource.data.status == 'unread'
+        && request.resource.data.submittedAt == request.time
+        && request.resource.data.readAt == null
+        && request.resource.data.readBy == null
+        && existsAfter(/databases/$(database)/documents/teacherMonthlyInputs/$(request.resource.data.month + '_' + account().teacherId))
+        && getAfter(/databases/$(database)/documents/teacherMonthlyInputs/$(request.resource.data.month + '_' + account().teacherId)).data.updatedAt == request.time
+        && monthIsEditable(request.resource.data.month);
+    }
+
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
@@ -172,6 +193,22 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
           && monthIsEditable(request.resource.data.month));
+      allow delete: if false;
+    }
+
+    match /adminNotifications/{notificationId} {
+      allow read: if isAdmin();
+      allow create: if validTeacherWorkHoursNotification(notificationId);
+      allow update: if validTeacherWorkHoursNotification(notificationId)
+        || (isAdmin()
+          && resource.data.type == 'teacher_monthly_input_submitted'
+          && resource.data.status == 'unread'
+          && request.resource.data.status == 'read'
+          && request.resource.data.readAt == request.time
+          && request.resource.data.readBy == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'readAt', 'readBy'
+          ]));
       allow delete: if false;
     }
 
@@ -359,4 +396,3 @@ service cloud.firestore {
     }
   }
 }
-

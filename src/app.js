@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js";
-import { helpArticles } from "./data/help-content.js";
+import { appConfig } from "./config.js?v=20260826-self-service";
+import { helpArticles } from "./data/help-content.js?v=20260826-self-service";
 import {
   demoAccessRequests,
   demoEntries,
@@ -9,13 +9,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js";
+} from "./data/demo-data.js?v=20260826-self-service";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js";
-import { createFirebaseStore } from "./lib/firebase-store.js";
+} from "./data/nts-tax-policy.js?v=20260826-self-service";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-self-service";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -40,15 +40,15 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js";
+} from "./lib/payroll.js?v=20260826-self-service";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-self-service";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js";
+} from "./lib/teacher-self-service.js?v=20260826-self-service";
 
 const state = {
   user: null,

@@ -136,14 +136,14 @@ async function checkTeacherMonthlyPayroll() {
   const tests = await readFile(join(root, "tests", "payroll.test.mjs"), "utf8");
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
-  for (const field of ["employmentType", "baseMonthlyPay", "grossPay"]) {
+  for (const field of ["insuranceEnrolled", "defaultEmployeePay", "defaultBusinessPay", "employeeGrossPay", "businessGrossPay"]) {
     if (!app.includes(field)) failures.push(`Teacher monthly payroll field is missing: ${field}`);
   }
   if (!app.includes('["업무", "payrollInputs"')) failures.push("Monthly payroll input navigation is missing.");
   if (adminNav.includes('"entries"') || adminNav.includes('"rates"')) {
     failures.push("Legacy class and hourly-rate pages must not be in the admin navigation.");
   }
-  if (!payroll.includes("createMonthlyEarningLine") || !tests.includes("수업이 없어도")) {
+  if (!payroll.includes("createMonthlyEarningLines") || !tests.includes("수업이 없어도") || !tests.includes("함께 계산한다")) {
     failures.push("Monthly salary calculation must cover insured teachers without classes.");
   }
 }

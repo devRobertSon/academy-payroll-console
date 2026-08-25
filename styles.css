@@ -143,6 +143,7 @@ td { height: 54px; padding: 8px 14px; border-bottom: 1px solid #e9edeb; vertical
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fafcfb; }
 td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cell-subtext { margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; }
 .person-cell { display: flex; align-items: center; gap: 10px; min-width: 140px; }
 .person-cell .avatar { flex: 0 0 auto; width: 30px; height: 30px; color: var(--brand-dark) !important; background: var(--brand-pale); }
 .person-meta { display: grid; gap: 1px; }

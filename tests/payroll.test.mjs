@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   calculateEmploymentIncomeTax,
   calculatePayroll,
-  createMonthlyEarningLine,
+  createMonthlyEarningLines,
+  getMonthlyPayAmounts,
+  getTeacherPaySettings,
   parseEmploymentTaxTableRows,
   resolveEffectivePolicy,
   resolveRateRule,
@@ -53,38 +55,62 @@ test("보험 미적용 근로소득은 보험 기준액에 포함하지 않는�
 });
 
 test("4대보험 가입자는 수업이 없어도 선생님 기본 월급으로 계산한다", () => {
-  const teacher = { id: "t1", employmentType: "insured", baseMonthlyPay: 3000000 };
-  const line = createMonthlyEarningLine(teacher, "2026-08");
-  const payroll = calculatePayroll([line], demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
+  const teacher = { id: "t1", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 0 };
+  const lines = createMonthlyEarningLines(teacher, "2026-08");
+  const payroll = calculatePayroll(lines, demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
 
-  assert.equal(line.subjectName, "월 기본급");
-  assert.equal(line.treatment, "employee");
-  assert.equal(line.insuranceCovered, true);
+  assert.equal(lines[0].subjectName, "월 근로소득");
+  assert.equal(lines[0].treatment, "employee");
+  assert.equal(lines[0].insuranceCovered, true);
   assert.equal(payroll.gross, 3000000);
   assert.equal(payroll.insuredBase, 3000000);
 });
 
-test("프리랜서는 선생님별 월 지급액을 사업소득으로 계산한다", () => {
-  const teacher = { id: "t2", employmentType: "freelancer", baseMonthlyPay: 0 };
-  const line = createMonthlyEarningLine(teacher, "2026-08", { grossPay: 1800000 });
-  const payroll = calculatePayroll([line], demoPolicy);
+test("4대보험 가입 선생님에게 근로소득과 사업소득을 함께 계산한다", () => {
+  const teacher = { id: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 700000 };
+  const lines = createMonthlyEarningLines(teacher, "2026-08");
+  const payroll = calculatePayroll(lines, demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
 
-  assert.equal(line.subjectName, "프리랜서 강의료");
-  assert.equal(line.treatment, "business");
-  assert.equal(line.insuranceCovered, false);
+  assert.equal(lines.length, 2);
+  assert.equal(payroll.grossByTreatment.employee, 3000000);
+  assert.equal(payroll.grossByTreatment.business, 700000);
+  assert.equal(payroll.insuredBase, 3000000);
+  assert.equal(payroll.deductions.businessIncomeTax, 21000);
+});
+
+test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 계산한다", () => {
+  const teacher = { id: "t2", insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: 0 };
+  const lines = createMonthlyEarningLines(teacher, "2026-08", { employeeGrossPay: 0, businessGrossPay: 1800000 });
+  const payroll = calculatePayroll(lines, demoPolicy);
+
+  assert.equal(lines[0].subjectName, "월 사업소득");
+  assert.equal(lines[0].treatment, "business");
+  assert.equal(lines[0].insuranceCovered, false);
   assert.equal(payroll.grossByTreatment.business, 1800000);
   assert.equal(payroll.insuredBase, 0);
   assert.equal(payroll.deductions.businessIncomeTax, 54000);
 });
 
-test("월 지급액을 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
-  const teacher = { id: "t3", employmentType: "insured", baseMonthlyPay: 3000000 };
-  assert.equal(createMonthlyEarningLine(teacher, "2026-08", { grossPay: 0 }), null);
+test("근로소득과 사업소득을 모두 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
+  const teacher = { id: "t3", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 500000 };
+  assert.deepEqual(createMonthlyEarningLines(teacher, "2026-08", { employeeGrossPay: 0, businessGrossPay: 0 }), []);
 });
 
-test("유형을 선택하지 않은 기존 선생님은 임의로 계산하지 않는다", () => {
-  const teacher = { id: "legacy", baseMonthlyPay: 3000000 };
-  assert.equal(createMonthlyEarningLine(teacher, "2026-08"), null);
+test("기존 유형과 월 지급액 필드는 새 급여 구성으로 호환해 읽는다", () => {
+  const insured = { id: "legacy-insured", employmentType: "insured", baseMonthlyPay: 3000000 };
+  const freelancer = { id: "legacy-freelancer", employmentType: "freelancer", baseMonthlyPay: 1800000 };
+
+  assert.deepEqual(getTeacherPaySettings(insured), {
+    insuranceEnrolled: true,
+    defaultEmployeePay: 3000000,
+    defaultBusinessPay: 0,
+    source: "legacy"
+  });
+  assert.deepEqual(getMonthlyPayAmounts(freelancer, { grossPay: 2000000 }), {
+    employeeGrossPay: 0,
+    businessGrossPay: 2000000,
+    source: "legacy-monthly-input"
+  });
 });
 
 test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {

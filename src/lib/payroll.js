@@ -5,12 +5,6 @@ export const TREATMENT_LABELS = {
   exempt: "공제 없음"
 };
 
-export const EMPLOYMENT_TYPE_LABELS = {
-  insured: "4대보험 가입자",
-  freelancer: "프리랜서",
-  unassigned: "유형 미설정"
-};
-
 const won = (value) => Math.round(Number(value) || 0);
 const floorWon = (value) => Math.floor(Math.max(0, Number(value) || 0));
 const floorTenWon = (value) => Math.floor(Math.max(0, Number(value) || 0) / 10) * 10;
@@ -21,30 +15,101 @@ export function calculateEarning(entry) {
   return won(quantity * rate + Number(entry.adjustment || 0));
 }
 
-export function createMonthlyEarningLine(teacher, month, override = {}) {
-  const employmentType = ["insured", "freelancer"].includes(teacher?.employmentType)
-    ? teacher.employmentType
-    : null;
-  if (!employmentType) return null;
-  const defaultPay = Math.max(0, won(teacher?.baseMonthlyPay));
-  const grossPay = override.grossPay == null
-    ? defaultPay
-    : Math.max(0, won(override.grossPay));
-  if (!grossPay) return null;
+export function getTeacherPaySettings(teacher = {}) {
+  const hasCurrentFields = teacher.insuranceEnrolled != null
+    || teacher.defaultEmployeePay != null
+    || teacher.defaultBusinessPay != null;
+  if (hasCurrentFields) {
+    return {
+      insuranceEnrolled: teacher.insuranceEnrolled === true,
+      defaultEmployeePay: Math.max(0, won(teacher.defaultEmployeePay)),
+      defaultBusinessPay: Math.max(0, won(teacher.defaultBusinessPay)),
+      source: "current"
+    };
+  }
+
+  const legacyPay = Math.max(0, won(teacher.baseMonthlyPay));
+  if (teacher.employmentType === "insured") {
+    return { insuranceEnrolled: true, defaultEmployeePay: legacyPay, defaultBusinessPay: 0, source: "legacy" };
+  }
+  if (teacher.employmentType === "freelancer") {
+    return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: legacyPay, source: "legacy" };
+  }
+  return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: 0, source: "unset" };
+}
+
+export function getMonthlyPayAmounts(teacher, override = {}) {
+  const settings = getTeacherPaySettings(teacher);
+  const hasCurrentOverride = override.employeeGrossPay != null || override.businessGrossPay != null;
+  if (hasCurrentOverride) {
+    return {
+      employeeGrossPay: override.employeeGrossPay == null
+        ? settings.defaultEmployeePay
+        : Math.max(0, won(override.employeeGrossPay)),
+      businessGrossPay: override.businessGrossPay == null
+        ? settings.defaultBusinessPay
+        : Math.max(0, won(override.businessGrossPay)),
+      source: "monthly-input"
+    };
+  }
+
+  if (override.grossPay != null) {
+    const legacyPay = Math.max(0, won(override.grossPay));
+    if (teacher?.employmentType === "insured") {
+      return { employeeGrossPay: legacyPay, businessGrossPay: settings.defaultBusinessPay, source: "legacy-monthly-input" };
+    }
+    if (teacher?.employmentType === "freelancer") {
+      return { employeeGrossPay: settings.defaultEmployeePay, businessGrossPay: legacyPay, source: "legacy-monthly-input" };
+    }
+  }
 
   return {
-    id: `${month}_${teacher.id}_monthly-pay`,
-    month,
-    teacherId: teacher.id,
-    kind: "monthly",
-    subjectName: employmentType === "insured" ? "월 기본급" : "프리랜서 강의료",
-    hours: 1,
-    hourlyRate: grossPay,
-    treatment: employmentType === "insured" ? "employee" : "business",
-    insuranceCovered: employmentType === "insured",
-    note: override.grossPayNote || null,
-    source: override.grossPay == null ? "teacher-default" : "monthly-input"
+    employeeGrossPay: settings.defaultEmployeePay,
+    businessGrossPay: settings.defaultBusinessPay,
+    source: settings.source === "unset" ? "unset" : "teacher-default"
   };
+}
+
+export function createMonthlyEarningLines(teacher, month, override = {}) {
+  const settings = getTeacherPaySettings(teacher);
+  const amounts = getMonthlyPayAmounts(teacher, override);
+  const lines = [];
+
+  if (amounts.employeeGrossPay > 0) {
+    lines.push({
+      id: `${month}_${teacher.id}_employee-pay`,
+      month,
+      teacherId: teacher.id,
+      kind: "monthly",
+      subjectName: "월 근로소득",
+      hours: 1,
+      hourlyRate: amounts.employeeGrossPay,
+      treatment: "employee",
+      insuranceCovered: settings.insuranceEnrolled,
+      note: override.grossPayNote || null,
+      source: amounts.source
+    });
+  }
+  if (amounts.businessGrossPay > 0) {
+    lines.push({
+      id: `${month}_${teacher.id}_business-pay`,
+      month,
+      teacherId: teacher.id,
+      kind: "monthly",
+      subjectName: "월 사업소득",
+      hours: 1,
+      hourlyRate: amounts.businessGrossPay,
+      treatment: "business",
+      insuranceCovered: false,
+      note: override.grossPayNote || null,
+      source: amounts.source
+    });
+  }
+  return lines;
+}
+
+export function createMonthlyEarningLine(teacher, month, override = {}) {
+  return createMonthlyEarningLines(teacher, month, override)[0] || null;
 }
 
 export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfile = {}) {

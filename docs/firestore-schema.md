@@ -44,8 +44,9 @@
   "name": "성명",
   "email": "이메일",
   "status": "active",
-  "employmentType": "insured | freelancer",
-  "baseMonthlyPay": 3000000,
+  "insuranceEnrolled": true,
+  "defaultEmployeePay": 3000000,
+  "defaultBusinessPay": 700000,
   "subjects": ["고등 수학", "논술"],
   "paymentDay": 10,
   "contractSummary": "화면 표시용 요약",
@@ -59,7 +60,7 @@
 
 계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. 추후 꼭 필요하다면 별도 암호화·마스킹·열람 감사 설계를 먼저 해야 합니다.
 
-`insured`는 4대보험 가입자로 근로소득과 보험 적용, `freelancer`는 사업소득과 보험 미적용으로 계산합니다. `baseMonthlyPay`는 수업 여부와 관계없이 매월 기본으로 불러오는 선생님별 지급액입니다.
+`insuranceEnrolled`는 4대보험 가입 여부이며 소득 구분과 별개입니다. `defaultEmployeePay`와 `defaultBusinessPay`를 모두 입력하면 같은 선생님의 월 급여에 근로소득과 사업소득 항목이 함께 만들어집니다. 보험은 가입 선생님의 근로소득 부분에만 적용합니다. 기존 `employmentType`과 `baseMonthlyPay` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
 
 ### `accessRequests/{uid}`
 
@@ -149,13 +150,14 @@
 
 ### `payrollOverrides/{yyyy-mm_teacherId}`
 
-선생님별 이번 달 지급액, 변경 메모, 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
+선생님별 이번 달 근로소득·사업소득 지급액, 변경 메모, 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
 
 ```json
 {
   "month": "2026-08",
   "teacherId": "teacherId",
-  "grossPay": 3200000,
+  "employeeGrossPay": 3000000,
+  "businessGrossPay": 700000,
   "grossPayNote": "입사월 일할 계산",
   "employeeNonTaxableAmount": 200000,
   "employeeStudentLoanSupportAmount": 0,
@@ -168,6 +170,8 @@
   "custom": 0
 }
 ```
+
+기존 문서의 `grossPay`는 해당 선생님의 옛 `employmentType`에 따라 근로소득 또는 사업소득 금액으로 자동 변환해 읽습니다. 새 월 지급액을 저장하면 `employeeGrossPay`와 `businessGrossPay`가 우선 적용됩니다.
 
 ### `payrollRuns/{yyyy-mm}`
 

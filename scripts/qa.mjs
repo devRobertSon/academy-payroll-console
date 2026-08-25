@@ -56,12 +56,20 @@ async function checkJavaScriptSyntax() {
 
 async function checkHtmlAssets() {
   const html = await readFile(join(root, "index.html"), "utf8");
+  const css = await readFile(join(root, "styles.css"), "utf8");
   const localReferences = [...html.matchAll(/(?:href|src)="\.\/([^"?#]+)["?#]?/g)].map((match) => match[1]);
   for (const reference of localReferences) {
     if (!(await exists(join(root, reference)))) failures.push(`index.html references a missing file: ${reference}`);
   }
   for (const id of ["login-view", "workspace", "page-content", "modal-root"]) {
     if (!html.includes(`id="${id}"`)) failures.push(`Required application surface is missing: #${id}`);
+  }
+  if (html.includes("급여 자료는 GitHub 저장소가 아닌 Firebase의 접근 제어 영역에 보관됩니다.")) {
+    failures.push("Login page must not expose an infrastructure storage description.");
+  }
+  if (!html.includes("<p>학원 급여 포털</p>")) failures.push("Login page is missing the concise portal label.");
+  if (!css.includes("--login-brand: #2563a6") || !css.includes("background: #173f6b")) {
+    failures.push("Login page must use the blue color treatment.");
   }
 }
 
@@ -215,7 +223,7 @@ async function checkLocalPage() {
     if (rootResponse.status !== 200) failures.push(`Local page returned HTTP ${rootResponse.status}.`);
     if (cssResponse.status !== 200) failures.push(`Local stylesheet returned HTTP ${cssResponse.status}.`);
     if (appResponse.status !== 200) failures.push(`Local application script returned HTTP ${appResponse.status}.`);
-    if (!(await rootResponse.text()).includes("Academy Payroll Console")) failures.push("Local page is missing the application title.");
+    if (!(await rootResponse.text()).includes("학원 급여 포털")) failures.push("Local page is missing the application title.");
   } finally {
     server.kill();
   }

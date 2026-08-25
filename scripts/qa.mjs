@@ -16,6 +16,7 @@ await checkDeliverySecurity();
 await checkLifecycleSecurity();
 await checkTeacherMonthlyPayroll();
 await checkHelpAssistantSafety();
+await checkAuthenticationCompatibility();
 if (!staticOnly) await checkLocalPage();
 
 if (failures.length) {
@@ -171,6 +172,19 @@ async function checkHelpAssistantSafety() {
   if (app.includes("askHelpAssistant(state.data")) failures.push("Payroll workspace data must not be passed to the AI assistant.");
 }
 
+async function checkAuthenticationCompatibility() {
+  const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  if (store.includes("signInWithRedirect")) {
+    failures.push("Google sign-in must not use cross-domain redirects on GitHub Pages.");
+  }
+  if (!store.includes("signInWithPopup")) {
+    failures.push("Google sign-in must use the GitHub Pages-compatible popup flow.");
+  }
+  for (const errorCode of ["auth/popup-blocked", "auth/operation-not-supported-in-this-environment"]) {
+    if (!store.includes(errorCode)) failures.push(`Google sign-in guidance is missing: ${errorCode}`);
+  }
+}
+
 async function checkLocalPage() {
   const port = await reservePort();
   const server = spawn(process.execPath, [join(root, "scripts", "serve.mjs")], {
@@ -237,3 +251,4 @@ async function exists(path) {
     return false;
   }
 }
+

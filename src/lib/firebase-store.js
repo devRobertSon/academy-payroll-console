@@ -67,12 +67,21 @@ export async function createFirebaseStore(config) {
   async function signIn() {
     const provider = new authSdk.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
-    if (window.matchMedia("(max-width: 760px)").matches) {
-      await authSdk.signInWithRedirect(auth, provider);
-      return null;
+    try {
+      const credential = await authSdk.signInWithPopup(auth, provider);
+      return sessionFromUser(credential.user);
+    } catch (error) {
+      if (error.code === "auth/popup-blocked") {
+        throw new Error("Google 로그인 창이 차단되었습니다. 팝업을 허용한 뒤 다시 시도해 주세요.");
+      }
+      if (["auth/popup-closed-by-user", "auth/cancelled-popup-request"].includes(error.code)) {
+        throw new Error("Google 로그인이 취소되었습니다. 다시 로그인해 주세요.");
+      }
+      if (["auth/operation-not-supported-in-this-environment", "auth/web-storage-unsupported"].includes(error.code)) {
+        throw new Error("이 브라우저에서는 Google 로그인을 사용할 수 없습니다. Safari 또는 Chrome에서 링크를 직접 열어 주세요.");
+      }
+      throw error;
     }
-    const credential = await authSdk.signInWithPopup(auth, provider);
-    return sessionFromUser(credential.user);
   }
 
   async function restoreSession() {

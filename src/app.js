@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-copy-r4";
-import { helpArticles } from "./data/help-content.js?v=20260826-copy-r4";
+import { appConfig } from "./config.js?v=20260826-ledger-r5";
+import { helpArticles } from "./data/help-content.js?v=20260826-ledger-r5";
 import {
   demoAccessRequests,
   demoEntries,
@@ -9,13 +9,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-copy-r4";
+} from "./data/demo-data.js?v=20260826-ledger-r5";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-copy-r4";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-copy-r4";
+} from "./data/nts-tax-policy.js?v=20260826-ledger-r5";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-ledger-r5";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -40,15 +40,15 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-copy-r4";
+} from "./lib/payroll.js?v=20260826-ledger-r5";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-copy-r4";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-ledger-r5";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-copy-r4";
+} from "./lib/teacher-self-service.js?v=20260826-ledger-r5";
 
 const state = {
   user: null,
@@ -494,7 +494,6 @@ function renderLedger() {
     <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" /></div>
     <section class="content-section"><div class="section-heading"><div><h2>${e(appConfig.academyName)} 급여내역서</h2><p>기장 전달용 · ${formatMonth(state.month)}</p></div></div>
     <div class="data-surface table-scroll">${ledgerTable(payrolls, summary)}</div></section>
-    <div class="notice warning"><i data-lucide="shield-alert"></i><span>CSV 파일에는 급여, 연락처와 생년월일·성별번호가 포함됩니다. 전체 주민등록번호는 포함되지 않지만 개인정보이므로 공개 저장소나 개인 메일에 올리지 마세요.</span></div>
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='print']").addEventListener("click", () => window.print());

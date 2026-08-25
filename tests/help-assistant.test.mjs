@@ -23,9 +23,8 @@ test("개인정보가 포함된 질문에는 로컬에서도 삭제 안내를 �
 });
 
 test("Gemini 프롬프트에는 현재 화면과 관련 설명서만 포함한다", () => {
-  const prompt = buildGeminiPrompt("CSV 업로드 방법", helpArticles, "수업 내역");
-  assert.match(prompt, /현재 화면: 수업 내역/);
-  assert.match(prompt, /수업 내역 입력과 CSV 업로드/);
+  const prompt = buildGeminiPrompt("이번 달 지급액 수정 방법", helpArticles, "월 급여 입력");
+  assert.match(prompt, /현재 화면: 월 급여 입력/);
+  assert.match(prompt, /선생님별 월 급여 입력/);
   assert.doesNotMatch(prompt, /teacher@example.com/);
 });
-

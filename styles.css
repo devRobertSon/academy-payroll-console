@@ -260,9 +260,9 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .payslip-title h2 { margin: 0 0 6px; font-size: 24px; }
 .payslip-title p { margin: 0; color: var(--muted); font-size: 11px; }
 .payslip-title .brand-mark { flex: 0 0 auto; }
-.payslip-summary { display: grid; grid-template-columns: 1fr 1fr; margin: 24px 0; border: 1px solid var(--line); }
+.payslip-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin: 24px 0; border: 1px solid var(--line); }
 .payslip-summary > div { padding: 15px; }
-.payslip-summary > div:first-child { border-right: 1px solid var(--line); }
+.payslip-summary > div + div { border-left: 1px solid var(--line); }
 .payslip-summary span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
 .payslip-summary strong { font-size: 15px; }
 .payslip-sheet h3 { margin: 24px 0 10px; font-size: 12px; }
@@ -344,6 +344,8 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .progress-strip { grid-template-columns: 1fr; }
   .payslip-sheet { padding: 22px 16px; }
   .payslip-title h2 { font-size: 20px; }
+  .payslip-summary { grid-template-columns: 1fr; }
+  .payslip-summary > div + div { border-top: 1px solid var(--line); border-left: 0; }
   .delivery-summary { grid-template-columns: 1fr; }
   .delivery-summary > div + div { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
   .email-fallback { align-items: stretch; flex-direction: column; }
@@ -361,4 +363,3 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .payslip-layout { display: block; }
   .payslip-sheet { min-height: 0; border: 0; box-shadow: none; }
 }
-

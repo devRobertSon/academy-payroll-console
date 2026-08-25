@@ -14,6 +14,7 @@ await checkHtmlAssets();
 await checkRepositorySafety();
 await checkDeliverySecurity();
 await checkLifecycleSecurity();
+await checkTeacherMonthlyPayroll();
 await checkHelpAssistantSafety();
 if (!staticOnly) await checkLocalPage();
 
@@ -129,6 +130,24 @@ async function checkLifecycleSecurity() {
   }
 }
 
+async function checkTeacherMonthlyPayroll() {
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
+  const payroll = await readFile(join(root, "src", "lib", "payroll.js"), "utf8");
+  const tests = await readFile(join(root, "tests", "payroll.test.mjs"), "utf8");
+  const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
+
+  for (const field of ["employmentType", "baseMonthlyPay", "grossPay"]) {
+    if (!app.includes(field)) failures.push(`Teacher monthly payroll field is missing: ${field}`);
+  }
+  if (!app.includes('["업무", "payrollInputs"')) failures.push("Monthly payroll input navigation is missing.");
+  if (adminNav.includes('"entries"') || adminNav.includes('"rates"')) {
+    failures.push("Legacy class and hourly-rate pages must not be in the admin navigation.");
+  }
+  if (!payroll.includes("createMonthlyEarningLine") || !tests.includes("수업이 없어도")) {
+    failures.push("Monthly salary calculation must cover insured teachers without classes.");
+  }
+}
+
 async function checkHelpAssistantSafety() {
   const html = await readFile(join(root, "index.html"), "utf8");
   const app = await readFile(join(root, "src", "app.js"), "utf8");
@@ -218,4 +237,3 @@ async function exists(path) {
     return false;
   }
 }
-

@@ -40,8 +40,10 @@ export const demoTeachers = [
     name: "김강사",
     email: "teacher01@example.invalid",
     status: "active",
+    employmentType: "insured",
+    baseMonthlyPay: 3200000,
     subjects: ["초등 수학", "중등 수학"],
-    contractSummary: "근로소득 · 4대보험 적용",
+    contractSummary: "정규 월급제",
     paymentDay: 10,
     taxProfile: { dependentCount: 2, children8To20: 0, withholdingRatio: 1 }
   },
@@ -51,8 +53,10 @@ export const demoTeachers = [
     name: "박강사",
     email: "teacher02@example.invalid",
     status: "active",
+    employmentType: "freelancer",
+    baseMonthlyPay: 2160000,
     subjects: ["중등 영어"],
-    contractSummary: "사업소득 · 원천징수",
+    contractSummary: "프리랜서 월 지급",
     paymentDay: 10,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   },
@@ -62,8 +66,10 @@ export const demoTeachers = [
     name: "이강사",
     email: "teacher03@example.invalid",
     status: "active",
+    employmentType: "insured",
+    baseMonthlyPay: 3000000,
     subjects: ["고등 수학", "논술 특강"],
-    contractSummary: "혼합 · 수업별 소득 구분",
+    contractSummary: "정규 월급제",
     paymentDay: 12,
     taxProfile: { dependentCount: 4, children8To20: 2, withholdingRatio: 1 }
   },
@@ -73,8 +79,10 @@ export const demoTeachers = [
     name: "최강사",
     email: "teacher04@example.invalid",
     status: "active",
+    employmentType: "freelancer",
+    baseMonthlyPay: 1200000,
     subjects: ["과학 실험"],
-    contractSummary: "공제 없음 · 수동 검토",
+    contractSummary: "프리랜서 월 지급",
     paymentDay: 12,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   },
@@ -84,6 +92,8 @@ export const demoTeachers = [
     name: "정강사",
     email: "teacher05@example.invalid",
     status: "active",
+    employmentType: "freelancer",
+    baseMonthlyPay: 0,
     subjects: ["중등 과학"],
     contractSummary: "계정 연결 대기",
     paymentDay: 10,
@@ -132,7 +142,15 @@ export const demoPayrollRuns = [
   { month: "2026-06", status: "published", publishedAt: "2026-07-08T08:30:00Z" }
 ];
 
-export const demoOverrides = {};
+export const demoOverrides = {
+  "2026-08:teacher-02": {
+    id: "2026-08_teacher-02",
+    month: "2026-08",
+    teacherId: "teacher-02",
+    grossPay: 2250000,
+    grossPayNote: "월 지급액 조정"
+  }
+};
 
 function monthEntries(month, rows) {
   return rows.map((row, index) => ({

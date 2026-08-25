@@ -44,6 +44,8 @@
   "name": "성명",
   "email": "이메일",
   "status": "active",
+  "employmentType": "insured | freelancer",
+  "baseMonthlyPay": 3000000,
   "subjects": ["고등 수학", "논술"],
   "paymentDay": 10,
   "contractSummary": "화면 표시용 요약",
@@ -56,6 +58,8 @@
 ```
 
 계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. 추후 꼭 필요하다면 별도 암호화·마스킹·열람 감사 설계를 먼저 해야 합니다.
+
+`insured`는 4대보험 가입자로 근로소득과 보험 적용, `freelancer`는 사업소득과 보험 미적용으로 계산합니다. `baseMonthlyPay`는 수업 여부와 관계없이 매월 기본으로 불러오는 선생님별 지급액입니다.
 
 ### `accessRequests/{uid}`
 
@@ -76,6 +80,8 @@
 
 ### `rateRules/{ruleId}`
 
+레거시 수업별 계산 기록입니다. 기존 데이터 보존을 위해 유지하지만 새 월 급여 계산에서는 사용하지 않습니다.
+
 ```json
 {
   "teacherId": "teacherId",
@@ -92,6 +98,8 @@
 ```
 
 ### `workEntries/{entryId}`
+
+레거시 수업 내역 기록입니다. 기존 데이터 보존을 위해 유지하지만 새 월 급여 계산에서는 사용하지 않습니다.
 
 ```json
 {
@@ -141,12 +149,14 @@
 
 ### `payrollOverrides/{yyyy-mm_teacherId}`
 
-월별 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
+선생님별 이번 달 지급액, 변경 메모, 근로소득 비과세액·학자금 지원액과 관리자가 확인한 수동 공제액을 저장합니다. 수동값이 `null`이면 해당 정책으로 자동 계산합니다.
 
 ```json
 {
   "month": "2026-08",
   "teacherId": "teacherId",
+  "grossPay": 3200000,
+  "grossPayNote": "입사월 일할 계산",
   "employeeNonTaxableAmount": 200000,
   "employeeStudentLoanSupportAmount": 0,
   "employeeIncomeTax": null,

@@ -5,6 +5,12 @@ export const TREATMENT_LABELS = {
   exempt: "공제 없음"
 };
 
+export const EMPLOYMENT_TYPE_LABELS = {
+  insured: "4대보험 가입자",
+  freelancer: "프리랜서",
+  unassigned: "유형 미설정"
+};
+
 const won = (value) => Math.round(Number(value) || 0);
 const floorWon = (value) => Math.floor(Math.max(0, Number(value) || 0));
 const floorTenWon = (value) => Math.floor(Math.max(0, Number(value) || 0) / 10) * 10;
@@ -13,6 +19,32 @@ export function calculateEarning(entry) {
   const quantity = Number(entry.hours ?? entry.quantity ?? 0);
   const rate = Number(entry.hourlyRate ?? entry.unitRate ?? 0);
   return won(quantity * rate + Number(entry.adjustment || 0));
+}
+
+export function createMonthlyEarningLine(teacher, month, override = {}) {
+  const employmentType = ["insured", "freelancer"].includes(teacher?.employmentType)
+    ? teacher.employmentType
+    : null;
+  if (!employmentType) return null;
+  const defaultPay = Math.max(0, won(teacher?.baseMonthlyPay));
+  const grossPay = override.grossPay == null
+    ? defaultPay
+    : Math.max(0, won(override.grossPay));
+  if (!grossPay) return null;
+
+  return {
+    id: `${month}_${teacher.id}_monthly-pay`,
+    month,
+    teacherId: teacher.id,
+    kind: "monthly",
+    subjectName: employmentType === "insured" ? "월 기본급" : "프리랜서 강의료",
+    hours: 1,
+    hourlyRate: grossPay,
+    treatment: employmentType === "insured" ? "employee" : "business",
+    insuranceCovered: employmentType === "insured",
+    note: override.grossPayNote || null,
+    source: override.grossPay == null ? "teacher-default" : "monthly-input"
+  };
 }
 
 export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfile = {}) {
@@ -280,4 +312,3 @@ export function resolveRateRule(rules, entry) {
 function specificity(rule) {
   return Number(Boolean(rule.teacherId)) + Number(Boolean(rule.subjectId)) + Number(Boolean(rule.classId));
 }
-

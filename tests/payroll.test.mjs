@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   calculateEmploymentIncomeTax,
   calculatePayroll,
+  createMonthlyEarningLine,
   parseEmploymentTaxTableRows,
   resolveEffectivePolicy,
   resolveRateRule,
@@ -49,6 +50,41 @@ test("보험 미적용 근로소득은 보험 기준액에 포함하지 않는�
   assert.equal(payroll.deductions.nationalPension, 0);
   assert.equal(payroll.deductions.healthInsurance, 0);
   assert.equal(payroll.deductions.employmentInsurance, 0);
+});
+
+test("4대보험 가입자는 수업이 없어도 선생님 기본 월급으로 계산한다", () => {
+  const teacher = { id: "t1", employmentType: "insured", baseMonthlyPay: 3000000 };
+  const line = createMonthlyEarningLine(teacher, "2026-08");
+  const payroll = calculatePayroll([line], demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
+
+  assert.equal(line.subjectName, "월 기본급");
+  assert.equal(line.treatment, "employee");
+  assert.equal(line.insuranceCovered, true);
+  assert.equal(payroll.gross, 3000000);
+  assert.equal(payroll.insuredBase, 3000000);
+});
+
+test("프리랜서는 선생님별 월 지급액을 사업소득으로 계산한다", () => {
+  const teacher = { id: "t2", employmentType: "freelancer", baseMonthlyPay: 0 };
+  const line = createMonthlyEarningLine(teacher, "2026-08", { grossPay: 1800000 });
+  const payroll = calculatePayroll([line], demoPolicy);
+
+  assert.equal(line.subjectName, "프리랜서 강의료");
+  assert.equal(line.treatment, "business");
+  assert.equal(line.insuranceCovered, false);
+  assert.equal(payroll.grossByTreatment.business, 1800000);
+  assert.equal(payroll.insuredBase, 0);
+  assert.equal(payroll.deductions.businessIncomeTax, 54000);
+});
+
+test("월 지급액을 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
+  const teacher = { id: "t3", employmentType: "insured", baseMonthlyPay: 3000000 };
+  assert.equal(createMonthlyEarningLine(teacher, "2026-08", { grossPay: 0 }), null);
+});
+
+test("유형을 선택하지 않은 기존 선생님은 임의로 계산하지 않는다", () => {
+  const teacher = { id: "legacy", baseMonthlyPay: 3000000 };
+  assert.equal(createMonthlyEarningLine(teacher, "2026-08"), null);
 });
 
 test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {
@@ -195,4 +231,3 @@ test("간이세액표 CSV는 연속 구간과 1천만원 기준 행을 검증한
   assert.equal(parsed.tableRows.length, 1);
   assert.equal(parsed.taxAtTenMillion[10], 10);
 });
-

@@ -50,7 +50,7 @@ AI 도움말에 보내도 되는 내용:
 
 - 메뉴 위치와 버튼 사용법
 - 선생님 등록 절차
-- CSV 업로드 형식
+- 선생님 유형과 월 지급액 입력 방법
 - 명세서 확정·취소·다운로드·이메일 절차
 - 일반적인 오류 해결 방법
 
@@ -86,4 +86,3 @@ Gemini Developer API 무료 등급에서는 입력 내용이 Google 제품 개�
 - [지원되는 모델](https://firebase.google.com/docs/ai-logic/models?hl=ko)
 - [프로덕션 체크리스트](https://firebase.google.com/docs/ai-logic/production-checklist)
 - [요금 안내](https://firebase.google.com/docs/ai-logic/pricing)
-

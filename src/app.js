@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-self-service-r2";
-import { helpArticles } from "./data/help-content.js?v=20260826-self-service-r2";
+import { appConfig } from "./config.js?v=20260826-copy-r3";
+import { helpArticles } from "./data/help-content.js?v=20260826-copy-r3";
 import {
   demoAccessRequests,
   demoEntries,
@@ -9,13 +9,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-self-service-r2";
+} from "./data/demo-data.js?v=20260826-copy-r3";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-self-service-r2";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-self-service-r2";
+} from "./data/nts-tax-policy.js?v=20260826-copy-r3";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-copy-r3";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -40,15 +40,15 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-self-service-r2";
+} from "./lib/payroll.js?v=20260826-copy-r3";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-self-service-r2";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-copy-r3";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-self-service-r2";
+} from "./lib/teacher-self-service.js?v=20260826-copy-r3";
 
 const state = {
   user: null,
@@ -369,7 +369,7 @@ function renderPayrollInputs() {
     <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득은 월급으로, 사업소득은 과목별 시급 × 수업 시수로 계산한 뒤 3.3%를 원천징수합니다. 한 선생님에게 두 소득을 함께 적용할 수 있습니다."}</span></div>
     <section class="content-section">
       <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·수업료·교통비·주차료·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">사업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통·주차·기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
+      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통·주차·기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
         ${teachers.map((teacher) => {
           const override = state.data.overrides[`${state.month}:${teacher.id}`];
           const settings = teacherPaySettings(teacher);

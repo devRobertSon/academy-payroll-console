@@ -294,6 +294,24 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .form-field textarea { min-height: 90px; resize: vertical; }
 .form-field textarea[spellcheck="false"] { min-height: 180px; font-family: Consolas, "Courier New", monospace; font-size: 10px; line-height: 1.5; }
 .form-help { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.editor-heading { display: flex; align-items: center; gap: 12px; }
+.editor-heading > label { margin-right: auto; }
+.business-line-editor { display: grid; gap: 8px; }
+.business-line-row { display: grid; align-items: center; gap: 8px; }
+.business-line-row.rate-row { grid-template-columns: minmax(150px, 1.4fr) minmax(160px, 1fr) 36px; }
+.business-line-row.work-row { grid-template-columns: minmax(130px, 1.35fr) minmax(130px, 1fr) minmax(105px, .8fr) 90px 36px; }
+.business-line-row > input, .business-line-row .input-suffix { min-width: 0; }
+.business-line-row .icon-button { width: 36px; height: 36px; color: var(--muted); }
+.input-suffix { display: flex; align-items: center; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
+.form-field .input-suffix input { min-width: 0; min-height: 38px; border: 0; }
+.input-suffix span { flex: 0 0 auto; padding-right: 9px; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.business-line-amount { text-align: right; font-size: 11px; white-space: nowrap; }
+.business-work-summary { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.business-work-summary > div { padding: 10px 8px; }
+.business-work-summary > div + div { border-left: 1px solid var(--line); }
+.business-work-summary span, .business-work-summary strong { display: block; }
+.business-work-summary span { margin-bottom: 4px; color: var(--muted); font-size: 9px; }
+.business-work-summary strong { font-size: 11px; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 .checkbox-row input { width: 16px; height: 16px; accent-color: var(--brand); }
 .toast-root { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 200; }
@@ -342,6 +360,13 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .metric:last-child { border-bottom: 0; }
   .demo-actions, .form-grid { grid-template-columns: 1fr; }
   .form-field.full { grid-column: auto; }
+  .business-line-row.rate-row, .business-line-row.work-row { grid-template-columns: 1fr 36px; }
+  .business-line-row > input, .business-line-row .input-suffix, .business-line-row .business-line-amount { grid-column: 1; }
+  .business-line-row .icon-button { grid-column: 2; grid-row: 1; }
+  .business-line-amount { text-align: left; }
+  .business-work-summary { grid-template-columns: 1fr 1fr; }
+  .business-work-summary > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
+  .business-work-summary > div:nth-child(4) { border-top: 1px solid var(--line); }
   .progress-strip { grid-template-columns: 1fr; }
   .payslip-sheet { padding: 22px 16px; }
   .payslip-title h2 { font-size: 20px; }

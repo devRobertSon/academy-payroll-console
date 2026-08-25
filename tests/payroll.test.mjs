@@ -67,8 +67,10 @@ test("4대보험 가입자는 수업이 없어도 선생님 기본 월급으로 
 });
 
 test("4대보험 가입 선생님에게 근로소득과 사업소득을 함께 계산한다", () => {
-  const teacher = { id: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 700000 };
-  const lines = createMonthlyEarningLines(teacher, "2026-08");
+  const teacher = { id: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, businessRates: [{ id: "essay", subjectName: "논술 특강", hourlyRate: 70000 }] };
+  const lines = createMonthlyEarningLines(teacher, "2026-08", {
+    businessWorkLines: [{ rateId: "essay", subjectName: "논술 특강", hourlyRate: 70000, hours: 10 }]
+  });
   const payroll = calculatePayroll(lines, demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
 
   assert.equal(lines.length, 2);
@@ -76,14 +78,19 @@ test("4대보험 가입 선생님에게 근로소득과 사업소득을 함께 �
   assert.equal(payroll.grossByTreatment.business, 700000);
   assert.equal(payroll.insuredBase, 3000000);
   assert.equal(payroll.deductions.businessIncomeTax, 21000);
+  assert.equal(lines[1].hours, 10);
+  assert.equal(lines[1].hourlyRate, 70000);
 });
 
 test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 계산한다", () => {
-  const teacher = { id: "t2", insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: 0 };
-  const lines = createMonthlyEarningLines(teacher, "2026-08", { employeeGrossPay: 0, businessGrossPay: 1800000 });
+  const teacher = { id: "t2", insuranceEnrolled: false, defaultEmployeePay: 0, businessRates: [{ id: "english", subjectName: "중등 영어", hourlyRate: 45000 }] };
+  const lines = createMonthlyEarningLines(teacher, "2026-08", {
+    employeeGrossPay: 0,
+    businessWorkLines: [{ rateId: "english", subjectName: "중등 영어", hourlyRate: 45000, hours: 40 }]
+  });
   const payroll = calculatePayroll(lines, demoPolicy);
 
-  assert.equal(lines[0].subjectName, "월 사업소득");
+  assert.equal(lines[0].subjectName, "중등 영어");
   assert.equal(lines[0].treatment, "business");
   assert.equal(lines[0].insuranceCovered, false);
   assert.equal(payroll.grossByTreatment.business, 1800000);
@@ -92,8 +99,28 @@ test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 �
 });
 
 test("근로소득과 사업소득을 모두 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
-  const teacher = { id: "t3", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 500000 };
-  assert.deepEqual(createMonthlyEarningLines(teacher, "2026-08", { employeeGrossPay: 0, businessGrossPay: 0 }), []);
+  const teacher = { id: "t3", insuranceEnrolled: true, defaultEmployeePay: 3000000, businessRates: [{ id: "math", subjectName: "수학", hourlyRate: 50000 }] };
+  assert.deepEqual(createMonthlyEarningLines(teacher, "2026-08", {
+    employeeGrossPay: 0,
+    businessWorkLines: [{ rateId: "math", subjectName: "수학", hourlyRate: 50000, hours: 0 }]
+  }), []);
+});
+
+test("사업소득은 과목별 시급과 수업 시수를 곱해 합산하고 3.3%를 공제한다", () => {
+  const teacher = { id: "subjects", insuranceEnrolled: false, defaultEmployeePay: 0, businessRates: [] };
+  const lines = createMonthlyEarningLines(teacher, "2026-08", {
+    businessWorkLines: [
+      { subjectName: "중등 수학", hourlyRate: 50000, hours: 10 },
+      { subjectName: "고등 수학", hourlyRate: 70000, hours: 2 }
+    ]
+  });
+  const payroll = calculatePayroll(lines, demoPolicy);
+
+  assert.equal(lines.length, 2);
+  assert.equal(payroll.grossByTreatment.business, 640000);
+  assert.equal(payroll.deductions.businessIncomeTax, 19200);
+  assert.equal(payroll.deductions.businessLocalTax, 1920);
+  assert.equal(payroll.net, 618880);
 });
 
 test("기존 유형과 월 지급액 필드는 새 급여 구성으로 호환해 읽는다", () => {
@@ -104,11 +131,14 @@ test("기존 유형과 월 지급액 필드는 새 급여 구성으로 호환해
     insuranceEnrolled: true,
     defaultEmployeePay: 3000000,
     defaultBusinessPay: 0,
+    businessRates: [],
     source: "legacy"
   });
   assert.deepEqual(getMonthlyPayAmounts(freelancer, { grossPay: 2000000 }), {
     employeeGrossPay: 0,
     businessGrossPay: 2000000,
+    businessHours: 0,
+    businessWorkLines: [],
     source: "legacy-monthly-input"
   });
 });

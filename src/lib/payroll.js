@@ -18,28 +18,42 @@ export function calculateEarning(entry) {
 export function getTeacherPaySettings(teacher = {}) {
   const hasCurrentFields = teacher.insuranceEnrolled != null
     || teacher.defaultEmployeePay != null
-    || teacher.defaultBusinessPay != null;
+    || teacher.defaultBusinessPay != null
+    || Array.isArray(teacher.businessRates);
   if (hasCurrentFields) {
     return {
       insuranceEnrolled: teacher.insuranceEnrolled === true,
       defaultEmployeePay: Math.max(0, won(teacher.defaultEmployeePay)),
       defaultBusinessPay: Math.max(0, won(teacher.defaultBusinessPay)),
+      businessRates: normalizeBusinessRates(teacher.businessRates),
       source: "current"
     };
   }
 
   const legacyPay = Math.max(0, won(teacher.baseMonthlyPay));
   if (teacher.employmentType === "insured") {
-    return { insuranceEnrolled: true, defaultEmployeePay: legacyPay, defaultBusinessPay: 0, source: "legacy" };
+    return { insuranceEnrolled: true, defaultEmployeePay: legacyPay, defaultBusinessPay: 0, businessRates: [], source: "legacy" };
   }
   if (teacher.employmentType === "freelancer") {
-    return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: legacyPay, source: "legacy" };
+    return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: legacyPay, businessRates: [], source: "legacy" };
   }
-  return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: 0, source: "unset" };
+  return { insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessPay: 0, businessRates: [], source: "unset" };
 }
 
 export function getMonthlyPayAmounts(teacher, override = {}) {
   const settings = getTeacherPaySettings(teacher);
+  if (Array.isArray(override.businessWorkLines)) {
+    const businessWorkLines = normalizeBusinessWorkLines(override.businessWorkLines);
+    return {
+      employeeGrossPay: override.employeeGrossPay == null
+        ? settings.defaultEmployeePay
+        : Math.max(0, won(override.employeeGrossPay)),
+      businessGrossPay: businessWorkLines.reduce((sum, line) => sum + line.amount, 0),
+      businessHours: businessWorkLines.reduce((sum, line) => sum + line.hours, 0),
+      businessWorkLines,
+      source: "monthly-work-input"
+    };
+  }
   const hasCurrentOverride = override.employeeGrossPay != null || override.businessGrossPay != null;
   if (hasCurrentOverride) {
     return {
@@ -49,6 +63,8 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
       businessGrossPay: override.businessGrossPay == null
         ? settings.defaultBusinessPay
         : Math.max(0, won(override.businessGrossPay)),
+      businessHours: 0,
+      businessWorkLines: [],
       source: "monthly-input"
     };
   }
@@ -56,16 +72,29 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
   if (override.grossPay != null) {
     const legacyPay = Math.max(0, won(override.grossPay));
     if (teacher?.employmentType === "insured") {
-      return { employeeGrossPay: legacyPay, businessGrossPay: settings.defaultBusinessPay, source: "legacy-monthly-input" };
+      return { employeeGrossPay: legacyPay, businessGrossPay: settings.defaultBusinessPay, businessHours: 0, businessWorkLines: [], source: "legacy-monthly-input" };
     }
     if (teacher?.employmentType === "freelancer") {
-      return { employeeGrossPay: settings.defaultEmployeePay, businessGrossPay: legacyPay, source: "legacy-monthly-input" };
+      return { employeeGrossPay: settings.defaultEmployeePay, businessGrossPay: legacyPay, businessHours: 0, businessWorkLines: [], source: "legacy-monthly-input" };
     }
+  }
+
+  if (Array.isArray(teacher?.businessRates)) {
+    const businessWorkLines = settings.businessRates.map((rate) => ({ ...rate, hours: 0, amount: 0 }));
+    return {
+      employeeGrossPay: settings.defaultEmployeePay,
+      businessGrossPay: 0,
+      businessHours: 0,
+      businessWorkLines,
+      source: "teacher-default"
+    };
   }
 
   return {
     employeeGrossPay: settings.defaultEmployeePay,
     businessGrossPay: settings.defaultBusinessPay,
+    businessHours: 0,
+    businessWorkLines: [],
     source: settings.source === "unset" ? "unset" : "teacher-default"
   };
 }
@@ -90,7 +119,21 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       source: amounts.source
     });
   }
-  if (amounts.businessGrossPay > 0) {
+  if (amounts.businessWorkLines.length) {
+    amounts.businessWorkLines.filter((line) => line.amount > 0).forEach((line, index) => lines.push({
+      id: `${month}_${teacher.id}_business-${line.id || index + 1}`,
+      month,
+      teacherId: teacher.id,
+      kind: "hourly-business",
+      subjectName: line.subjectName || "사업소득 강의",
+      hours: line.hours,
+      hourlyRate: line.hourlyRate,
+      treatment: "business",
+      insuranceCovered: false,
+      note: override.grossPayNote || null,
+      source: amounts.source
+    }));
+  } else if (amounts.businessGrossPay > 0) {
     lines.push({
       id: `${month}_${teacher.id}_business-pay`,
       month,
@@ -106,6 +149,29 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
     });
   }
   return lines;
+}
+
+function normalizeBusinessRates(rates) {
+  return (Array.isArray(rates) ? rates : []).map((rate, index) => ({
+    id: String(rate.id || `business-rate-${index + 1}`),
+    subjectName: String(rate.subjectName || "사업소득 강의").trim(),
+    hourlyRate: Math.max(0, won(rate.hourlyRate))
+  })).filter((rate) => rate.subjectName && rate.hourlyRate > 0);
+}
+
+function normalizeBusinessWorkLines(lines) {
+  return (Array.isArray(lines) ? lines : []).map((line, index) => {
+    const hours = Math.max(0, Number(line.hours) || 0);
+    const hourlyRate = Math.max(0, won(line.hourlyRate));
+    return {
+      id: String(line.id || `business-work-${index + 1}`),
+      rateId: line.rateId ? String(line.rateId) : null,
+      subjectName: String(line.subjectName || "사업소득 강의").trim(),
+      hours,
+      hourlyRate,
+      amount: won(hours * hourlyRate)
+    };
+  }).filter((line) => line.subjectName && line.hourlyRate > 0);
 }
 
 export function createMonthlyEarningLine(teacher, month, override = {}) {

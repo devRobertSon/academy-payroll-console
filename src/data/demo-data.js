@@ -43,6 +43,7 @@ export const demoTeachers = [
     insuranceEnrolled: true,
     defaultEmployeePay: 3200000,
     defaultBusinessPay: 0,
+    businessRates: [],
     subjects: ["초등 수학", "중등 수학"],
     contractSummary: "정규 월급제",
     paymentDay: 10,
@@ -56,7 +57,8 @@ export const demoTeachers = [
     status: "active",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
-    defaultBusinessPay: 2160000,
+    defaultBusinessPay: 0,
+    businessRates: [{ id: "business-rate-02", subjectName: "중등 영어", hourlyRate: 45000 }],
     subjects: ["중등 영어"],
     contractSummary: "프리랜서 월 지급",
     paymentDay: 10,
@@ -70,7 +72,8 @@ export const demoTeachers = [
     status: "active",
     insuranceEnrolled: true,
     defaultEmployeePay: 3000000,
-    defaultBusinessPay: 700000,
+    defaultBusinessPay: 0,
+    businessRates: [{ id: "business-rate-03", subjectName: "논술 특강", hourlyRate: 70000 }],
     subjects: ["고등 수학", "논술 특강"],
     contractSummary: "근로소득 + 특강 사업소득",
     paymentDay: 12,
@@ -84,7 +87,8 @@ export const demoTeachers = [
     status: "active",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
-    defaultBusinessPay: 1200000,
+    defaultBusinessPay: 0,
+    businessRates: [{ id: "business-rate-04", subjectName: "과학 실험", hourlyRate: 50000 }],
     subjects: ["과학 실험"],
     contractSummary: "프리랜서 월 지급",
     paymentDay: 12,
@@ -99,6 +103,7 @@ export const demoTeachers = [
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
     defaultBusinessPay: 0,
+    businessRates: [{ id: "business-rate-05", subjectName: "중등 과학", hourlyRate: 50000 }],
     subjects: ["중등 과학"],
     contractSummary: "계정 연결 대기",
     paymentDay: 10,
@@ -147,16 +152,26 @@ export const demoPayrollRuns = [
   { month: "2026-06", status: "published", publishedAt: "2026-07-08T08:30:00Z" }
 ];
 
-export const demoOverrides = {
-  "2026-08:teacher-02": {
-    id: "2026-08_teacher-02",
-    month: "2026-08",
-    teacherId: "teacher-02",
-    employeeGrossPay: 0,
-    businessGrossPay: 2250000,
-    grossPayNote: "월 지급액 조정"
-  }
-};
+export const demoOverrides = Object.fromEntries([
+  ["2026-08", "teacher-02", "business-rate-02", "중등 영어", 45000, 50],
+  ["2026-07", "teacher-02", "business-rate-02", "중등 영어", 45000, 45],
+  ["2026-06", "teacher-02", "business-rate-02", "중등 영어", 45000, 42],
+  ["2026-08", "teacher-03", "business-rate-03", "논술 특강", 70000, 10],
+  ["2026-07", "teacher-03", "business-rate-03", "논술 특강", 70000, 8],
+  ["2026-06", "teacher-03", "business-rate-03", "논술 특강", 70000, 6],
+  ["2026-08", "teacher-04", "business-rate-04", "과학 실험", 50000, 24],
+  ["2026-07", "teacher-04", "business-rate-04", "과학 실험", 50000, 22],
+  ["2026-06", "teacher-04", "business-rate-04", "과학 실험", 50000, 20]
+].map(([month, teacherId, rateId, subjectName, hourlyRate, hours]) => {
+  const id = `${month}_${teacherId}`;
+  return [`${month}:${teacherId}`, {
+    id,
+    month,
+    teacherId,
+    businessWorkLines: [{ id: `${id}_business`, rateId, subjectName, hourlyRate, hours }],
+    grossPayNote: month === "2026-08" ? "월 수업 시수 입력" : null
+  }];
+}));
 
 function monthEntries(month, rows) {
   return rows.map((row, index) => ({

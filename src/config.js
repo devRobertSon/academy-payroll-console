@@ -1,6 +1,6 @@
 export const appConfig = {
   academyName: "학원 급여 포털",
-  portalUrl: "https://devrobertson.github.io/academy-payroll-console/",
+  portalUrl: "https://payroll.robertson.kr/",
   demoMode: false,
   assistant: {
     provider: "gemini",

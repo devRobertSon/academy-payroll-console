@@ -59,6 +59,7 @@ async function checkJavaScriptSyntax() {
 async function checkHtmlAssets() {
   const html = await readFile(join(root, "index.html"), "utf8");
   const css = await readFile(join(root, "styles.css"), "utf8");
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
   const localReferences = [...html.matchAll(/(?:href|src)="\.\/([^"?#]+)["?#]?/g)].map((match) => match[1]);
   for (const reference of localReferences) {
     if (!(await exists(join(root, reference)))) failures.push(`index.html references a missing file: ${reference}`);
@@ -78,6 +79,23 @@ async function checkHtmlAssets() {
   }
   for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
     if (css.includes(legacyGreen)) failures.push(`Legacy green workspace color remains: ${legacyGreen}`);
+  }
+  const releaseVersion = html.match(/src\/app\.js\?v=([^"']+)/)?.[1];
+  if (!releaseVersion) {
+    failures.push("Application release version is missing from index.html.");
+  } else {
+    for (const modulePath of [
+      "./config.js",
+      "./data/demo-data.js",
+      "./lib/firebase-store.js",
+      "./lib/payroll.js",
+      "./lib/teacher-identity.js",
+      "./lib/teacher-self-service.js"
+    ]) {
+      if (!app.includes(`"${modulePath}?v=${releaseVersion}"`)) {
+        failures.push(`Changed application module is missing the release version: ${modulePath}`);
+      }
+    }
   }
 }
 

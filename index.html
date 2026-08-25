@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="학원 급여 계산, 명세서 발행, 월별 급여내역 관리를 위한 보안 중심 콘솔" />
+    <meta name="description" content="학원 급여명세서 관리 포털" />
     <meta name="color-scheme" content="light" />
-    <title>Academy Payroll Console</title>
+    <title>학원 급여 포털</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
@@ -20,14 +20,13 @@
           <div class="brand-lockup">
             <span class="brand-mark" aria-hidden="true">AP</span>
             <div>
-              <strong>Academy Payroll Console</strong>
-              <span id="login-academy-name">샘플 학원</span>
+              <strong>학원 급여 포털</strong>
+              <span>급여 관리</span>
             </div>
           </div>
           <div class="login-copy">
-            <p class="eyebrow">급여 업무 포털</p>
-            <h1>이번 달 급여부터 지난 명세서까지 한곳에서 관리합니다.</h1>
-            <p>등록된 Google 계정으로 로그인하면 권한에 맞는 화면이 열립니다.</p>
+            <h1>급여명세서 확인</h1>
+            <p>등록된 Google 계정으로 로그인하세요.</p>
           </div>
           <button id="google-login" class="button button-primary button-wide" type="button">
             <span class="google-g" aria-hidden="true">G</span>
@@ -47,17 +46,12 @@
             </div>
           </div>
           <p id="login-status" class="form-status" role="status"></p>
-          <p class="privacy-note"><i data-lucide="lock-keyhole" aria-hidden="true"></i> 승인된 계정만 급여 정보에 접근할 수 있습니다.</p>
+          <p class="privacy-note"><i data-lucide="lock-keyhole" aria-hidden="true"></i> 승인된 계정만 이용할 수 있습니다.</p>
         </div>
         <aside class="login-aside" aria-label="서비스 상태">
           <div class="aside-content">
             <div class="status-seal"><i data-lucide="badge-check" aria-hidden="true"></i></div>
-            <p>급여 자료는 GitHub 저장소가 아닌 Firebase의 접근 제어 영역에 보관됩니다.</p>
-            <dl>
-              <div><dt>접근</dt><dd>Google 계정</dd></div>
-              <div><dt>권한</dt><dd>관리자 · 선생님 분리</dd></div>
-              <div><dt>기록</dt><dd>월별 확정본 보존</dd></div>
-            </dl>
+            <p>학원 급여 포털</p>
           </div>
         </aside>
       </section>

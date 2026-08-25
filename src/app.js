@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-self-service";
-import { helpArticles } from "./data/help-content.js?v=20260826-self-service";
+import { appConfig } from "./config.js?v=20260826-self-service-r2";
+import { helpArticles } from "./data/help-content.js?v=20260826-self-service-r2";
 import {
   demoAccessRequests,
   demoEntries,
@@ -9,13 +9,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-self-service";
+} from "./data/demo-data.js?v=20260826-self-service-r2";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-self-service";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-self-service";
+} from "./data/nts-tax-policy.js?v=20260826-self-service-r2";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-self-service-r2";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -40,15 +40,15 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-self-service";
+} from "./lib/payroll.js?v=20260826-self-service-r2";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-self-service";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-self-service-r2";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-self-service";
+} from "./lib/teacher-self-service.js?v=20260826-self-service-r2";
 
 const state = {
   user: null,

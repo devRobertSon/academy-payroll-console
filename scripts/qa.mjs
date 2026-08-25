@@ -191,6 +191,8 @@ async function checkTeacherMonthlyPayroll() {
   for (const heading of ["생년월일·성별번호", "강사료 세액공제", "건강+요양", "보험료 합계"]) {
     if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
   }
+  if (app.includes("사업 시수")) failures.push("Use '수업 시수' instead of the incorrect '사업 시수' label.");
+  if (!app.includes('<th class="numeric">수업 시수</th>')) failures.push("Monthly payroll table is missing the class-hours label.");
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   if (!rules.includes("excludesResidentRegistrationNumber")) {
     failures.push("Firestore rules must reject resident-registration-number fields.");

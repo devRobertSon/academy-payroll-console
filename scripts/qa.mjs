@@ -137,7 +137,11 @@ async function checkTeacherMonthlyPayroll() {
   const tests = await readFile(join(root, "tests", "payroll.test.mjs"), "utf8");
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
-  for (const field of ["insuranceEnrolled", "defaultEmployeePay", "businessRates", "employeeGrossPay", "businessWorkLines"]) {
+  for (const field of [
+    "insuranceSettings", "defaultEmployeePay", "businessRates", "employeeGrossPay",
+    "employeeWorkHours", "businessWorkLines", "transportTrips", "parkingAmount",
+    "additionalEarnings", "nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"
+  ]) {
     if (!app.includes(field)) failures.push(`Teacher monthly payroll field is missing: ${field}`);
   }
   if (!app.includes('["업무", "payrollInputs"')) failures.push("Monthly payroll input navigation is missing.");
@@ -146,6 +150,16 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (!payroll.includes("createMonthlyEarningLines") || !tests.includes("수업이 없어도") || !tests.includes("시급과 수업 시수를 곱해")) {
     failures.push("Monthly salary calculation must cover insured teachers without classes.");
+  }
+  for (const reportField of ["lectureWithholding", "additionalPaymentWithholding", "healthAndLongTermCare", "insuranceBases", "unconfirmedEarningLines"]) {
+    if (!payroll.includes(reportField)) failures.push(`Accounting payroll report field is missing: ${reportField}`);
+  }
+  for (const heading of ["회계사 식별번호", "강사료 세액공제", "건강+요양", "보험료 합계"]) {
+    if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
+  }
+  const rules = await readFile(join(root, "firestore.rules"), "utf8");
+  if (!rules.includes("excludesResidentRegistrationNumber")) {
+    failures.push("Firestore rules must reject resident-registration-number fields.");
   }
 }
 

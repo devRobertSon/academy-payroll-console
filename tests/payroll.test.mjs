@@ -127,20 +127,96 @@ test("기존 유형과 월 지급액 필드는 새 급여 구성으로 호환해
   const insured = { id: "legacy-insured", employmentType: "insured", baseMonthlyPay: 3000000 };
   const freelancer = { id: "legacy-freelancer", employmentType: "freelancer", baseMonthlyPay: 1800000 };
 
-  assert.deepEqual(getTeacherPaySettings(insured), {
-    insuranceEnrolled: true,
-    defaultEmployeePay: 3000000,
-    defaultBusinessPay: 0,
+  const insuredSettings = getTeacherPaySettings(insured);
+  assert.equal(insuredSettings.insuranceEnrolled, true);
+  assert.equal(insuredSettings.defaultEmployeePay, 3000000);
+  assert.equal(insuredSettings.insuranceSettings.nationalPension.enrolled, true);
+  const freelancerAmounts = getMonthlyPayAmounts(freelancer, { grossPay: 2000000 });
+  assert.equal(freelancerAmounts.employeeGrossPay, 0);
+  assert.equal(freelancerAmounts.businessGrossPay, 2000000);
+  assert.equal(freelancerAmounts.source, "legacy-monthly-input");
+});
+
+test("국민연금·건강보험·고용보험은 선생님별 가입 기간과 서로 다른 신고 기준액을 적용한다", () => {
+  const insuranceSettings = {
+    nationalPension: { enrolled: true, defaultBaseAmount: 2000000, effectiveFrom: "2026-01-01" },
+    healthInsurance: { enrolled: true, defaultBaseAmount: 3000000, effectiveFrom: "2026-01-01" },
+    employmentInsurance: { enrolled: true, defaultBaseAmount: 4000000, effectiveFrom: "2026-01-01" }
+  };
+  const payroll = calculatePayroll([
+    { month: "2026-08", hours: 1, hourlyRate: 3500000, treatment: "employee", insuranceCovered: true }
+  ], createCombinedPolicy(ntsTaxPolicy2024, resolveEffectivePolicy(officialInsurancePolicies, "2026-08")), {
+    insuranceSettings,
+    employeeIncomeTax: 0,
+    employeeLocalTax: 0
+  });
+
+  assert.deepEqual(payroll.insuranceBases, {
+    nationalPension: 2000000,
+    healthInsurance: 3000000,
+    employmentInsurance: 4000000
+  });
+  assert.equal(payroll.deductions.nationalPension, 95000);
+  assert.equal(payroll.deductions.healthInsurance, 107850);
+  assert.equal(payroll.deductions.employmentInsurance, 36000);
+  assert.equal(payroll.reporting.healthAndLongTermCare, payroll.deductions.healthInsurance + payroll.deductions.longTermCare);
+});
+
+test("보험 적용 종료일이 지난 달에는 해당 보험료를 자동 계산하지 않는다", () => {
+  const payroll = calculatePayroll([
+    { month: "2026-08", hours: 1, hourlyRate: 3000000, treatment: "employee", insuranceCovered: true }
+  ], demoPolicy, {
+    insuranceSettings: {
+      nationalPension: { enrolled: true, defaultBaseAmount: 3000000, effectiveTo: "2026-07-31" },
+      healthInsurance: { enrolled: false },
+      employmentInsurance: { enrolled: false }
+    },
+    employeeIncomeTax: 0,
+    employeeLocalTax: 0
+  });
+
+  assert.equal(payroll.deductions.nationalPension, 0);
+  assert.equal(payroll.reporting.insuranceTotal, 0);
+});
+
+test("교통비·주차료·기타 지급을 선택한 과세 방식으로 계산하고 회계사용 항목을 분리한다", () => {
+  const teacher = {
+    id: "accounting",
+    insuranceEnrolled: false,
+    defaultEmployeePay: 0,
     businessRates: [],
-    source: "legacy"
+    transportPolicy: { unitAmount: 1500, treatment: "business" }
+  };
+  const lines = createMonthlyEarningLines(teacher, "2026-08", {
+    businessWorkLines: [{ subjectName: "영어", hourlyRate: 50000, hours: 2 }],
+    transportTrips: 10,
+    parkingAmount: 10000,
+    parkingTreatment: "exempt",
+    additionalEarnings: [{ id: "book", label: "교재 준비", amount: 20000, treatment: "business" }]
   });
-  assert.deepEqual(getMonthlyPayAmounts(freelancer, { grossPay: 2000000 }), {
-    employeeGrossPay: 0,
-    businessGrossPay: 2000000,
-    businessHours: 0,
-    businessWorkLines: [],
-    source: "legacy-monthly-input"
+  const payroll = calculatePayroll(lines, demoPolicy);
+
+  assert.equal(payroll.gross, 145000);
+  assert.equal(payroll.reporting.classHours, 2);
+  assert.equal(payroll.reporting.transportTrips, 10);
+  assert.equal(payroll.reporting.transportAmount, 15000);
+  assert.equal(payroll.reporting.parkingAmount, 10000);
+  assert.equal(payroll.reporting.lectureFeeGross, 100000);
+  assert.equal(payroll.reporting.lectureWithholding, 3300);
+  assert.equal(payroll.reporting.additionalPaymentWithholding, 1155);
+  assert.equal(payroll.unconfirmedEarningLines.length, 0);
+});
+
+test("처리 방법을 확인하지 않은 추가 지급은 확정 차단 대상으로 표시한다", () => {
+  const lines = createMonthlyEarningLines({ id: "pending", businessRates: [] }, "2026-08", {
+    parkingAmount: 20000,
+    parkingTreatment: "pending"
   });
+  const payroll = calculatePayroll(lines, demoPolicy);
+
+  assert.equal(payroll.grossByTreatment.pending, 20000);
+  assert.equal(payroll.totalDeductions, 0);
+  assert.equal(payroll.unconfirmedEarningLines[0].subjectName, "주차료");
 });
 
 test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {
@@ -185,6 +261,20 @@ test("관리자가 입력한 공제액으로 자동 계산값을 덮어쓸 수 �
   assert.equal(payroll.deductions.healthInsurance, 23456);
   assert.equal(payroll.deductions.longTermCare, 3456);
   assert.equal(payroll.deductions.employeeLocalTax, 500);
+});
+
+test("회계사 고지액은 건강보험과 장기요양 합계로 한 번에 입력할 수 있다", () => {
+  const payroll = calculatePayroll([
+    { month: "2026-08", hours: 1, hourlyRate: 3000000, treatment: "employee", insuranceCovered: true }
+  ], demoPolicy, {
+    healthAndLongTermCare: 123456,
+    employeeIncomeTax: 0,
+    employeeLocalTax: 0
+  });
+
+  assert.equal(payroll.deductions.healthInsurance, 123456);
+  assert.equal(payroll.deductions.longTermCare, 0);
+  assert.equal(payroll.reporting.healthAndLongTermCare, 123456);
 });
 
 test("과목과 반까지 지정된 가장 구체적인 시급 규칙을 선택한다", () => {
@@ -287,3 +377,4 @@ test("간이세액표 CSV는 연속 구간과 1천만원 기준 행을 검증한
   assert.equal(parsed.tableRows.length, 1);
   assert.equal(parsed.taxAtTenMillion[10], 10);
 });
+

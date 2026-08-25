@@ -43,12 +43,24 @@
   "authUid": "Firebase Authentication UID",
   "name": "성명",
   "email": "이메일",
+  "phone": "연락처",
+  "accountingReference": "회계사 보안 명부와 결합할 내부 식별번호",
   "status": "active",
   "insuranceEnrolled": true,
+  "insuranceSettings": {
+    "nationalPension": { "enrolled": true, "defaultBaseAmount": 3000000, "effectiveFrom": "2026-01-01", "effectiveTo": null },
+    "healthInsurance": { "enrolled": true, "defaultBaseAmount": 3200000, "effectiveFrom": "2026-01-01", "effectiveTo": null },
+    "employmentInsurance": { "enrolled": true, "defaultBaseAmount": 3100000, "effectiveFrom": "2026-01-01", "effectiveTo": null }
+  },
   "defaultEmployeePay": 3000000,
   "businessRates": [
     { "id": "essay", "subjectName": "논술 특강", "hourlyRate": 70000 }
   ],
+  "transportPolicy": {
+    "regionLabel": "서울 시내",
+    "unitAmount": 1500,
+    "treatment": "pending | business | employee | exempt | other"
+  },
   "subjects": ["고등 수학", "논술"],
   "paymentDay": 10,
   "contractSummary": "화면 표시용 요약",
@@ -60,9 +72,9 @@
 }
 ```
 
-계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. 추후 꼭 필요하다면 별도 암호화·마스킹·열람 감사 설계를 먼저 해야 합니다.
+계좌, 주민등록번호, 주소 같은 고위험 정보는 현재 앱에 저장하지 않습니다. Firestore 규칙도 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 필드의 저장을 거부합니다. 회계사는 별도의 암호화된 주민등록번호 명부에서 `accountingReference`로 결합해야 합니다.
 
-`insuranceEnrolled`는 4대보험 가입 여부이며 소득 구분과 별개입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 같은 선생님에게 두 설정을 함께 둘 수 있으며 보험은 가입 선생님의 근로소득 부분에만 적용합니다. 기존 `employmentType`과 `baseMonthlyPay` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
+`insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험을 각각 가입 여부, 기본 신고 기준액과 적용 기간으로 관리합니다. `insuranceEnrolled`는 과거 데이터 호환용 요약값입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 같은 선생님에게 두 소득을 함께 둘 수 있습니다. 기존 `employmentType`, `baseMonthlyPay`, 단일 `insuranceEnrolled` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
 
 ### `accessRequests/{uid}`
 
@@ -159,6 +171,7 @@
   "month": "2026-08",
   "teacherId": "teacherId",
   "employeeGrossPay": 3000000,
+  "employeeWorkHours": 40,
   "businessWorkLines": [
     {
       "id": "essay-august",
@@ -168,20 +181,32 @@
       "hours": 10
     }
   ],
+  "transportTrips": 20,
+  "transportUnitAmount": 1500,
+  "transportTreatment": "business",
+  "transportInsuranceCovered": false,
+  "parkingAmount": 10000,
+  "parkingTreatment": "exempt",
+  "parkingInsuranceCovered": false,
+  "additionalEarnings": [
+    { "id": "materials", "label": "교재 준비비", "amount": 20000, "treatment": "business", "insuranceCovered": false }
+  ],
+  "nationalPensionBase": 3000000,
+  "healthInsuranceBase": 3200000,
+  "employmentInsuranceBase": 3100000,
   "grossPayNote": "입사월 일할 계산",
   "employeeNonTaxableAmount": 200000,
   "employeeStudentLoanSupportAmount": 0,
   "employeeIncomeTax": null,
   "employeeLocalTax": null,
   "nationalPension": null,
-  "healthInsurance": null,
-  "longTermCare": null,
+  "healthAndLongTermCare": null,
   "employmentInsurance": null,
   "custom": 0
 }
 ```
 
-`businessWorkLines`의 각 금액은 `hourlyRate × hours`로 계산하며 확정 명세서에는 당시 과목·시급·시수가 함께 보존됩니다. 기존 문서의 `grossPay`와 `businessGrossPay`는 새 수업 시수 입력을 저장하기 전까지 호환해 읽고, 새 `businessWorkLines`가 있으면 새 방식이 우선 적용됩니다.
+`businessWorkLines`의 각 금액은 `hourlyRate × hours`로 계산하며 확정 명세서에는 당시 과목·시급·시수가 함께 보존됩니다. 교통비·주차료·기타 지급의 `treatment`가 `pending`이면 미리보기에는 포함되지만 급여 확정은 차단됩니다. 세무사 확인 후 `business`, `employee`, `exempt`, `other` 중 하나를 선택합니다. 보험별 기준액은 서로 다르게 입력할 수 있습니다. 기존 문서의 `grossPay`, `businessGrossPay`, 건강보험·장기요양 개별 수동값은 계속 호환해 읽습니다.
 
 ### `payrollRuns/{yyyy-mm}`
 
@@ -277,3 +302,4 @@
 ```
 
 관리자만 생성·조회할 수 있으며 수정과 삭제는 허용하지 않습니다. 급여명세서 본문, PDF, Gmail OAuth 토큰은 저장하지 않습니다. 규칙은 연결된 `payslips` 문서가 `published` 상태이고 선생님과 급여월이 일치하는지 다시 확인합니다.
+

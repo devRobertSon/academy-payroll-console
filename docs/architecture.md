@@ -16,7 +16,7 @@ GitHub에는 HTML, CSS, JavaScript, 보안 규칙과 가상 데이터만 둡니�
 
 ## 월 급여 흐름
 
-1. 선생님의 4대보험 가입 여부, 기본 근로소득 월급과 과목별 사업소득 시급을 저장합니다.
+1. 선생님의 보험별 가입·신고 기준액·적용 기간, 기본 근로소득 월급과 과목별 사업소득 시급을 저장합니다.
 2. 월 급여 입력에서 이번 달 근로소득과 사업소득 과목별 수업 시수를 확인하거나 수정합니다.
 3. 사업소득은 각 과목의 시급 × 수업 시수를 합산하고 소득세 3%와 지방소득세 0.3%를 공제합니다.
 4. 한 선생님에게 두 소득을 모두 입력할 수 있으며, 사회보험은 가입 선생님의 근로소득 부분에만 적용합니다.
@@ -31,7 +31,7 @@ GitHub에는 HTML, CSS, JavaScript, 보안 규칙과 가상 데이터만 둡니�
 
 ## 보험과 소득 구분 처리
 
-선생님 문서에서 `insuranceEnrolled`는 4대보험 가입 여부만 나타냅니다. `defaultEmployeePay`는 수업 여부와 무관한 근로소득 월급이고, `businessRates`는 과목별 사업소득 시급입니다. 매월의 수업 시수와 계산 당시 시급은 `payrollOverrides.businessWorkLines`에 스냅샷으로 저장합니다. 기존 `employmentType`, `baseMonthlyPay`, `grossPay`, `businessGrossPay` 문서는 화면에서 자동 호환해 읽습니다.
+선생님 문서의 `insuranceSettings`는 국민연금·건강보험·고용보험별 가입, 신고 기준액과 기간을 저장합니다. `insuranceEnrolled`는 과거 문서 호환용 요약값입니다. `defaultEmployeePay`는 수업 여부와 무관한 근로소득 월급이고, `businessRates`는 과목별 사업소득 시급입니다. 매월의 수업시간, 교통비·주차료·기타 지급과 계산 당시 기준은 `payrollOverrides`에 스냅샷으로 저장합니다. 기존 `employmentType`, `baseMonthlyPay`, `grossPay`, `businessGrossPay` 문서는 화면에서 자동 호환해 읽습니다.
 
 세금과 사회보험 정책도 분리합니다. `taxPolicies`는 국세청 원천징수 기준과 근로소득 간이세액표를, `insurancePolicies`는 관련 공단의 사회보험 기준을 시행일별 버전으로 보관합니다. 월 계산 시 유효한 최신 버전을 선택하고 확정본에는 두 버전과 계산 결과를 함께 스냅샷으로 저장합니다.
 
@@ -49,3 +49,4 @@ Blaze 단계에서는 다음을 Cloud Functions로 옮기는 것이 좋습니다
 - 실패 재시도와 발송 이력
 - 취소·재발행 워크플로
 - Secret Manager의 메일 API 키 관리
+

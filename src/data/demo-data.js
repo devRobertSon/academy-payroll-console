@@ -39,8 +39,15 @@ export const demoTeachers = [
     authUid: "demo-teacher-01",
     name: "김강사",
     email: "teacher01@example.invalid",
+    phone: "010-0000-0001",
+    accountingReference: "T-001",
     status: "active",
     insuranceEnrolled: true,
+    insuranceSettings: {
+      nationalPension: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null },
+      healthInsurance: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null },
+      employmentInsurance: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null }
+    },
     defaultEmployeePay: 3200000,
     defaultBusinessPay: 0,
     businessRates: [],
@@ -54,11 +61,14 @@ export const demoTeachers = [
     authUid: "demo-teacher-02",
     name: "박강사",
     email: "teacher02@example.invalid",
+    phone: "010-0000-0002",
+    accountingReference: "T-002",
     status: "active",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
     defaultBusinessPay: 0,
     businessRates: [{ id: "business-rate-02", subjectName: "중등 영어", hourlyRate: 45000 }],
+    transportPolicy: { regionLabel: "서울 시내", unitAmount: 1500, treatment: "business" },
     subjects: ["중등 영어"],
     contractSummary: "프리랜서 월 지급",
     paymentDay: 10,
@@ -69,6 +79,8 @@ export const demoTeachers = [
     authUid: "demo-teacher-03",
     name: "이강사",
     email: "teacher03@example.invalid",
+    phone: "010-0000-0003",
+    accountingReference: "T-003",
     status: "active",
     insuranceEnrolled: true,
     defaultEmployeePay: 3000000,
@@ -84,6 +96,8 @@ export const demoTeachers = [
     authUid: "demo-teacher-04",
     name: "최강사",
     email: "teacher04@example.invalid",
+    phone: "010-0000-0004",
+    accountingReference: "T-004",
     status: "active",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
@@ -99,6 +113,8 @@ export const demoTeachers = [
     authUid: null,
     name: "정강사",
     email: "teacher05@example.invalid",
+    phone: "010-0000-0005",
+    accountingReference: "T-005",
     status: "active",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
@@ -169,6 +185,14 @@ export const demoOverrides = Object.fromEntries([
     month,
     teacherId,
     businessWorkLines: [{ id: `${id}_business`, rateId, subjectName, hourlyRate, hours }],
+    ...(month === "2026-08" && teacherId === "teacher-02" ? {
+      transportTrips: 20,
+      transportUnitAmount: 1500,
+      transportTreatment: "business",
+      parkingAmount: 10000,
+      parkingTreatment: "exempt",
+      additionalEarnings: [{ id: `${id}_materials`, label: "교재 준비비", amount: 20000, treatment: "business", insuranceCovered: false }]
+    } : {}),
     grossPayNote: month === "2026-08" ? "월 수업 시수 입력" : null
   }];
 }));
@@ -188,3 +212,4 @@ function monthEntries(month, rows) {
     source: "demo"
   }));
 }
+

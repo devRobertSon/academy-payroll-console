@@ -50,7 +50,7 @@ AI 도움말에 보내도 되는 내용:
 
 - 메뉴 위치와 버튼 사용법
 - 선생님 등록 절차
-- 4대보험 가입 여부, 근로소득 월급과 사업소득 시급·수업 시수 입력 방법
+- 보험별 가입·신고 기준액, 근로소득 월급, 사업소득 시급·수업 시수와 추가 지급 입력 방법
 - 명세서 확정·취소·다운로드·이메일 절차
 - 일반적인 오류 해결 방법
 
@@ -86,3 +86,4 @@ Gemini Developer API 무료 등급에서는 입력 내용이 Google 제품 개�
 - [지원되는 모델](https://firebase.google.com/docs/ai-logic/models?hl=ko)
 - [프로덕션 체크리스트](https://firebase.google.com/docs/ai-logic/production-checklist)
 - [요금 안내](https://firebase.google.com/docs/ai-logic/pricing)
+

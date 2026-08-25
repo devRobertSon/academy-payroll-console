@@ -274,7 +274,8 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .payslip-footnote { margin-top: 34px; color: var(--muted); font-size: 10px; line-height: 1.7; }
 
 .modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(12,25,20,.55); z-index: 100; }
-.modal { width: min(760px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; border-radius: 7px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.28); }
+body:has(.modal-backdrop) { overflow: hidden; }
+.modal { width: min(900px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; border-radius: 7px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.28); }
 .modal-header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .modal-header h2 { margin: 0; font-size: 16px; }
 .modal-header .icon-button { margin-left: auto; }
@@ -296,6 +297,19 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .form-help { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .editor-heading { display: flex; align-items: center; gap: 12px; }
 .editor-heading > label { margin-right: auto; }
+.form-section-heading { margin-top: 5px; padding-top: 15px; border-top: 1px solid var(--line); }
+.insurance-editor { display: grid; gap: 8px; }
+.insurance-setting-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) 140px 140px; align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--line); background: var(--surface-subtle); }
+.insurance-setting-row input { min-width: 0; }
+.additional-line-editor { display: grid; gap: 8px; }
+.additional-line-row { display: grid; grid-template-columns: minmax(130px, 1.2fr) minmax(130px, 1fr) minmax(145px, 1fr) minmax(130px, auto) 36px; align-items: center; gap: 8px; }
+.additional-line-row > input, .additional-line-row > select, .additional-line-row .input-suffix { min-width: 0; min-height: 40px; }
+.additional-line-row > input, .additional-line-row > select { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
+.checkbox-row.compact { min-height: 36px; font-size: 10px; }
+.definition-subtext { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+.accounting-ledger { min-width: 2500px; }
+.accounting-ledger th { max-width: 125px; white-space: normal; }
+.ledger-total { background: var(--surface-subtle); }
 .business-line-editor { display: grid; gap: 8px; }
 .business-line-row { display: grid; align-items: center; gap: 8px; }
 .business-line-row.rate-row { grid-template-columns: minmax(150px, 1.4fr) minmax(160px, 1fr) 36px; }
@@ -314,6 +328,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .business-work-summary strong { font-size: 11px; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 .checkbox-row input { width: 16px; height: 16px; accent-color: var(--brand); }
+.form-field.checkbox-row input { min-height: 16px; }
 .toast-root { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 200; }
 .toast { min-width: 280px; padding: 13px 15px; border-left: 3px solid var(--brand); color: #fff; background: #25332e; border-radius: 4px; box-shadow: var(--shadow); font-size: 12px; animation: toast-in .2s ease-out; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
@@ -341,7 +356,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .topbar { min-height: 76px; padding: 14px 16px; }
   .topbar h1 { font-size: 18px; }
   .page-content { padding: 20px 16px 38px; }
-  .topbar-actions .button span { display: none; }
+  .topbar-actions .button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .toolbar { flex-wrap: wrap; }
   .search-wrap { width: 100%; order: 3; }
   .search-control { width: 100%; }
@@ -352,6 +367,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .help-toc { position: static; grid-template-columns: 1fr 1fr; }
   .help-toc > strong { grid-column: 1 / -1; }
   .assistant-panel { right: 12px; bottom: 12px; width: calc(100vw - 24px); height: min(680px, calc(100vh - 24px)); }
+  .insurance-setting-row { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 520px) {
@@ -364,6 +380,10 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .business-line-row > input, .business-line-row .input-suffix, .business-line-row .business-line-amount { grid-column: 1; }
   .business-line-row .icon-button { grid-column: 2; grid-row: 1; }
   .business-line-amount { text-align: left; }
+  .insurance-setting-row { grid-template-columns: 1fr; }
+  .additional-line-row { grid-template-columns: 1fr 36px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .additional-line-row > input, .additional-line-row > select, .additional-line-row .input-suffix, .additional-line-row .checkbox-row { grid-column: 1; }
+  .additional-line-row .icon-button { grid-column: 2; grid-row: 1; }
   .business-work-summary { grid-template-columns: 1fr 1fr; }
   .business-work-summary > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
   .business-work-summary > div:nth-child(4) { border-top: 1px solid var(--line); }
@@ -389,3 +409,4 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
   .payslip-layout { display: block; }
   .payslip-sheet { min-height: 0; border: 0; box-shadow: none; }
 }
+

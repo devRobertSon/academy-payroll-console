@@ -193,6 +193,7 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (app.includes("사업 시수")) failures.push("Use '수업 시수' instead of the incorrect '사업 시수' label.");
   if (app.includes("수업료")) failures.push("Use '강사료' for teacher compensation instead of '수업료'.");
+  if (app.includes("CSV 파일에는 급여")) failures.push("Monthly ledger must not show the removed CSV privacy notice.");
   if (!app.includes('<th class="numeric">수업 시수</th>')) failures.push("Monthly payroll table is missing the class-hours label.");
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   if (!rules.includes("excludesResidentRegistrationNumber")) {

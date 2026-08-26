@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260826-access-resubmission-r20" />
+    <link rel="stylesheet" href="./styles.css?v=20260826-legal-notices-r21" />
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
     <script src="./vendor/html2pdf.bundle.min.js" defer></script>
   </head>
@@ -47,6 +47,11 @@
           </div>
           <p id="login-status" class="form-status" role="status"></p>
           <p class="privacy-note"><i data-lucide="lock-keyhole" aria-hidden="true"></i> 승인된 계정만 이용할 수 있습니다.</p>
+          <nav class="login-legal-links" aria-label="서비스 정책">
+            <a href="./privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
+            <span aria-hidden="true">·</span>
+            <a href="./terms.html" target="_blank" rel="noopener">서비스 이용약관</a>
+          </nav>
         </div>
         <aside class="login-aside" aria-label="서비스 상태">
           <div class="aside-content">
@@ -74,6 +79,10 @@
               <i data-lucide="chevron-right" aria-hidden="true"></i>
             </button>
           </div>
+          <nav class="sidebar-legal-links" aria-label="서비스 정책">
+            <a href="./privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
+            <a href="./terms.html" target="_blank" rel="noopener">이용약관</a>
+          </nav>
           <div class="sidebar-user">
             <span id="user-avatar" class="avatar">관</span>
             <div><strong id="user-name">관리자</strong><span id="user-role">관리자</span></div>
@@ -118,7 +127,7 @@
 
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
-    <script type="module" src="./src/app.js?v=20260826-access-resubmission-r20"></script>
+    <script type="module" src="./src/app.js?v=20260826-legal-notices-r21"></script>
   </body>
 </html>
 

@@ -11,6 +11,7 @@ const failures = [];
 await checkRequiredFiles();
 await checkJavaScriptSyntax();
 await checkHtmlAssets();
+await checkLegalNotices();
 await checkRepositorySafety();
 await checkDeliverySecurity();
 await checkLifecycleSecurity();
@@ -32,6 +33,9 @@ async function checkRequiredFiles() {
   const required = [
     "index.html",
     "styles.css",
+    "legal.css",
+    "privacy.html",
+    "terms.html",
     "src/app.js",
     "src/config.js",
     "firestore.rules",
@@ -153,6 +157,39 @@ async function checkHtmlAssets() {
         failures.push(`Changed application module is missing the release version: ${modulePath}`);
       }
     }
+  }
+}
+
+async function checkLegalNotices() {
+  const html = await readFile(join(root, "index.html"), "utf8");
+  const privacy = await readFile(join(root, "privacy.html"), "utf8");
+  const terms = await readFile(join(root, "terms.html"), "utf8");
+  const legalCss = await readFile(join(root, "legal.css"), "utf8");
+
+  for (const path of ["./privacy.html", "./terms.html"]) {
+    if ((html.match(new RegExp(`href="${path.replace(".", "\\.")}"`, "g")) || []).length < 2) {
+      failures.push(`Login and signed-in pages must both link to ${path}.`);
+    }
+  }
+  for (const disclosure of [
+    "Firebase Authentication UID",
+    "https://www.googleapis.com/auth/gmail.send",
+    "Gmail 접근 토큰",
+    "Google API Services User Data Policy",
+    "Google 계정의 서드 파티 연결 관리",
+    "Cloudflare, Inc.",
+    "전체 주민등록번호"
+  ]) {
+    if (!privacy.includes(disclosure)) failures.push(`Privacy policy disclosure is missing: ${disclosure}`);
+  }
+  for (const term of ["관리자와 선생님의 의무", "Google 계정과 Gmail 기능", "급여·세금·보험 계산의 성격"]) {
+    if (!terms.includes(term)) failures.push(`Terms of service section is missing: ${term}`);
+  }
+  if (!privacy.includes('href="./terms.html"') || !terms.includes('href="./privacy.html"')) {
+    failures.push("Legal notice pages must link to each other.");
+  }
+  if (!legalCss.includes("@media (max-width: 700px)") || !legalCss.includes("min-width: 320px")) {
+    failures.push("Legal notice pages are missing mobile layout safeguards.");
   }
 }
 
@@ -424,9 +461,15 @@ async function checkLocalPage() {
     const rootResponse = await waitForResponse(`${baseUrl}/`);
     const cssResponse = await fetch(`${baseUrl}/styles.css`);
     const appResponse = await fetch(`${baseUrl}/src/app.js`);
+    const privacyResponse = await fetch(`${baseUrl}/privacy.html`);
+    const termsResponse = await fetch(`${baseUrl}/terms.html`);
+    const legalCssResponse = await fetch(`${baseUrl}/legal.css`);
     if (rootResponse.status !== 200) failures.push(`Local page returned HTTP ${rootResponse.status}.`);
     if (cssResponse.status !== 200) failures.push(`Local stylesheet returned HTTP ${cssResponse.status}.`);
     if (appResponse.status !== 200) failures.push(`Local application script returned HTTP ${appResponse.status}.`);
+    if (privacyResponse.status !== 200) failures.push(`Local privacy policy returned HTTP ${privacyResponse.status}.`);
+    if (termsResponse.status !== 200) failures.push(`Local terms of service returned HTTP ${termsResponse.status}.`);
+    if (legalCssResponse.status !== 200) failures.push(`Local legal stylesheet returned HTTP ${legalCssResponse.status}.`);
     if (!(await rootResponse.text()).includes("학원 급여 포털")) failures.push("Local page is missing the application title.");
   } finally {
     server.kill();

@@ -69,6 +69,9 @@ button { color: inherit; }
 .demo-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .privacy-note { display: flex; align-items: center; gap: 7px; margin: 24px 0 0; color: var(--muted); font-size: 11px; }
 .privacy-note svg { width: 14px; height: 14px; }
+.login-legal-links { width: min(440px, 100%); display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.login-legal-links a, .sidebar-legal-links a { color: inherit; text-decoration: none; }
+.login-legal-links a:hover, .sidebar-legal-links a:hover { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
 .form-status { min-height: 18px; margin: 12px 0 0; color: var(--danger); font-size: 12px; }
 
 .workspace { min-height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
@@ -89,6 +92,7 @@ button { color: inherit; }
 .assistant-toggle span { min-width: 0; display: grid; gap: 1px; }
 .assistant-toggle strong { font-size: 12px; }
 .assistant-toggle small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-legal-links { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 10px 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .sidebar-user { display: grid; grid-template-columns: 34px 1fr 32px; align-items: center; gap: 9px; margin-top: auto; padding: 14px 6px 0; border-top: 1px solid var(--line); }
 .sidebar-user > div { display: grid; min-width: 0; }
 .sidebar-user strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

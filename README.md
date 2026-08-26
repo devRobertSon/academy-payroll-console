@@ -40,6 +40,7 @@
 - 기본 거부 방식 Firestore/Storage 보안 규칙
 - 급여 확정 시 명세서·월 마감·감사 로그 원자적 저장
 - 검색 가능한 관리자 사용 설명서와 개인정보 차단형 AI 도움말
+- 로그인 전·관리자·선생님 화면에서 확인하는 공개 개인정보처리방침과 서비스 이용약관
 - GitHub Pages `main / (root)` 정적 배포
 
 ## 무료 요금제 범위
@@ -55,6 +56,7 @@ Spark 버전에서도 관리자가 화면에서 직접 실행하는 Gmail 첨부
 3. 앱이 테스트 상태라면 실제 발송에 사용할 관리자 Google 계정을 테스트 사용자로 등록합니다.
 4. Firebase Authentication의 승인된 도메인에 GitHub Pages 도메인을 등록합니다.
 5. 관리자가 확정 명세서의 `이메일 발송`을 처음 누르면 Gmail 전송 권한을 승인합니다.
+6. Google Auth Platform의 브랜딩 설정에 홈페이지 `https://payroll.robertson.kr/`, 개인정보처리방침 `https://payroll.robertson.kr/privacy.html`, 서비스 이용약관 `https://payroll.robertson.kr/terms.html`을 등록합니다.
 
 `gmail.send`는 메일 전송만 허용하며 받은편지함 읽기 권한은 요청하지 않습니다. 이 범위는 Google의 민감한 OAuth 범위이므로 외부 사용자를 대상으로 앱을 정식 게시할 때는 OAuth 검증 요구 사항을 확인해야 합니다. Gmail API를 사용하지 않을 때는 `PDF 저장 후 메일 앱 열기`로 내려받은 파일을 직접 첨부할 수 있습니다.
 

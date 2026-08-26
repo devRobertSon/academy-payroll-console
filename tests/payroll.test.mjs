@@ -207,6 +207,26 @@ test("교통비·주차료·기타 지급을 선택한 과세 방식으로 계�
   assert.equal(payroll.unconfirmedEarningLines.length, 0);
 });
 
+test("월 급여 입력 요약에서 교통비·주차비·기타 금액을 각각 제공한다", () => {
+  const amounts = getMonthlyPayAmounts({
+    defaultEmployeePay: 0,
+    businessRates: [],
+    transportPolicy: { unitAmount: 1500, treatment: "employee" }
+  }, {
+    transportTrips: 12,
+    parkingAmount: 30000,
+    additionalEarnings: [
+      { id: "materials", label: "교재비", amount: 20000, treatment: "employee" },
+      { id: "meal", label: "식비", amount: 10000, treatment: "employee" }
+    ]
+  });
+
+  assert.equal(amounts.transportAmount, 18000);
+  assert.equal(amounts.parkingAmount, 30000);
+  assert.equal(amounts.otherPaymentAmount, 30000);
+  assert.equal(amounts.additionalGrossPay, 78000);
+});
+
 test("처리 방법을 확인하지 않은 추가 지급은 확정 차단 대상으로 표시한다", () => {
   const lines = createMonthlyEarningLines({ id: "pending", businessRates: [] }, "2026-08", {
     parkingAmount: 20000,

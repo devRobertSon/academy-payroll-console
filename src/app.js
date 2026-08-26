@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-combined-identity-r13";
-import { helpArticles } from "./data/help-content.js?v=20260826-combined-identity-r13";
+import { appConfig } from "./config.js?v=20260826-payment-columns-r14";
+import { helpArticles } from "./data/help-content.js?v=20260826-payment-columns-r14";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-combined-identity-r13";
+} from "./data/demo-data.js?v=20260826-payment-columns-r14";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-combined-identity-r13";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-combined-identity-r13";
+} from "./data/nts-tax-policy.js?v=20260826-payment-columns-r14";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-payment-columns-r14";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-combined-identity-r13";
+} from "./lib/payroll.js?v=20260826-payment-columns-r14";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-combined-identity-r13";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-combined-identity-r13";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-payment-columns-r14";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-payment-columns-r14";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-combined-identity-r13";
+} from "./lib/teacher-self-service.js?v=20260826-payment-columns-r14";
 
 const state = {
   user: null,
@@ -440,7 +440,7 @@ function renderPayrollInputs() {
     <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득은 월급으로, 사업소득은 과목별 시급 × 수업 시수로 계산한 뒤 3.3%를 원천징수합니다. 한 선생님에게 두 소득을 함께 적용할 수 있습니다."}</span></div>
     <section class="content-section">
       <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·강사료·교통비·주차료·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통·주차·기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
+      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">주차비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
         ${teachers.map((teacher) => {
           const override = state.data.overrides[`${state.month}:${teacher.id}`];
           const settings = teacherPaySettings(teacher);
@@ -451,8 +451,8 @@ function renderPayrollInputs() {
           const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length;
           const statusText = missingSalary ? "근로소득 필요" : amounts.unconfirmedCount ? `처리 확인 ${amounts.unconfirmedCount}건` : total > 0 ? "입력 완료" : "금액 미입력";
           const statusClass = total > 0 && !missingSalary && !amounts.unconfirmedCount ? "paid" : "pending";
-          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.additionalGrossPay)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="이번 달 지급액 수정" aria-label="${e(teacher.name)} 이번 달 지급액 수정" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
-        }).join("") || emptyRow(11)}
+          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.transportAmount)}</td><td class="numeric">${formatWon(amounts.parkingAmount)}</td><td class="numeric">${formatWon(amounts.otherPaymentAmount)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="이번 달 지급액 수정" aria-label="${e(teacher.name)} 이번 달 지급액 수정" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
+        }).join("") || emptyRow(13)}
       </tbody></table></div>
     </section>
   `;
@@ -1250,16 +1250,17 @@ function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
 }
 
 function additionalEarningsEditorHtml(lines, containerId) {
+  const visibleLines = lines?.length ? lines : [{}];
   return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>기타 지급 항목</label><button class="button button-secondary button-compact" type="button" data-add-additional="${e(containerId)}"><i data-lucide="plus"></i><span>항목 추가</span></button></div>
-    <div id="${e(containerId)}" class="additional-line-editor">${(lines || []).map(additionalEarningRowHtml).join("")}</div>
-    <span class="form-help">교통비·주차료 외 지급액을 입력합니다. 과세 처리가 확정되지 않았다면 처리 미확인을 선택하세요.</span>
+    <div class="editor-heading"><label>기타</label><button class="button button-secondary button-compact" type="button" data-add-additional="${e(containerId)}"><i data-lucide="plus"></i><span>항목 추가</span></button></div>
+    <div id="${e(containerId)}" class="additional-line-editor">${visibleLines.map(additionalEarningRowHtml).join("")}</div>
+    <span class="form-help">교통비·주차비 외 지급액의 내용과 금액을 입력합니다. 항목이 여러 개면 줄을 추가할 수 있습니다.</span>
   </div>`;
 }
 
 function additionalEarningRowHtml(line = {}) {
   return `<div class="additional-line-row" data-additional-row data-line-id="${e(line.id || crypto.randomUUID())}">
-    <input type="text" value="${e(line.label || "")}" placeholder="항목명" aria-label="기타 지급 항목명" data-additional-label />
+    <input type="text" value="${e(line.label || "")}" placeholder="기타 내용" aria-label="기타 지급 항목명" data-additional-label />
     <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.amount || "")}" placeholder="금액" aria-label="기타 지급 금액" data-additional-amount /><span>원</span></div>
     <select aria-label="기타 지급 과세 처리" data-additional-treatment>${treatmentOptions(line.treatment)}</select>
     <label class="checkbox-row compact"><input type="checkbox" data-additional-insurance ${line.insuranceCovered ? "checked" : ""} /> 보험 기준 포함</label>
@@ -1730,14 +1731,15 @@ function openMonthlyPayModal(teacher) {
       <div class="form-field"><label for="monthly-employee-hours">근로 수업시간</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>시간</span></div></div>
       ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
       ${businessWorkEditorHtml(workLines, "monthly-business-work")}
-      <div class="form-field full form-section-heading"><strong>교통비·주차료</strong><span class="form-help">과세 여부가 정해지지 않았다면 처리 미확인으로 저장한 뒤 세무사에게 확인하세요.</span></div>
+      <div class="form-field full form-section-heading"><strong>교통비</strong><span class="form-help">대중교통 이용 횟수와 1회 금액을 곱해 교통비를 계산합니다.</span></div>
       <div class="form-field"><label for="monthly-transport-trips">대중교통 이용 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
       <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="monthly-transport-treatment">교통비 처리</label><select id="monthly-transport-treatment" name="transportTreatment">${treatmentOptions(amounts.transportTreatment)}</select></div>
       <label class="checkbox-row form-field"><input name="transportInsuranceCovered" type="checkbox" ${amounts.transportInsuranceCovered ? "checked" : ""} /> 교통비를 보험 기준에 포함</label>
-      <div class="form-field"><label for="monthly-parking">주차료</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1000" value="${e(amounts.parkingAmount)}" /><span>원</span></div></div>
-      <div class="form-field"><label for="monthly-parking-treatment">주차료 처리</label><select id="monthly-parking-treatment" name="parkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></div>
-      <label class="checkbox-row form-field"><input name="parkingInsuranceCovered" type="checkbox" ${amounts.parkingInsuranceCovered ? "checked" : ""} /> 주차료를 보험 기준에 포함</label>
+      <div class="form-field full form-section-heading"><strong>주차비</strong><span class="form-help">해당 월에 지급할 주차비를 교통비와 별도로 입력합니다.</span></div>
+      <div class="form-field"><label for="monthly-parking">주차비</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1000" value="${e(amounts.parkingAmount)}" /><span>원</span></div></div>
+      <div class="form-field"><label for="monthly-parking-treatment">주차비 처리</label><select id="monthly-parking-treatment" name="parkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></div>
+      <label class="checkbox-row form-field"><input name="parkingInsuranceCovered" type="checkbox" ${amounts.parkingInsuranceCovered ? "checked" : ""} /> 주차비를 보험 기준에 포함</label>
       ${additionalEarningsEditorHtml(amounts.additionalEarnings, "monthly-additional-earnings")}
       <div class="form-field full"><label for="monthly-pay-note">변경 메모</label><input id="monthly-pay-note" name="grossPayNote" maxlength="200" value="${e(current.grossPayNote || "")}" placeholder="예: 보강 수업 2시간 포함" /><span class="form-help">개인정보나 상세 급여 내역을 적지 말고 변경 이유만 간단히 기록합니다.</span></div>
     </form>

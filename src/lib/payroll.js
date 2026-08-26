@@ -146,9 +146,10 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
   const parkingAmount = Math.max(0, won(override.parkingAmount));
   const parkingTreatment = normalizeTreatment(override.parkingTreatment);
   const additionalEarnings = normalizeAdditionalEarnings(override.additionalEarnings);
+  const otherPaymentAmount = additionalEarnings.reduce((sum, line) => sum + line.amount, 0);
   const additionalGrossPay = transportAmount
     + parkingAmount
-    + additionalEarnings.reduce((sum, line) => sum + line.amount, 0);
+    + otherPaymentAmount;
   const unconfirmedCount = Number(transportAmount > 0 && transportTreatment === "pending")
     + Number(parkingAmount > 0 && parkingTreatment === "pending")
     + additionalEarnings.filter((line) => line.amount > 0 && line.treatment === "pending").length;
@@ -168,6 +169,7 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     parkingTreatment,
     parkingInsuranceCovered: override.parkingInsuranceCovered === true,
     additionalEarnings,
+    otherPaymentAmount,
     additionalGrossPay,
     totalGrossPay: employeeGrossPay + businessGrossPay + additionalGrossPay,
     unconfirmedCount,

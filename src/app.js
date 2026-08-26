@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-self-onboarding-r19";
-import { helpArticles } from "./data/help-content.js?v=20260826-self-onboarding-r19";
+import { appConfig } from "./config.js?v=20260826-access-resubmission-r20";
+import { helpArticles } from "./data/help-content.js?v=20260826-access-resubmission-r20";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,17 +10,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-self-onboarding-r19";
+} from "./data/demo-data.js?v=20260826-access-resubmission-r20";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-self-onboarding-r19";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-self-onboarding-r19";
+} from "./data/nts-tax-policy.js?v=20260826-access-resubmission-r20";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-access-resubmission-r20";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-self-onboarding-r19";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-access-resubmission-r20";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -31,7 +31,7 @@ import {
   payslipVersionId,
   provisionalTeacherForAccessRequest,
   validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js?v=20260826-self-onboarding-r19";
+} from "./lib/payroll-lifecycle.js?v=20260826-access-resubmission-r20";
 import {
   calculatePayroll,
   createMonthlyEarningLines,
@@ -45,16 +45,16 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-self-onboarding-r19";
+} from "./lib/payroll.js?v=20260826-access-resubmission-r20";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-self-onboarding-r19";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-self-onboarding-r19";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-access-resubmission-r20";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-access-resubmission-r20";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-self-onboarding-r19";
+} from "./lib/teacher-self-service.js?v=20260826-access-resubmission-r20";
 
 const state = {
   user: null,
@@ -1848,7 +1848,7 @@ function openAccessApprovalModal(request) {
 
 function openAccessRejectionModal(request) {
   openModal("Google 계정 승인 요청 반려", `
-    <div class="notice warning"><i data-lucide="user-x"></i><span>이 요청을 반려하면 대기 목록에서 사라지고, 해당 Google 계정은 다시 승인 요청을 만들 수 없습니다.</span></div>
+    <div class="notice warning"><i data-lucide="user-x"></i><span>이 요청을 반려하면 대기 목록에서 사라집니다. 해당 Google 계정이 다시 로그인하면 새 대기 요청으로 표시됩니다.</span></div>
     <dl class="definition-list approval-summary"><div><dt>요청자</dt><dd>${e(request.displayName || "이름 미확인")}</dd></div><div><dt>Google 이메일</dt><dd>${e(request.email)}</dd></div></dl>
     <label class="checkbox-row" style="margin-top:18px"><input id="reject-access-confirm" type="checkbox" /> 이 계정을 연결하지 않고 반려합니다.</label>
   `, "요청 반려", async () => {

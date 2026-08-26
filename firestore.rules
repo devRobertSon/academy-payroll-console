@@ -237,21 +237,32 @@ service cloud.firestore {
         && request.resource.data.displayName is string
         && request.resource.data.status == 'pending'
         && request.resource.data.requestedAt == request.time;
-      allow update: if isAdmin()
-        && resource.data.status == 'pending'
-        && request.resource.data.reviewedBy == request.auth.uid
-        && request.resource.data.reviewedAt == request.time
-        && (
-          (request.resource.data.status == 'approved'
-            && request.resource.data.teacherId is string
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'teacherId', 'reviewedAt', 'reviewedBy'
-            ]))
-          || (request.resource.data.status == 'rejected'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'reviewedAt', 'reviewedBy'
-            ]))
-        );
+      allow update: if (isAdmin()
+          && resource.data.status == 'pending'
+          && request.resource.data.reviewedBy == request.auth.uid
+          && request.resource.data.reviewedAt == request.time
+          && (
+            (request.resource.data.status == 'approved'
+              && request.resource.data.teacherId is string
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'teacherId', 'reviewedAt', 'reviewedBy'
+              ]))
+            || (request.resource.data.status == 'rejected'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'reviewedAt', 'reviewedBy'
+              ]))
+          ))
+        || (signedIn()
+          && request.auth.uid == uid
+          && resource.data.status == 'rejected'
+          && request.resource.data.keys().hasOnly([
+            'uid', 'email', 'displayName', 'status', 'requestedAt'
+          ])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.displayName is string
+          && request.resource.data.status == 'pending'
+          && request.resource.data.requestedAt == request.time);
       allow delete: if false;
     }
 

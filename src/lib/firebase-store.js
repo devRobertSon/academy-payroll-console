@@ -10,6 +10,12 @@ const HELP_SYSTEM_INSTRUCTION = `당신은 Academy Payroll Console의 사용법 
 개인정보를 요청하지 마세요. 질문에 개인정보가 보이면 삭제하고 다시 질문하도록 안내하세요.
 설명서에 없는 내용은 추측하지 말고 관리자 또는 회계사 확인이 필요하다고 답하세요.`;
 
+export function accessRequestAction(accessRequest) {
+  if (!accessRequest) return "create";
+  if (accessRequest.status === "rejected") return "resubmit";
+  return "wait";
+}
+
 export async function createFirebaseStore(config) {
   const [appSdk, authSdk, firestoreSdk, appCheckSdk] = await Promise.all([
     import(sdk("app")),
@@ -39,10 +45,12 @@ export async function createFirebaseStore(config) {
     if (!userSnap.exists()) {
       const accessRequest = await createAccessRequest(firebaseUser);
       await authSdk.signOut(auth);
-      if (accessRequest?.status === "rejected") {
-        throw new Error("계정 승인 요청이 반려되었습니다. 관리자에게 문의해 주세요.");
+      if (accessRequest.action === "resubmit") {
+        throw new Error("승인 요청을 다시 보냈습니다. 관리자가 승인한 뒤 다시 로그인해 주세요.");
       }
-      throw new Error("계정 승인 요청을 보냈습니다. 관리자가 연결한 뒤 다시 로그인해 주세요.");
+      throw new Error(accessRequest.action === "create"
+        ? "계정 승인 요청을 보냈습니다. 관리자가 연결한 뒤 다시 로그인해 주세요."
+        : "계정 승인 요청이 대기 중입니다. 관리자가 연결한 뒤 다시 로그인해 주세요.");
     }
     if (userSnap.data().status !== "active") {
       await authSdk.signOut(auth);
@@ -59,7 +67,9 @@ export async function createFirebaseStore(config) {
   async function createAccessRequest(firebaseUser) {
     const reference = firestoreSdk.doc(db, "accessRequests", firebaseUser.uid);
     const snapshot = await firestoreSdk.getDoc(reference);
-    if (snapshot.exists()) return snapshot.data();
+    const existingRequest = snapshot.exists() ? snapshot.data() : null;
+    const action = accessRequestAction(existingRequest);
+    if (action === "wait") return { ...existingRequest, action };
     await firestoreSdk.setDoc(reference, {
       uid: firebaseUser.uid,
       email: firebaseUser.email || "",
@@ -67,7 +77,7 @@ export async function createFirebaseStore(config) {
       status: "pending",
       requestedAt: firestoreSdk.serverTimestamp()
     });
-    return { status: "pending" };
+    return { status: "pending", action };
   }
 
   async function signIn() {

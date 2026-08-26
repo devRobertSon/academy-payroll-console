@@ -225,8 +225,11 @@ async function checkLifecycleSecurity() {
   for (const rejectionSurface of ["data-reject-access", "openAccessRejectionModal", 'request.status = "rejected"']) {
     if (!app.includes(rejectionSurface)) failures.push(`Access-request rejection surface is missing: ${rejectionSurface}`);
   }
-  if (!store.includes("계정 승인 요청이 반려되었습니다")) {
-    failures.push("Rejected Google accounts must receive a clear login message.");
+  for (const resubmissionSurface of ["accessRequestAction", 'accessRequest.status === "rejected"', "승인 요청을 다시 보냈습니다"]) {
+    if (!store.includes(resubmissionSurface)) failures.push(`Rejected access-request resubmission is missing: ${resubmissionSurface}`);
+  }
+  for (const resubmissionRule of ["resource.data.status == 'rejected'", "request.auth.uid == uid", "request.resource.data.status == 'pending'"]) {
+    if (!rules.includes(resubmissionRule)) failures.push(`Rejected access-request resubmission rule is missing: ${resubmissionRule}`);
   }
 }
 

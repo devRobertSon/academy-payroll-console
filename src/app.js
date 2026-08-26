@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-notifications-r7";
-import { helpArticles } from "./data/help-content.js?v=20260826-notifications-r7";
+import { appConfig } from "./config.js?v=20260826-teacher-table-r8";
+import { helpArticles } from "./data/help-content.js?v=20260826-teacher-table-r8";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-notifications-r7";
+} from "./data/demo-data.js?v=20260826-teacher-table-r8";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-notifications-r7";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-notifications-r7";
+} from "./data/nts-tax-policy.js?v=20260826-teacher-table-r8";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-teacher-table-r8";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-notifications-r7";
+} from "./lib/payroll.js?v=20260826-teacher-table-r8";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-notifications-r7";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-notifications-r7";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-teacher-table-r8";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-teacher-table-r8";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-notifications-r7";
+} from "./lib/teacher-self-service.js?v=20260826-teacher-table-r8";
 
 const state = {
   user: null,
@@ -509,7 +509,7 @@ function renderTeachers() {
         }).join("") || emptyRow(5)}
       </tbody></table></div>
     </section>
-    <div class="split-layout">
+    <div class="split-layout ${selected ? "" : "single-column"}">
       <section class="data-surface table-scroll">
         <table><thead><tr><th>선생님</th><th>가입 보험</th><th>급여 구성</th><th class="numeric">기본 근로소득</th><th>사업 시급</th><th>상태</th></tr></thead><tbody>
           ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const hasBusiness = settings.businessRates.length > 0 || settings.defaultBusinessPay > 0; const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</td><td>${e(payCompositionLabel(settings.defaultEmployeePay, hasBusiness ? 1 : 0))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${settings.businessRates.length ? `${settings.businessRates.length}개 과목` : settings.defaultBusinessPay > 0 ? "기존 월액" : "미등록"}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`; }).join("") || emptyRow(6)}

@@ -155,6 +155,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .empty-state { padding: 48px 20px; color: var(--muted); text-align: center; }
 
 .split-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .75fr); gap: 20px; }
+.split-layout.single-column { grid-template-columns: minmax(0, 1fr); }
 .detail-panel { border: 1px solid var(--line); background: var(--surface); }
 .detail-panel-header { padding: 20px; border-bottom: 1px solid var(--line); }
 .detail-panel-header h2 { margin: 0 0 5px; font-size: 17px; }

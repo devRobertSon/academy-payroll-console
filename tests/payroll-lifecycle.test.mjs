@@ -8,7 +8,9 @@ import {
   payslipId,
   payslipVersionId,
   provisionalTeacherForAccessRequest,
-  validateTeacherAccessApproval
+  teacherDeletionBlockers,
+  validateTeacherAccessApproval,
+  validateTeacherDeletion
 } from "../src/lib/payroll-lifecycle.js";
 
 const request = {
@@ -40,6 +42,33 @@ test("이메일이 다른 Google 계정 연결은 거부한다", () => {
   assert.throws(
     () => validateTeacherAccessApproval(request, { ...teacher, email: "other@example.com" }),
     /이메일이 일치하지 않습니다/
+  );
+});
+
+test("선생님 삭제는 등록 이메일 확인이 일치해야 한다", () => {
+  assert.equal(validateTeacherDeletion(teacher, " Teacher@Example.com ", {}), true);
+  assert.throws(
+    () => validateTeacherDeletion(teacher, "other@example.com", {}),
+    /Google 이메일을 정확히 입력/
+  );
+});
+
+test("급여 관련 기록이 있는 선생님은 삭제하지 않고 비활성화한다", () => {
+  const workspaceData = {
+    monthlyWorkInputs: {
+      "2026-08:teacher-1": { teacherId: "teacher-1", month: "2026-08" }
+    },
+    payslips: [{ teacherId: "teacher-1", month: "2026-07" }],
+    payslipVersions: [{ teacherId: "other-teacher", month: "2026-07" }]
+  };
+
+  assert.deepEqual(teacherDeletionBlockers(workspaceData, "teacher-1"), [
+    { key: "monthlyWorkInputs", label: "월별 수업시간", count: 1 },
+    { key: "payslips", label: "급여명세서", count: 1 }
+  ]);
+  assert.throws(
+    () => validateTeacherDeletion(teacher, teacher.email, workspaceData),
+    /계정을 비활성화/
   );
 });
 

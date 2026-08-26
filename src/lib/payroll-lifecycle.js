@@ -27,6 +27,43 @@ export function validateTeacherAccessApproval(request, teacher) {
   return true;
 }
 
+const TEACHER_DELETION_REFERENCE_SOURCES = [
+  ["월별 수업시간", "monthlyWorkInputs"],
+  ["월별 급여 조정", "overrides"],
+  ["관리자 알림", "adminNotifications"],
+  ["급여명세서", "payslips"],
+  ["급여명세서 버전", "payslipVersions"],
+  ["명세서 열람 기록", "payslipReceipts"],
+  ["명세서 발송 기록", "payslipDeliveries"]
+];
+
+function collectionValues(value) {
+  return Array.isArray(value) ? value : Object.values(value || {});
+}
+
+export function teacherDeletionBlockers(workspaceData, teacherId) {
+  return TEACHER_DELETION_REFERENCE_SOURCES.flatMap(([label, key]) => {
+    const count = collectionValues(workspaceData?.[key])
+      .filter((item) => item?.teacherId === teacherId).length;
+    return count ? [{ key, label, count }] : [];
+  });
+}
+
+export function validateTeacherDeletion(teacher, confirmationEmail, workspaceData) {
+  if (!teacher?.id || !teacher.email) {
+    throw new Error("삭제할 선생님 정보를 확인할 수 없습니다.");
+  }
+  if (normalizeEmail(confirmationEmail) !== normalizeEmail(teacher.email)) {
+    throw new Error("등록된 Google 이메일을 정확히 입력해 주세요.");
+  }
+  const blockers = teacherDeletionBlockers(workspaceData, teacher.id);
+  if (blockers.length) {
+    const summary = blockers.map(({ label, count }) => `${label} ${count}건`).join(", ");
+    throw new Error(`급여 관련 기록이 있어 삭제할 수 없습니다. 계정을 비활성화해 주세요. (${summary})`);
+  }
+  return true;
+}
+
 export function nextPayrollRevision(run) {
   const current = Math.max(0, Number(run?.revision) || 0);
   return run?.status === "cancelled" ? current + 1 : Math.max(1, current);

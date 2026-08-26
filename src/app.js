@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-mobile-phone-r25";
-import { helpArticles } from "./data/help-content.js?v=20260826-mobile-phone-r25";
+import { appConfig } from "./config.js?v=20260826-teacher-delete-r26";
+import { helpArticles } from "./data/help-content.js?v=20260826-teacher-delete-r26";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-mobile-phone-r25";
+} from "./data/demo-data.js?v=20260826-teacher-delete-r26";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-mobile-phone-r25";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-mobile-phone-r25";
+} from "./data/nts-tax-policy.js?v=20260826-teacher-delete-r26";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-teacher-delete-r26";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-mobile-phone-r25";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-teacher-delete-r26";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -28,8 +28,10 @@ import {
   payslipId,
   payslipVersionId,
   provisionalTeacherForAccessRequest,
-  validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js?v=20260826-mobile-phone-r25";
+  teacherDeletionBlockers,
+  validateTeacherAccessApproval,
+  validateTeacherDeletion
+} from "./lib/payroll-lifecycle.js?v=20260826-teacher-delete-r26";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -44,17 +46,17 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-mobile-phone-r25";
+} from "./lib/payroll.js?v=20260826-teacher-delete-r26";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-mobile-phone-r25";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-mobile-phone-r25";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-mobile-phone-r25";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-teacher-delete-r26";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-teacher-delete-r26";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-teacher-delete-r26";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-mobile-phone-r25";
+} from "./lib/teacher-self-service.js?v=20260826-teacher-delete-r26";
 
 const state = {
   user: null,
@@ -489,7 +491,7 @@ function renderTeachers() {
         </tbody></table>
       </section>
       ${selected ? `<aside class="detail-panel">
-        <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><button class="icon-button" type="button" title="선생님 정보 수정" aria-label="${e(selected.name)} 정보 수정" data-edit-teacher><i data-lucide="pencil"></i></button></div>
+        <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><div class="row-actions"><button class="icon-button" type="button" title="선생님 정보 수정" aria-label="${e(selected.name)} 정보 수정" data-edit-teacher><i data-lucide="pencil"></i></button><button class="icon-button icon-button-danger" type="button" title="선생님 삭제" aria-label="${e(selected.name)} 삭제" data-delete-teacher><i data-lucide="trash-2"></i></button></div></div>
         <div class="detail-block"><h3>휴대전화·식별 정보</h3><dl class="definition-list"><div><dt>휴대전화</dt><dd>${e(formatMobilePhoneNumber(selected.phone) || "미등록")}</dd></div><div><dt>생년월일</dt><dd>${e(formatMaskedTeacherIdentity(selected) || "미등록")}</dd></div><div><dt>전체 주민등록번호</dt><dd>저장하지 않음</dd></div></dl></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
@@ -501,6 +503,7 @@ function renderTeachers() {
   elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
   elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
+  elements.content.querySelector("[data-delete-teacher]")?.addEventListener("click", () => openTeacherDeletionModal(selected));
   elements.content.querySelector("[data-edit-tax-profile]")?.addEventListener("click", () => openTaxProfileModal(selected));
   elements.content.querySelectorAll("[data-approve-access]").forEach((button) => button.addEventListener("click", () => {
     const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.approveAccess);
@@ -1878,6 +1881,50 @@ function openAccessRejectionModal(request) {
     showToast(`${request.displayName || request.email} 계정의 승인 요청을 반려했습니다.`);
     renderTeachers();
   });
+}
+
+function openTeacherDeletionModal(teacher) {
+  const blockers = teacherDeletionBlockers(state.data, teacher.id);
+  if (blockers.length) {
+    const summary = blockers.map(({ label, count }) => `${label} ${count}건`).join(", ");
+    openModal("선생님 삭제", `
+      <div class="notice warning"><i data-lucide="shield-alert"></i><span>이 선생님은 급여 관련 기록이 있어 삭제할 수 없습니다. 선생님 정보 수정에서 계정 상태를 비활성으로 변경해 주세요.</span></div>
+      <dl class="definition-list approval-summary"><div><dt>선생님</dt><dd>${e(teacher.name)}</dd></div><div><dt>보존 기록</dt><dd>${e(summary)}</dd></div></dl>
+    `, null);
+    return;
+  }
+
+  openModal("선생님 삭제", `
+    <div class="notice warning"><i data-lucide="triangle-alert"></i><span>선생님 기본 정보와 포털 접근 권한을 삭제합니다. 삭제한 정보는 복구할 수 없습니다.</span></div>
+    <dl class="definition-list approval-summary"><div><dt>선생님</dt><dd>${e(teacher.name)}</dd></div><div><dt>Google 이메일</dt><dd>${e(teacher.email)}</dd></div></dl>
+    <form id="teacher-delete-form" class="form-grid" style="margin-top:18px">
+      <div class="form-field full"><label for="teacher-delete-email">삭제 확인 이메일</label><input id="teacher-delete-email" name="confirmationEmail" type="email" autocomplete="off" spellcheck="false" placeholder="위 Google 이메일을 입력하세요" required /><span class="form-help">등록된 Google 이메일과 일치해야 삭제할 수 있습니다.</span></div>
+    </form>
+  `, "선생님 삭제", async () => {
+    const form = document.querySelector("#teacher-delete-form");
+    if (!form.reportValidity()) return false;
+    const confirmationEmail = new FormData(form).get("confirmationEmail");
+    validateTeacherDeletion(teacher, confirmationEmail, state.data);
+    if (state.store) await state.store.deleteTeacher(teacher);
+    state.data.teachers = state.data.teachers.filter((item) => item.id !== teacher.id);
+    state.data.accessRequests = state.data.accessRequests.filter((request) => (
+      request.teacherId !== teacher.id && (!teacher.authUid || (request.uid || request.id) !== teacher.authUid)
+    ));
+    state.selectedTeacherId = state.data.teachers[0]?.id || null;
+    showToast(`${teacher.name} 선생님을 삭제했습니다.`);
+    renderTeachers();
+  });
+
+  const form = document.querySelector("#teacher-delete-form");
+  const emailInput = form.querySelector('[name="confirmationEmail"]');
+  const submit = elements.modalRoot.querySelector("[data-submit-modal]");
+  submit.classList.remove("button-primary");
+  submit.classList.add("button-danger");
+  const syncDeleteButton = () => {
+    submit.disabled = normalizeEmail(emailInput.value) !== normalizeEmail(teacher.email);
+  };
+  emailInput.addEventListener("input", syncDeleteButton);
+  syncDeleteButton();
 }
 
 function openTeacherEditModal(teacher) {

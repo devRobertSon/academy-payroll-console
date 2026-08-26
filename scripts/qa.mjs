@@ -257,7 +257,7 @@ async function checkLifecycleSecurity() {
   }
 
   const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
-  for (const operation of ["approveTeacherAccess", "rejectTeacherAccess", "updateTeacher", "cancelPayrollRun"]) {
+  for (const operation of ["approveTeacherAccess", "rejectTeacherAccess", "updateTeacher", "deleteTeacher", "cancelPayrollRun"]) {
     if (!store.includes(`async function ${operation}`)) failures.push(`Firebase store operation is missing: ${operation}`);
   }
   const app = await readFile(join(root, "src", "app.js"), "utf8");
@@ -269,6 +269,18 @@ async function checkLifecycleSecurity() {
   }
   for (const resubmissionRule of ["resource.data.status == 'rejected'", "request.auth.uid == uid", "request.resource.data.status == 'pending'"]) {
     if (!rules.includes(resubmissionRule)) failures.push(`Rejected access-request resubmission rule is missing: ${resubmissionRule}`);
+  }
+  const lifecycle = await readFile(join(root, "src", "lib", "payroll-lifecycle.js"), "utf8");
+  for (const deletionSurface of ["data-delete-teacher", "openTeacherDeletionModal", "teacher-delete-email", "validateTeacherDeletion"]) {
+    if (!app.includes(deletionSurface)) failures.push(`Teacher deletion confirmation surface is missing: ${deletionSurface}`);
+  }
+  for (const safeguard of ["teacherDeletionBlockers", "급여 관련 기록이 있어 삭제할 수 없습니다", "Google 이메일을 정확히 입력"]) {
+    if (!lifecycle.includes(safeguard)) failures.push(`Teacher deletion safeguard is missing: ${safeguard}`);
+  }
+  if ((rules.match(/allow delete: if isAdmin\(\);/g) || []).length < 2
+    || !store.includes('action: "TEACHER_DELETED"')
+    || !store.includes('batch.delete(firestoreSdk.doc(db, "users", teacher.authUid))')) {
+    failures.push("Teacher deletion must remove the teacher portal account under admin-only rules and retain an audit log.");
   }
 }
 

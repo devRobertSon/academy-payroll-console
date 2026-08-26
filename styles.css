@@ -60,6 +60,8 @@ button { color: inherit; }
 .button-secondary { border-color: var(--line-strong); background: var(--surface); }
 .button-secondary:hover { border-color: var(--brand); color: var(--brand); }
 .button-danger { color: var(--danger); border-color: #e4bbbb; background: var(--surface); }
+.button-danger:not(:disabled):hover { background: var(--danger-pale); }
+.icon-button-danger { color: var(--danger); }
 .button-compact { min-height: 32px; padding: 5px 9px; font-size: 10px; }
 .button-compact svg { width: 14px; height: 14px; }
 .button-wide { width: min(440px, 100%); min-height: 48px; font-size: 14px; }
@@ -166,7 +168,8 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .detail-panel-header p { margin: 0; color: var(--muted); font-size: 11px; }
 .detail-panel-header.detail-title-row { align-items: flex-start; margin-bottom: 0; }
 .detail-panel-header.detail-title-row > div { min-width: 0; }
-.detail-panel-header.detail-title-row .icon-button { margin-left: auto; }
+.detail-panel-header.detail-title-row > .row-actions { margin-left: auto; }
+.detail-panel-header.detail-title-row > .row-actions .icon-button { margin-left: 0; }
 .detail-block { padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .detail-block:last-child { border-bottom: 0; }
 .detail-block h3 { margin: 0 0 12px; font-size: 11px; color: var(--muted); }

@@ -282,6 +282,25 @@ export async function createFirebaseStore(config) {
     await batch.commit();
   }
 
+  async function deleteTeacher(teacher) {
+    if (!teacher?.id) throw new Error("삭제할 선생님 정보를 확인할 수 없습니다.");
+    const batch = firestoreSdk.writeBatch(db);
+    const deletedAt = firestoreSdk.serverTimestamp();
+    batch.delete(firestoreSdk.doc(db, "teachers", teacher.id));
+    if (teacher.authUid) {
+      batch.delete(firestoreSdk.doc(db, "users", teacher.authUid));
+      batch.delete(firestoreSdk.doc(db, "accessRequests", teacher.authUid));
+    }
+    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+      action: "TEACHER_DELETED",
+      teacherId: teacher.id,
+      subjectUid: teacher.authUid || null,
+      actorUid: auth.currentUser.uid,
+      createdAt: deletedAt
+    });
+    await batch.commit();
+  }
+
   async function saveTeacherProfile(teacherId, profile) {
     const batch = firestoreSdk.writeBatch(db);
     const updatedAt = firestoreSdk.serverTimestamp();
@@ -499,6 +518,7 @@ export async function createFirebaseStore(config) {
     approveTeacherAccess,
     rejectTeacherAccess,
     updateTeacher,
+    deleteTeacher,
     saveTeacherProfile,
     saveTeacherMonthlyInput,
     markAdminNotificationRead,

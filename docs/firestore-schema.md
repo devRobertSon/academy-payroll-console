@@ -5,8 +5,8 @@
 | 컬렉션 | 관리자 | 선생님 |
 |---|---|---|
 | `users` | 전체 관리 | 본인 문서 조회 |
-| `accessRequests` | 승인 요청 조회·처리 | 미등록 본인 요청 생성·조회 |
-| `teachers` | 관리 | 연결된 본인 조회, 기본 정보·보험 가입 여부·시급 수정 |
+| `accessRequests` | 승인 요청 조회·처리·삭제 | 미등록 본인 요청 생성·조회 |
+| `teachers` | 관리·기록 없는 오등록 문서 삭제 | 연결된 본인 조회, 기본 정보·보험 가입 여부·시급 수정 |
 | `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간 조회·수정 |
 | `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간 제출 알림 생성·갱신 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
@@ -37,6 +37,8 @@
 ```
 
 ### `teachers/{teacherId}`
+
+관리자는 급여 관련 기록이 전혀 없는 잘못된 등록만 화면에서 삭제합니다. 앱은 등록된 Google 이메일 재입력을 확인한 뒤 `teachers` 문서, 연결된 `users` 문서와 `accessRequests` 문서를 한 batch로 삭제하고 `TEACHER_DELETED` 감사 로그를 남깁니다. Firebase Authentication의 Google 계정 자체는 삭제하지 않습니다. 수업시간·월별 급여·명세서·열람·발송 기록이 있으면 삭제하지 않고 선생님 상태를 `inactive`로 변경합니다.
 
 ```json
 {

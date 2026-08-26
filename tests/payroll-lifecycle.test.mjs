@@ -9,6 +9,7 @@ import {
   payslipVersionId,
   provisionalTeacherForAccessRequest,
   teacherDeletionBlockers,
+  teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
 } from "../src/lib/payroll-lifecycle.js";
@@ -53,18 +54,47 @@ test("선생님 삭제는 등록 이메일 확인이 일치해야 한다", () =>
   );
 });
 
-test("급여 관련 기록이 있는 선생님은 삭제하지 않고 비활성화한다", () => {
+test("수업시간과 미확정 급여 기록만 있으면 삭제할 수 있다", () => {
   const workspaceData = {
     monthlyWorkInputs: {
-      "2026-08:teacher-1": { teacherId: "teacher-1", month: "2026-08" }
+      "2026-08:teacher-1": { id: "2026-08_teacher-1", teacherId: "teacher-1", month: "2026-08" }
     },
-    payslips: [{ teacherId: "teacher-1", month: "2026-07" }],
-    payslipVersions: [{ teacherId: "other-teacher", month: "2026-07" }]
+    overrides: {
+      "2026-08:teacher-1": { id: "2026-08_teacher-1", teacherId: "teacher-1", month: "2026-08" }
+    },
+    adminNotifications: [
+      { id: "work-hours_2026-08_teacher-1", teacherId: "teacher-1", month: "2026-08" }
+    ],
+    payrollRuns: [{ month: "2026-08", status: "draft" }]
+  };
+
+  assert.deepEqual(teacherDeletionBlockers(workspaceData, "teacher-1"), []);
+  assert.deepEqual(teacherDeletionCleanupReferences(workspaceData, "teacher-1"), [
+    { key: "monthlyWorkInputs", collection: "teacherMonthlyInputs", id: "2026-08_teacher-1" },
+    { key: "overrides", collection: "payrollOverrides", id: "2026-08_teacher-1" },
+    { key: "adminNotifications", collection: "adminNotifications", id: "work-hours_2026-08_teacher-1" }
+  ]);
+  assert.equal(validateTeacherDeletion(teacher, teacher.email, workspaceData), true);
+});
+
+test("확정 급여와 명세서 기록이 있는 선생님은 삭제하지 않고 비활성화한다", () => {
+  const workspaceData = {
+    monthlyWorkInputs: {
+      "2026-08:teacher-1": { id: "2026-08_teacher-1", teacherId: "teacher-1", month: "2026-08" },
+      "2026-07:teacher-1": { id: "2026-07_teacher-1", teacherId: "teacher-1", month: "2026-07" }
+    },
+    payrollRuns: [
+      { month: "2026-08", status: "published" },
+      { month: "2026-07", status: "cancelled" }
+    ],
+    payslips: [{ teacherId: "teacher-1", month: "2026-07", status: "published" }],
+    payslipVersions: [{ teacherId: "teacher-1", month: "2026-07", revision: 1 }]
   };
 
   assert.deepEqual(teacherDeletionBlockers(workspaceData, "teacher-1"), [
-    { key: "monthlyWorkInputs", label: "월별 수업시간", count: 1 },
-    { key: "payslips", label: "급여명세서", count: 1 }
+    { key: "approvedPayrolls", label: "확정 급여", count: 2 },
+    { key: "payslips", label: "현재 급여명세서", count: 1 },
+    { key: "payslipVersions", label: "급여명세서 발행 이력", count: 1 }
   ]);
   assert.throws(
     () => validateTeacherDeletion(teacher, teacher.email, workspaceData),

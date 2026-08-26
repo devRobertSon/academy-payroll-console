@@ -250,6 +250,11 @@ service cloud.firestore {
         || get(/databases/$(database)/documents/payrollRuns/$(month)).data.status != 'published';
     }
 
+    function monthHasNoApprovedPayroll(month) {
+      return !exists(/databases/$(database)/documents/payrollRuns/$(month))
+        || get(/databases/$(database)/documents/payrollRuns/$(month)).data.status in ['draft', 'ready'];
+    }
+
     function validTeacherWorkHoursNotification(notificationId) {
       return activeAccount()
         && account().role == 'teacher'
@@ -382,7 +387,7 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
           && monthIsEditable(request.resource.data.month));
-      allow delete: if false;
+      allow delete: if isAdmin() && monthHasNoApprovedPayroll(resource.data.month);
     }
 
     match /adminNotifications/{notificationId} {
@@ -398,7 +403,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'readAt', 'readBy'
           ]));
-      allow delete: if false;
+      allow delete: if isAdmin() && monthHasNoApprovedPayroll(resource.data.month);
     }
 
     match /payrollPolicies/{policyId} {
@@ -428,7 +433,7 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create, update: if isAdmin()
         && excludesResidentRegistrationNumber(request.resource.data);
-      allow delete: if false;
+      allow delete: if isAdmin() && monthHasNoApprovedPayroll(resource.data.month);
     }
 
     match /payrollRuns/{month} {

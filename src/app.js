@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-input-flow-r27";
-import { helpArticles } from "./data/help-content.js?v=20260826-input-flow-r27";
+import { appConfig } from "./config.js?v=20260826-delete-policy-r28";
+import { helpArticles } from "./data/help-content.js?v=20260826-delete-policy-r28";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-input-flow-r27";
+} from "./data/demo-data.js?v=20260826-delete-policy-r28";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-input-flow-r27";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-input-flow-r27";
+} from "./data/nts-tax-policy.js?v=20260826-delete-policy-r28";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-delete-policy-r28";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-input-flow-r27";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-delete-policy-r28";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -29,9 +29,10 @@ import {
   payslipVersionId,
   provisionalTeacherForAccessRequest,
   teacherDeletionBlockers,
+  teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260826-input-flow-r27";
+} from "./lib/payroll-lifecycle.js?v=20260826-delete-policy-r28";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -46,18 +47,18 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-input-flow-r27";
+} from "./lib/payroll.js?v=20260826-delete-policy-r28";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-input-flow-r27";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-input-flow-r27";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260826-input-flow-r27";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-input-flow-r27";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-delete-policy-r28";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-delete-policy-r28";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260826-delete-policy-r28";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-delete-policy-r28";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-input-flow-r27";
+} from "./lib/teacher-self-service.js?v=20260826-delete-policy-r28";
 
 const state = {
   user: null,
@@ -1931,7 +1932,7 @@ function openTeacherDeletionModal(teacher) {
   if (blockers.length) {
     const summary = blockers.map(({ label, count }) => `${label} ${count}건`).join(", ");
     openModal("선생님 삭제", `
-      <div class="notice warning"><i data-lucide="shield-alert"></i><span>이 선생님은 급여 관련 기록이 있어 삭제할 수 없습니다. 선생님 정보 수정에서 계정 상태를 비활성으로 변경해 주세요.</span></div>
+      <div class="notice warning"><i data-lucide="shield-alert"></i><span>이 선생님은 확정 급여 또는 급여명세서 기록이 있어 삭제할 수 없습니다. 선생님 정보 수정에서 계정 상태를 비활성으로 변경해 주세요.</span></div>
       <dl class="definition-list approval-summary"><div><dt>선생님</dt><dd>${e(teacher.name)}</dd></div><div><dt>보존 기록</dt><dd>${e(summary)}</dd></div></dl>
     `, null);
     return;
@@ -1948,8 +1949,14 @@ function openTeacherDeletionModal(teacher) {
     if (!form.reportValidity()) return false;
     const confirmationEmail = new FormData(form).get("confirmationEmail");
     validateTeacherDeletion(teacher, confirmationEmail, state.data);
-    if (state.store) await state.store.deleteTeacher(teacher);
+    const cleanupReferences = teacherDeletionCleanupReferences(state.data, teacher.id);
+    if (state.store) await state.store.deleteTeacher(teacher, cleanupReferences);
     state.data.teachers = state.data.teachers.filter((item) => item.id !== teacher.id);
+    state.data.monthlyWorkInputs = Object.fromEntries(Object.entries(state.data.monthlyWorkInputs)
+      .filter(([, item]) => item.teacherId !== teacher.id));
+    state.data.overrides = Object.fromEntries(Object.entries(state.data.overrides)
+      .filter(([, item]) => item.teacherId !== teacher.id));
+    state.data.adminNotifications = state.data.adminNotifications.filter((item) => item.teacherId !== teacher.id);
     state.data.accessRequests = state.data.accessRequests.filter((request) => (
       request.teacherId !== teacher.id && (!teacher.authUid || (request.uid || request.id) !== teacher.authUid)
     ));

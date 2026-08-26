@@ -282,10 +282,17 @@ export async function createFirebaseStore(config) {
     await batch.commit();
   }
 
-  async function deleteTeacher(teacher) {
+  async function deleteTeacher(teacher, cleanupReferences = []) {
     if (!teacher?.id) throw new Error("삭제할 선생님 정보를 확인할 수 없습니다.");
+    if (cleanupReferences.length > 490) throw new Error("정리할 미확정 기록이 너무 많습니다. 관리자에게 문의해 주세요.");
     const batch = firestoreSdk.writeBatch(db);
     const deletedAt = firestoreSdk.serverTimestamp();
+    const allowedCleanupCollections = new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"]);
+    cleanupReferences.forEach(({ collection, id }) => {
+      if (allowedCleanupCollections.has(collection) && id) {
+        batch.delete(firestoreSdk.doc(db, collection, id));
+      }
+    });
     batch.delete(firestoreSdk.doc(db, "teachers", teacher.id));
     if (teacher.authUid) {
       batch.delete(firestoreSdk.doc(db, "users", teacher.authUid));
@@ -295,6 +302,7 @@ export async function createFirebaseStore(config) {
       action: "TEACHER_DELETED",
       teacherId: teacher.id,
       subjectUid: teacher.authUid || null,
+      removedDraftReferenceCount: cleanupReferences.length,
       actorUid: auth.currentUser.uid,
       createdAt: deletedAt
     });

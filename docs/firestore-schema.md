@@ -38,7 +38,7 @@
 
 ### `teachers/{teacherId}`
 
-관리자는 급여 관련 기록이 전혀 없는 잘못된 등록만 화면에서 삭제합니다. 앱은 등록된 Google 이메일 재입력을 확인한 뒤 `teachers` 문서, 연결된 `users` 문서와 `accessRequests` 문서를 한 batch로 삭제하고 `TEACHER_DELETED` 감사 로그를 남깁니다. Firebase Authentication의 Google 계정 자체는 삭제하지 않습니다. 수업시간·월별 급여·명세서·열람·발송 기록이 있으면 삭제하지 않고 선생님 상태를 `inactive`로 변경합니다.
+관리자는 확정 급여와 급여명세서 기록이 없는 잘못된 등록을 화면에서 삭제할 수 있습니다. 앱은 등록된 Google 이메일 재입력을 확인한 뒤 `teachers` 문서, 연결된 `users` 문서와 `accessRequests` 문서를 한 batch로 삭제하고 `TEACHER_DELETED` 감사 로그를 남깁니다. 수업시간, 미확정 급여 조정과 관리자 알림은 같은 batch에서 함께 정리합니다. Firebase Authentication의 Google 계정 자체는 삭제하지 않습니다. 현재·과거 급여명세서, 명세서 버전, 열람 또는 발송 기록이 있으면 삭제하지 않고 선생님 상태를 `inactive`로 변경합니다.
 
 ```json
 {

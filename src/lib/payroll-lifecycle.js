@@ -30,13 +30,16 @@ export function validateTeacherAccessApproval(request, teacher) {
 }
 
 const TEACHER_DELETION_REFERENCE_SOURCES = [
-  ["월별 수업시간", "monthlyWorkInputs"],
-  ["월별 급여 조정", "overrides"],
-  ["관리자 알림", "adminNotifications"],
-  ["급여명세서", "payslips"],
-  ["급여명세서 버전", "payslipVersions"],
+  ["현재 급여명세서", "payslips"],
+  ["급여명세서 발행 이력", "payslipVersions"],
   ["명세서 열람 기록", "payslipReceipts"],
   ["명세서 발송 기록", "payslipDeliveries"]
+];
+
+const TEACHER_DELETION_CLEANUP_SOURCES = [
+  ["monthlyWorkInputs", "teacherMonthlyInputs"],
+  ["overrides", "payrollOverrides"],
+  ["adminNotifications", "adminNotifications"]
 ];
 
 function collectionValues(value) {
@@ -44,11 +47,29 @@ function collectionValues(value) {
 }
 
 export function teacherDeletionBlockers(workspaceData, teacherId) {
-  return TEACHER_DELETION_REFERENCE_SOURCES.flatMap(([label, key]) => {
+  const teacherPayrollMonths = new Set([
+    ...collectionValues(workspaceData?.monthlyWorkInputs),
+    ...collectionValues(workspaceData?.overrides)
+  ].filter((item) => item?.teacherId === teacherId && item.month).map((item) => item.month));
+  const approvedPayrollCount = collectionValues(workspaceData?.payrollRuns)
+    .filter((run) => ["published", "cancelled"].includes(run?.status) && teacherPayrollMonths.has(run.month))
+    .length;
+  const blockers = TEACHER_DELETION_REFERENCE_SOURCES.flatMap(([label, key]) => {
     const count = collectionValues(workspaceData?.[key])
       .filter((item) => item?.teacherId === teacherId).length;
     return count ? [{ key, label, count }] : [];
   });
+  return approvedPayrollCount
+    ? [{ key: "approvedPayrolls", label: "확정 급여", count: approvedPayrollCount }, ...blockers]
+    : blockers;
+}
+
+export function teacherDeletionCleanupReferences(workspaceData, teacherId) {
+  return TEACHER_DELETION_CLEANUP_SOURCES.flatMap(([key, collection]) => (
+    collectionValues(workspaceData?.[key])
+      .filter((item) => item?.teacherId === teacherId && item.id)
+      .map((item) => ({ key, collection, id: item.id }))
+  ));
 }
 
 export function validateTeacherDeletion(teacher, confirmationEmail, workspaceData) {
@@ -61,7 +82,7 @@ export function validateTeacherDeletion(teacher, confirmationEmail, workspaceDat
   const blockers = teacherDeletionBlockers(workspaceData, teacher.id);
   if (blockers.length) {
     const summary = blockers.map(({ label, count }) => `${label} ${count}건`).join(", ");
-    throw new Error(`급여 관련 기록이 있어 삭제할 수 없습니다. 계정을 비활성화해 주세요. (${summary})`);
+    throw new Error(`확정 급여 또는 급여명세서 기록이 있어 삭제할 수 없습니다. 계정을 비활성화해 주세요. (${summary})`);
   }
   return true;
 }

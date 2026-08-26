@@ -275,11 +275,14 @@ async function checkLifecycleSecurity() {
   for (const deletionSurface of ["data-delete-teacher", "openTeacherDeletionModal", "teacher-delete-email", "validateTeacherDeletion"]) {
     if (!app.includes(deletionSurface)) failures.push(`Teacher deletion confirmation surface is missing: ${deletionSurface}`);
   }
-  for (const safeguard of ["teacherDeletionBlockers", "급여 관련 기록이 있어 삭제할 수 없습니다", "Google 이메일을 정확히 입력"]) {
+  for (const safeguard of ["teacherDeletionBlockers", "teacherDeletionCleanupReferences", "확정 급여 또는 급여명세서 기록이 있어 삭제할 수 없습니다", "Google 이메일을 정확히 입력"]) {
     if (!lifecycle.includes(safeguard)) failures.push(`Teacher deletion safeguard is missing: ${safeguard}`);
   }
   if ((rules.match(/allow delete: if isAdmin\(\);/g) || []).length < 2
+    || (rules.match(/allow delete: if isAdmin\(\) && monthHasNoApprovedPayroll/g) || []).length !== 3
+    || !rules.includes("function monthHasNoApprovedPayroll")
     || !store.includes('action: "TEACHER_DELETED"')
+    || !store.includes('new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"])')
     || !store.includes('batch.delete(firestoreSdk.doc(db, "users", teacher.authUid))')) {
     failures.push("Teacher deletion must remove the teacher portal account under admin-only rules and retain an audit log.");
   }

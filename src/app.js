@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-insurance-rounding-r10";
-import { helpArticles } from "./data/help-content.js?v=20260826-insurance-rounding-r10";
+import { appConfig } from "./config.js?v=20260826-insurance-tax-preview-r12";
+import { helpArticles } from "./data/help-content.js?v=20260826-insurance-tax-preview-r12";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-insurance-rounding-r10";
+} from "./data/demo-data.js?v=20260826-insurance-tax-preview-r12";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-insurance-rounding-r10";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-rounding-r10";
+} from "./data/nts-tax-policy.js?v=20260826-insurance-tax-preview-r12";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-tax-preview-r12";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-insurance-rounding-r10";
+} from "./lib/payroll.js?v=20260826-insurance-tax-preview-r12";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-rounding-r10";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-rounding-r10";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-tax-preview-r12";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-tax-preview-r12";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-insurance-rounding-r10";
+} from "./lib/teacher-self-service.js?v=20260826-insurance-tax-preview-r12";
 
 const state = {
   user: null,
@@ -1105,13 +1105,15 @@ function treatmentOptions(selected = "pending") {
 function insuranceEditorHtml(settings, prefix) {
   return `<div class="form-field full insurance-editor-field">
     <div class="editor-heading"><label>4대보험 가입·신고 기준</label><span class="form-help">가입 항목을 선택하면 월 지급액이 신고 기준액으로 자동 입력됩니다.</span></div>
-    <div class="insurance-editor">${Object.entries(INSURANCE_LABELS).map(([key, label]) => {
+    <div class="insurance-editor">
+      <div class="insurance-setting-head" aria-hidden="true"><span>보험</span><span>신고 기준액</span><span>적용 기간</span><span>예상 보험료</span></div>
+      ${Object.entries(INSURANCE_LABELS).map(([key, label]) => {
       const item = settings?.[key] || {};
       return `<div class="insurance-setting-row">
         <label class="checkbox-row"><input name="${prefix}-${key}-enrolled" type="checkbox" ${item.enrolled ? "checked" : ""} /> ${e(label)} 가입</label>
         <div class="input-suffix"><input name="${prefix}-${key}-base" type="number" min="0" step="1" value="${item.defaultBaseAmount ?? ""}" placeholder="신고 기준액" aria-label="${e(label)} 기본 신고 기준액" /><span>원</span></div>
-        <input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} 적용 시작일" />
-        <input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} 적용 종료일" />
+        <div class="insurance-period"><input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} 적용 시작일" /><span aria-hidden="true">~</span><input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} 적용 종료일" /></div>
+        <div class="insurance-row-premium"><span>예상 보험료</span><strong data-insurance-row-estimate="${key}">0원</strong></div>
       </div>`;
     }).join("")}</div>
     <div class="insurance-auto-preview" data-insurance-preview="${e(prefix)}" aria-live="polite">
@@ -1121,6 +1123,10 @@ function insuranceEditorHtml(settings, prefix) {
         <div><span>건강보험·장기요양</span><strong data-insurance-estimate="healthInsurance">0원</strong></div>
         <div><span>고용보험</span><strong data-insurance-estimate="employmentInsurance">0원</strong></div>
         <div><span>산재보험</span><strong>근로자 공제 없음</strong></div>
+      </div>
+      <div class="insurance-tax-preview">
+        <div><span>소득세</span><strong data-tax-estimate="incomeTax">0원</strong></div>
+        <div><span>지방소득세</span><strong data-tax-estimate="localIncomeTax">0원</strong></div>
       </div>
       <span class="form-help">신고 기준액은 1원 단위로 입력할 수 있습니다. 자동 보험료는 공단 기준에 따라 국민연금 기준액의 천원 미만과 보험료의 10원 미만을 절사합니다. 산재보험은 사업주 부담이며 실제 공단 고지액을 최종 확인하세요.</span>
     </div>
@@ -1176,6 +1182,11 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
       effectiveFrom: effectiveFrom.value || null,
       effectiveTo: effectiveTo.value || null
     }]));
+    const taxProfile = {
+      dependentCount: Math.max(1, Number(form.elements.dependentCount?.value) || 1),
+      children8To20: Math.max(0, Number(form.elements.children8To20?.value) || 0),
+      withholdingRatio: Number(form.elements.withholdingRatio?.value) || 1
+    };
     const payroll = calculatePayroll([{
       id: "insurance-preview",
       month: state.month,
@@ -1183,16 +1194,22 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
       hourlyRate: monthlyPay,
       treatment: "employee",
       insuranceCovered: true
-    }], policyForMonth(state.month), { insuranceSettings }, { dependentCount: 1, children8To20: 0, withholdingRatio: 1 });
+    }], policyForMonth(state.month), { insuranceSettings }, taxProfile);
     const estimates = {
       nationalPension: payroll.reporting.nationalPension,
       healthInsurance: payroll.reporting.healthAndLongTermCare,
-      employmentInsurance: payroll.reporting.employmentInsurance
+      employmentInsurance: payroll.reporting.employmentInsurance,
+      workersCompensation: 0
     };
     Object.entries(estimates).forEach(([key, amount]) => {
-      preview.querySelector(`[data-insurance-estimate="${key}"]`).textContent = formatWon(amount);
+      const summaryAmount = preview.querySelector(`[data-insurance-estimate="${key}"]`);
+      const rowAmount = form.querySelector(`[data-insurance-row-estimate="${key}"]`);
+      if (summaryAmount) summaryAmount.textContent = formatWon(amount);
+      if (rowAmount) rowAmount.textContent = formatWon(amount);
     });
     preview.querySelector("[data-insurance-total]").textContent = formatWon(payroll.reporting.insuranceTotal);
+    preview.querySelector('[data-tax-estimate="incomeTax"]').textContent = formatWon(payroll.deductions.employeeIncomeTax);
+    preview.querySelector('[data-tax-estimate="localIncomeTax"]').textContent = formatWon(payroll.deductions.employeeLocalTax);
   };
 
   payInput.addEventListener("input", () => update(true));
@@ -1202,6 +1219,9 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
     effectiveFrom.addEventListener("change", () => update());
     effectiveTo.addEventListener("change", () => update());
   });
+  [form.elements.dependentCount, form.elements.children8To20, form.elements.withholdingRatio]
+    .filter(Boolean)
+    .forEach((field) => field.addEventListener("input", () => update()));
   update();
 }
 
@@ -2406,3 +2426,4 @@ function isOfficialPublicSourceUrl(value) {
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
+

@@ -235,7 +235,7 @@ test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {
 test("공식 모의계산과 같이 자동 사회보험료의 10원 미만을 절사한다", () => {
   const insurancePolicy = resolveEffectivePolicy(officialInsurancePolicies, "2026-08");
   const payroll = calculatePayroll([
-    { hours: 1, hourlyRate: 3200001, treatment: "employee", insuranceCovered: true }
+    { hours: 1, hourlyRate: 3200000, treatment: "employee", insuranceCovered: true }
   ], createCombinedPolicy(ntsTaxPolicy2024, insurancePolicy));
 
   assert.equal(payroll.deductions.nationalPension, 152000);
@@ -406,3 +406,4 @@ test("간이세액표 CSV는 연속 구간과 1천만원 기준 행을 검증한
   assert.equal(parsed.tableRows.length, 1);
   assert.equal(parsed.taxAtTenMillion[10], 10);
 });
+

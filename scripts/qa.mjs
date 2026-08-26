@@ -94,10 +94,19 @@ async function checkHtmlAssets() {
   if (!app.includes("function bindInsuranceEditorAutomation") || !app.includes("data-insurance-preview")) {
     failures.push("Teacher insurance settings must provide automatic bases and deduction previews.");
   }
+  if (!app.includes("data-insurance-row-estimate") || !app.includes("적용 기간") || !app.includes("예상 보험료")) {
+    failures.push("Each insurance setting row must label its period and show the calculated premium.");
+  }
+  if (!app.includes('data-tax-estimate="incomeTax"') || !app.includes('data-tax-estimate="localIncomeTax"')) {
+    failures.push("Insurance preview must show income tax and local income tax below premiums.");
+  }
+  if (!app.includes("form.elements.dependentCount") || !app.includes("form.elements.children8To20") || !app.includes("form.elements.withholdingRatio")) {
+    failures.push("Tax preview must use the teacher's withholding profile fields.");
+  }
   if (!app.includes("보험료의 10원 미만을 절사") || !app.includes('name="insuranceRoundingUnit"')) {
     failures.push("Insurance preview and policy editor must expose the official rounding rule.");
   }
-  if (!css.includes(".insurance-auto-preview") || !css.includes(".insurance-preview-grid")) {
+  if (!css.includes(".insurance-auto-preview") || !css.includes(".insurance-preview-grid") || !css.includes(".insurance-tax-preview")) {
     failures.push("Automatic insurance preview styles are missing.");
   }
   for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
@@ -390,3 +399,4 @@ async function exists(path) {
     return false;
   }
 }
+

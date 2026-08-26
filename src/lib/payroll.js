@@ -621,8 +621,9 @@ function applyRateWithBounds(base, rule) {
     Math.min(base, Number(rule.maximumBase || Number.MAX_SAFE_INTEGER))
   );
   const calculationBase = floorToUnit(boundedBase, rule.baseUnit || 1);
+  const calculatedAmount = Number((calculationBase * Number(rule.rate)).toFixed(8));
   const amount = floorToUnit(
-    calculationBase * Number(rule.rate),
+    calculatedAmount,
     rule.roundingUnit || 1
   );
   return Math.max(
@@ -701,3 +702,4 @@ export function resolveRateRule(rules, entry) {
 function specificity(rule) {
   return Number(Boolean(rule.teacherId)) + Number(Boolean(rule.subjectId)) + Number(Boolean(rule.classId));
 }
+

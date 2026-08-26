@@ -322,8 +322,16 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .payroll-primary-field .input-suffix { max-width: 360px; }
 .form-section-heading { margin-top: 5px; padding-top: 15px; border-top: 1px solid var(--line); }
 .insurance-editor { display: grid; gap: 8px; }
-.insurance-setting-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) 140px 140px; align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--line); background: var(--surface-subtle); }
+.insurance-setting-head, .insurance-setting-row { display: grid; grid-template-columns: minmax(140px, .9fr) minmax(150px, 1fr) minmax(270px, 1.8fr) minmax(112px, .75fr); align-items: center; gap: 8px; }
+.insurance-setting-head { padding: 0 9px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.insurance-setting-head span:last-child { text-align: right; }
+.insurance-setting-row { padding: 9px; border: 1px solid var(--line); background: var(--surface-subtle); }
 .insurance-setting-row input { min-width: 0; }
+.insurance-period { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; }
+.insurance-period > span { color: var(--muted); font-size: 10px; }
+.insurance-row-premium { min-width: 0; text-align: right; }
+.insurance-row-premium > span { display: none; color: var(--muted); font-size: 10px; }
+.insurance-row-premium > strong { color: var(--brand-dark); overflow-wrap: anywhere; font-size: 11px; }
 .insurance-auto-preview { display: grid; gap: 10px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
 .insurance-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .insurance-preview-heading > span { color: var(--muted); font-size: 11px; font-weight: 700; }
@@ -333,6 +341,10 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .insurance-preview-grid span, .insurance-preview-grid strong { display: block; }
 .insurance-preview-grid span { margin-bottom: 4px; color: var(--muted); font-size: 10px; }
 .insurance-preview-grid strong { overflow-wrap: anywhere; font-size: 11px; }
+.insurance-tax-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.insurance-tax-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.insurance-tax-preview span { color: var(--muted); font-size: 10px; }
+.insurance-tax-preview strong { color: var(--brand-dark); font-size: 11px; }
 .additional-line-editor { display: grid; gap: 8px; }
 .additional-line-row { display: grid; grid-template-columns: minmax(130px, 1.2fr) minmax(130px, 1fr) minmax(145px, 1fr) minmax(130px, auto) 36px; align-items: center; gap: 8px; }
 .additional-line-row > input, .additional-line-row > select, .additional-line-row .input-suffix { min-width: 0; min-height: 40px; }
@@ -399,7 +411,10 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .help-toc { position: static; grid-template-columns: 1fr 1fr; }
   .help-toc > strong { grid-column: 1 / -1; }
   .assistant-panel { right: 12px; bottom: 12px; width: calc(100vw - 24px); height: min(680px, calc(100vh - 24px)); }
+  .insurance-setting-head { display: none; }
   .insurance-setting-row { grid-template-columns: 1fr 1fr; }
+  .insurance-period { grid-column: 1 / -1; }
+  .insurance-row-premium > span { display: block; margin-bottom: 3px; }
   .insurance-preview-grid { grid-template-columns: 1fr 1fr; }
 }
 
@@ -416,7 +431,11 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .business-line-row .icon-button { grid-column: 2; grid-row: 1; }
   .business-line-amount { text-align: left; }
   .insurance-setting-row { grid-template-columns: 1fr; }
+  .insurance-period { grid-column: auto; grid-template-columns: 1fr; }
+  .insurance-period > span { display: none; }
+  .insurance-row-premium { text-align: left; }
   .insurance-preview-grid { grid-template-columns: 1fr; }
+  .insurance-tax-preview { grid-template-columns: 1fr; }
   .additional-line-row { grid-template-columns: 1fr 36px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
   .additional-line-row > input, .additional-line-row > select, .additional-line-row .input-suffix, .additional-line-row .checkbox-row { grid-column: 1; }
   .additional-line-row .icon-button { grid-column: 2; grid-row: 1; }
@@ -445,3 +464,4 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .payslip-layout { display: block; }
   .payslip-sheet { min-height: 0; border: 0; box-shadow: none; }
 }
+

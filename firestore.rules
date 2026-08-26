@@ -58,24 +58,25 @@ service cloud.firestore {
       return hasValidTeacherIdentity(data) || hasMissingTeacherIdentity(data);
     }
 
-    function preservesLegacyTeacherIdentity(data) {
-      return !resource.data.keys().hasAny(['birthDateCode', 'genderCode'])
-        && !data.keys().hasAny(['birthDateCode', 'genderCode']);
-    }
-
     function hasValidIncomeComposition(data) {
       return data.incomeComposition is string
         && data.incomeComposition in ['employee', 'business', 'mixed'];
     }
 
-    function validSelfInsuranceItem(item) {
+    function validInsuranceItem(item) {
       return item is map
         && item.keys().hasOnly(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
         && item.keys().hasAll(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
-        && item.enrolled is bool;
+        && item.enrolled is bool
+        && (item.defaultBaseAmount == null
+          || (item.defaultBaseAmount is number
+            && item.defaultBaseAmount >= 0
+            && item.defaultBaseAmount <= 100000000))
+        && (item.effectiveFrom == null || item.effectiveFrom is string)
+        && (item.effectiveTo == null || item.effectiveTo is string);
     }
 
-    function hasValidSelfInsuranceSettings(data) {
+    function hasValidInsuranceSettings(data) {
       return data.insuranceSettings is map
         && data.insuranceSettings.keys().hasOnly([
           'nationalPension', 'healthInsurance', 'employmentInsurance'
@@ -83,9 +84,9 @@ service cloud.firestore {
         && data.insuranceSettings.keys().hasAll([
           'nationalPension', 'healthInsurance', 'employmentInsurance'
         ])
-        && validSelfInsuranceItem(data.insuranceSettings.nationalPension)
-        && validSelfInsuranceItem(data.insuranceSettings.healthInsurance)
-        && validSelfInsuranceItem(data.insuranceSettings.employmentInsurance)
+        && validInsuranceItem(data.insuranceSettings.nationalPension)
+        && validInsuranceItem(data.insuranceSettings.healthInsurance)
+        && validInsuranceItem(data.insuranceSettings.employmentInsurance)
         && data.insuranceEnrolled is bool
         && data.insuranceEnrolled == (
           data.insuranceSettings.nationalPension.enrolled
@@ -120,29 +121,24 @@ service cloud.firestore {
     function validBusinessRateAt(rates, index) {
       return rates.size() <= index ? true : (
         rates[index] is map
-        && rates[index].keys().hasOnly(['id', 'subjectName', 'hourlyRate'])
-        && rates[index].keys().hasAll(['id', 'subjectName', 'hourlyRate'])
+        && rates[index].keys().hasOnly(['id', 'hourlyRate'])
+        && rates[index].keys().hasAll(['id', 'hourlyRate'])
         && rates[index].id is string
         && rates[index].id.size() > 0
         && rates[index].id.size() <= 100
-        && rates[index].subjectName is string
-        && rates[index].subjectName.size() > 0
-        && rates[index].subjectName.size() <= 50
         && rates[index].hourlyRate is number
         && rates[index].hourlyRate > 0
         && rates[index].hourlyRate <= 10000000
       );
     }
 
-    function hasValidSelfBusinessRates(data) {
+    function hasValidBusinessRates(data) {
       return data.defaultBusinessHourlyRate is number
         && data.defaultBusinessHourlyRate >= 0
         && data.defaultBusinessHourlyRate <= 10000000
-        && data.usesSubjectRates is bool
+        && data.usesMultipleRates is bool
         && data.businessRates is list
         && data.businessRates.size() <= 10
-        && data.subjects is list
-        && data.subjects.size() <= 10
         && validBusinessRateAt(data.businessRates, 0)
         && validBusinessRateAt(data.businessRates, 1)
         && validBusinessRateAt(data.businessRates, 2)
@@ -153,12 +149,10 @@ service cloud.firestore {
         && validBusinessRateAt(data.businessRates, 7)
         && validBusinessRateAt(data.businessRates, 8)
         && validBusinessRateAt(data.businessRates, 9)
-        && (data.usesSubjectRates
+        && (data.usesMultipleRates
           ? data.defaultBusinessHourlyRate == 0
             && data.businessRates.size() >= 2
-            && data.subjects.size() == data.businessRates.size()
-          : data.businessRates.size() == 0
-            && data.subjects.size() == 0);
+          : data.businessRates.size() == 0);
     }
 
     function hasValidSelfIncomeComposition(data) {
@@ -171,15 +165,73 @@ service cloud.firestore {
           && (data.defaultBusinessHourlyRate > 0 || data.businessRates.size() > 0);
     }
 
-    function preservesLegacyIncomeComposition(data) {
-      return !resource.data.keys().hasAny(['incomeComposition'])
-        && !data.keys().hasAny(['incomeComposition']);
+    function hasValidTransportPolicy(data) {
+      return data.transportPolicy is map
+        && data.transportPolicy.keys().hasOnly(['regionLabel', 'unitAmount', 'treatment'])
+        && data.transportPolicy.keys().hasAll(['regionLabel', 'unitAmount', 'treatment'])
+        && data.transportPolicy.regionLabel is string
+        && data.transportPolicy.regionLabel.size() <= 100
+        && data.transportPolicy.unitAmount is number
+        && data.transportPolicy.unitAmount >= 0
+        && data.transportPolicy.unitAmount <= 1000000
+        && data.transportPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending'];
     }
 
-    function doesNotAddAccountingReference(data) {
-      return !data.keys().hasAny(['accountingReference'])
-        || (resource.data.keys().hasAny(['accountingReference'])
-          && data.accountingReference == resource.data.accountingReference);
+    function hasValidTaxProfile(data) {
+      return data.taxProfile is map
+        && data.taxProfile.keys().hasOnly(['dependentCount', 'children8To20', 'withholdingRatio'])
+        && data.taxProfile.keys().hasAll(['dependentCount', 'children8To20', 'withholdingRatio'])
+        && data.taxProfile.dependentCount is int
+        && data.taxProfile.dependentCount >= 1
+        && data.taxProfile.dependentCount <= 99
+        && data.taxProfile.children8To20 is int
+        && data.taxProfile.children8To20 >= 0
+        && data.taxProfile.children8To20 <= 99
+        && data.taxProfile.withholdingRatio in [0.8, 1, 1.2];
+    }
+
+    function hasConsistentContractSummary(data) {
+      return (data.incomeComposition == 'employee'
+          && data.contractSummary == '근로소득'
+          && data.defaultBusinessHourlyRate == 0
+          && data.usesMultipleRates == false
+          && data.businessRates.size() == 0)
+        || (data.incomeComposition == 'business'
+          && data.contractSummary == '사업소득'
+          && data.defaultEmployeePay == 0
+          && data.insuranceEnrolled == false)
+        || (data.incomeComposition == 'mixed'
+          && data.contractSummary == '근로소득 + 사업소득');
+    }
+
+    function hasValidTeacherDocument(data, teacherId) {
+      return data.id == teacherId
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 100
+        && data.email is string
+        && data.email.size() > 3
+        && data.email.size() <= 320
+        && data.phone is string
+        && data.phone.size() <= 30
+        && data.status in ['active', 'inactive']
+        && (data.authUid == null || data.authUid is string)
+        && data.profileCompleted is bool
+        && hasValidIncomeComposition(data)
+        && hasValidOrMissingTeacherIdentity(data)
+        && hasValidInsuranceSettings(data)
+        && data.defaultEmployeePay is number
+        && data.defaultEmployeePay >= 0
+        && data.defaultEmployeePay <= 100000000
+        && hasValidBusinessRates(data)
+        && hasConsistentContractSummary(data)
+        && hasValidTransportPolicy(data)
+        && data.paymentDay is int
+        && data.paymentDay >= 1
+        && data.paymentDay <= 31
+        && hasValidTaxProfile(data)
+        && !data.keys().hasAny(['accountingReference'])
+        && excludesResidentRegistrationNumber(data);
     }
 
     function monthIsEditable(month) {
@@ -270,38 +322,26 @@ service cloud.firestore {
       allow get: if isAdmin() || isOwnTeacher(teacherId);
       allow list: if isAdmin();
       allow create: if isAdmin()
-        && request.resource.data.name is string
-        && request.resource.data.status in ['active', 'inactive']
-        && hasValidIncomeComposition(request.resource.data)
-        && hasValidOrMissingTeacherIdentity(request.resource.data)
-        && !request.resource.data.keys().hasAny(['accountingReference'])
-        && excludesResidentRegistrationNumber(request.resource.data);
+        && hasValidTeacherDocument(request.resource.data, teacherId);
       allow update: if (isAdmin()
-          && request.resource.data.name is string
-          && request.resource.data.status in ['active', 'inactive']
-          && (hasValidIncomeComposition(request.resource.data)
-            || preservesLegacyIncomeComposition(request.resource.data))
-          && (hasValidTeacherIdentity(request.resource.data)
-            || preservesLegacyTeacherIdentity(request.resource.data))
-          && doesNotAddAccountingReference(request.resource.data)
-          && excludesResidentRegistrationNumber(request.resource.data))
+          && hasValidTeacherDocument(request.resource.data, teacherId))
         || (isOwnTeacher(teacherId)
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
           && request.resource.data.phone is string
           && hasValidTeacherIdentity(request.resource.data)
-          && hasValidSelfInsuranceSettings(request.resource.data)
+          && hasValidInsuranceSettings(request.resource.data)
           && preservesInsuranceAdministrationFields(request.resource.data)
-          && hasValidSelfBusinessRates(request.resource.data)
+          && hasValidBusinessRates(request.resource.data)
           && hasValidSelfIncomeComposition(request.resource.data)
           && request.resource.data.profileCompleted == true
           && excludesResidentRegistrationNumber(request.resource.data)
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'name', 'phone', 'birthDateCode', 'genderCode', 'subjects',
+            'name', 'phone', 'birthDateCode', 'genderCode',
             'incomeComposition', 'contractSummary', 'insuranceEnrolled', 'insuranceSettings',
-            'defaultBusinessHourlyRate', 'usesSubjectRates', 'businessRates', 'profileCompleted',
+            'defaultBusinessHourlyRate', 'usesMultipleRates', 'businessRates', 'profileCompleted',
             'updatedAt', 'updatedBy'
           ]));
       allow delete: if false;
@@ -328,6 +368,7 @@ service cloud.firestore {
           && request.resource.data.employeeWorkHours >= 0
           && request.resource.data.employeeWorkHours <= 744
           && request.resource.data.businessHours is map
+          && request.resource.data.businessHours.size() <= 10
           && request.resource.data.submittedAt == request.time
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
@@ -349,27 +390,6 @@ service cloud.firestore {
             'status', 'readAt', 'readBy'
           ]));
       allow delete: if false;
-    }
-
-    match /rateRules/{ruleId} {
-      allow read, create, update: if isAdmin();
-      allow delete: if false;
-    }
-
-    match /workEntries/{entryId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin()
-        && (!exists(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month))
-          || get(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month)).data.status != 'published');
-      allow update: if isAdmin()
-        && (!exists(/databases/$(database)/documents/payrollRuns/$(resource.data.month))
-          || get(/databases/$(database)/documents/payrollRuns/$(resource.data.month)).data.status != 'published')
-        && (!exists(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month))
-          || get(/databases/$(database)/documents/payrollRuns/$(request.resource.data.month)).data.status != 'published');
-      allow delete: if isAdmin()
-        && !exists(/databases/$(database)/documents/payrollRuns/$(resource.data.month))
-        || (isAdmin()
-          && get(/databases/$(database)/documents/payrollRuns/$(resource.data.month)).data.status != 'published');
     }
 
     match /payrollPolicies/{policyId} {

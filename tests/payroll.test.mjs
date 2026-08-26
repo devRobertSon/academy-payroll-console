@@ -10,7 +10,6 @@ import {
   parseEmploymentTaxTableRows,
   resolveIncomeComposition,
   resolveEffectivePolicy,
-  resolveRateRule,
   splitPayrollByIncome,
   summarizePayroll
 } from "../src/lib/payroll.js";
@@ -23,37 +22,37 @@ import {
 } from "../src/data/nts-tax-policy.js";
 import { csvRowsToObjects, parseCsv } from "../src/lib/csv.js";
 
-test("여러 시급의 표시명은 입력값과 무관하게 순서대로 자동 생성한다", () => {
+test("여러 시급은 표시명을 저장하지 않고 ID와 금액만 정규화한다", () => {
   const settings = getTeacherPaySettings({
     incomeComposition: "business",
-    usesSubjectRates: true,
+    usesMultipleRates: true,
     businessRates: [
-      { id: "legacy-math", subjectName: "기존 과목명", hourlyRate: 50000 },
-      { id: "legacy-essay", subjectName: "다른 과목명", hourlyRate: 70000 }
+      { id: "rate-a", hourlyRate: 50000 },
+      { id: "rate-b", hourlyRate: 70000 }
     ]
   });
 
   assert.equal(businessRateLabel(0), "시급 1");
-  assert.deepEqual(settings.businessRates.map((rate) => rate.subjectName), ["시급 1", "시급 2"]);
-  assert.deepEqual(settings.businessRates.map((rate) => rate.id), ["legacy-math", "legacy-essay"]);
+  assert.equal(settings.businessRates.some((rate) => "subjectName" in rate), false);
+  assert.deepEqual(settings.businessRates.map((rate) => rate.id), ["rate-a", "rate-b"]);
 });
 
 test("계약 요약은 근로소득·사업소득·혼합형을 명시적으로 구분한다", () => {
   const employee = getTeacherPaySettings({
     incomeComposition: "employee",
     defaultEmployeePay: 3000000,
-    businessRates: [{ subjectName: "특강", hourlyRate: 70000 }]
+    defaultBusinessHourlyRate: 70000
   });
   const business = getTeacherPaySettings({
     incomeComposition: "business",
     defaultEmployeePay: 3000000,
     insuranceEnrolled: true,
-    businessRates: [{ subjectName: "영어", hourlyRate: 45000 }]
+    defaultBusinessHourlyRate: 45000
   });
   const mixed = getTeacherPaySettings({
     incomeComposition: "mixed",
     defaultEmployeePay: 3000000,
-    businessRates: [{ subjectName: "논술", hourlyRate: 70000 }]
+    defaultBusinessHourlyRate: 70000
   });
 
   assert.equal(employee.incomeComposition, "employee");
@@ -65,11 +64,10 @@ test("계약 요약은 근로소득·사업소득·혼합형을 명시적으로 
   assert.equal(mixed.businessRates.length, 1);
 });
 
-test("기존 선생님 문서는 저장된 급여 조건으로 계약 유형을 자동 판별한다", () => {
+test("명시값이 없을 때 현재 급여 필드로 계약 유형을 판별한다", () => {
   assert.equal(resolveIncomeComposition({ defaultEmployeePay: 3000000 }), "employee");
-  assert.equal(resolveIncomeComposition({ businessRates: [{ subjectName: "영어", hourlyRate: 45000 }] }), "business");
-  assert.equal(resolveIncomeComposition({ defaultEmployeePay: 3000000, businessRates: [{ subjectName: "특강", hourlyRate: 70000 }] }), "mixed");
-  assert.equal(resolveIncomeComposition({ employmentType: "freelancer", baseMonthlyPay: 2500000 }), "business");
+  assert.equal(resolveIncomeComposition({ defaultBusinessHourlyRate: 45000 }), "business");
+  assert.equal(resolveIncomeComposition({ defaultEmployeePay: 3000000, businessRates: [{ id: "rate-a", hourlyRate: 70000 }] }), "mixed");
 });
 
 test("간이세액표 공식 근거는 파일이 아닌 웹 열람 페이지로 연결한다", () => {
@@ -125,7 +123,7 @@ test("보험 미적용 근로소득은 보험 기준액에 포함하지 않는�
 });
 
 test("4대보험 가입자는 수업이 없어도 선생님 기본 월급으로 계산한다", () => {
-  const teacher = { id: "t1", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessPay: 0 };
+  const teacher = { id: "t1", insuranceEnrolled: true, defaultEmployeePay: 3000000 };
   const lines = createMonthlyEarningLines(teacher, "2026-08");
   const payroll = calculatePayroll(lines, demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
 
@@ -137,9 +135,9 @@ test("4대보험 가입자는 수업이 없어도 선생님 기본 월급으로 
 });
 
 test("4대보험 가입 선생님에게 근로소득과 사업소득을 함께 계산한다", () => {
-  const teacher = { id: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, businessRates: [{ id: "essay", subjectName: "논술 특강", hourlyRate: 70000 }] };
+  const teacher = { id: "mixed", incomeComposition: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessHourlyRate: 70000 };
   const lines = createMonthlyEarningLines(teacher, "2026-08", {
-    businessWorkLines: [{ rateId: "essay", subjectName: "논술 특강", hourlyRate: 70000, hours: 10 }]
+    businessWorkLines: [{ rateId: "default-business-rate", hourlyRate: 70000, hours: 10 }]
   });
   const payroll = calculatePayroll(lines, demoPolicy, { employeeIncomeTax: 0, employeeLocalTax: 0 });
 
@@ -153,10 +151,10 @@ test("4대보험 가입 선생님에게 근로소득과 사업소득을 함께 �
 });
 
 test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 계산한다", () => {
-  const teacher = { id: "t2", insuranceEnrolled: false, defaultEmployeePay: 0, businessRates: [{ id: "english", subjectName: "중등 영어", hourlyRate: 45000 }] };
+  const teacher = { id: "t2", incomeComposition: "business", insuranceEnrolled: false, defaultEmployeePay: 0, defaultBusinessHourlyRate: 45000 };
   const lines = createMonthlyEarningLines(teacher, "2026-08", {
     employeeGrossPay: 0,
-    businessWorkLines: [{ rateId: "english", subjectName: "중등 영어", hourlyRate: 45000, hours: 40 }]
+    businessWorkLines: [{ rateId: "default-business-rate", hourlyRate: 45000, hours: 40 }]
   });
   const payroll = calculatePayroll(lines, demoPolicy);
 
@@ -173,7 +171,7 @@ test("시급이 한 개면 시급 1로 수업시간과 3.3%를 계산한다", ()
     id: "default-rate",
     incomeComposition: "business",
     defaultBusinessHourlyRate: 48000,
-    usesSubjectRates: false,
+    usesMultipleRates: false,
     businessRates: []
   };
   const settings = getTeacherPaySettings(teacher);
@@ -183,7 +181,8 @@ test("시급이 한 개면 시급 1로 수업시간과 3.3%를 계산한다", ()
   const payroll = calculatePayroll(lines, demoPolicy);
 
   assert.equal(settings.businessRates.length, 1);
-  assert.equal(settings.businessRates[0].subjectName, "시급 1");
+  assert.equal(settings.businessRates[0].id, "default-business-rate");
+  assert.equal(lines[0].subjectName, "시급 1");
   assert.equal(lines[0].hourlyRate, 48000);
   assert.equal(payroll.grossByTreatment.business, 960000);
   assert.equal(payroll.deductions.businessIncomeTax, 28800);
@@ -191,19 +190,19 @@ test("시급이 한 개면 시급 1로 수업시간과 3.3%를 계산한다", ()
 });
 
 test("근로소득과 사업소득을 모두 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
-  const teacher = { id: "t3", insuranceEnrolled: true, defaultEmployeePay: 3000000, businessRates: [{ id: "math", subjectName: "수학", hourlyRate: 50000 }] };
+  const teacher = { id: "t3", incomeComposition: "mixed", insuranceEnrolled: true, defaultEmployeePay: 3000000, defaultBusinessHourlyRate: 50000 };
   assert.deepEqual(createMonthlyEarningLines(teacher, "2026-08", {
     employeeGrossPay: 0,
-    businessWorkLines: [{ rateId: "math", subjectName: "수학", hourlyRate: 50000, hours: 0 }]
+    businessWorkLines: [{ rateId: "default-business-rate", hourlyRate: 50000, hours: 0 }]
   }), []);
 });
 
 test("사업소득은 시급 항목별 금액과 수업시간을 곱해 합산하고 3.3%를 공제한다", () => {
-  const teacher = { id: "subjects", insuranceEnrolled: false, defaultEmployeePay: 0, businessRates: [] };
+  const teacher = { id: "multiple-rates", incomeComposition: "business", insuranceEnrolled: false, defaultEmployeePay: 0, usesMultipleRates: true, businessRates: [{ id: "rate-a", hourlyRate: 50000 }, { id: "rate-b", hourlyRate: 70000 }] };
   const lines = createMonthlyEarningLines(teacher, "2026-08", {
     businessWorkLines: [
-      { subjectName: "중등 수학", hourlyRate: 50000, hours: 10 },
-      { subjectName: "고등 수학", hourlyRate: 70000, hours: 2 }
+      { rateId: "rate-a", hourlyRate: 50000, hours: 10 },
+      { rateId: "rate-b", hourlyRate: 70000, hours: 2 }
     ]
   });
   const payroll = calculatePayroll(lines, demoPolicy);
@@ -215,18 +214,32 @@ test("사업소득은 시급 항목별 금액과 수업시간을 곱해 합산�
   assert.equal(payroll.net, 618880);
 });
 
-test("기존 유형과 월 지급액 필드는 새 급여 구성으로 호환해 읽는다", () => {
-  const insured = { id: "legacy-insured", employmentType: "insured", baseMonthlyPay: 3000000 };
-  const freelancer = { id: "legacy-freelancer", employmentType: "freelancer", baseMonthlyPay: 1800000 };
+test("월별 사업소득은 저장된 시급 항목과 수업시간으로만 계산한다", () => {
+  const teacher = { id: "business", incomeComposition: "business", defaultBusinessHourlyRate: 50000, usesMultipleRates: false, businessRates: [] };
+  const amounts = getMonthlyPayAmounts(teacher, {
+    businessWorkLines: [{ rateId: "default-business-rate", hourlyRate: 50000, hours: 12 }]
+  });
 
-  const insuredSettings = getTeacherPaySettings(insured);
-  assert.equal(insuredSettings.insuranceEnrolled, true);
-  assert.equal(insuredSettings.defaultEmployeePay, 3000000);
-  assert.equal(insuredSettings.insuranceSettings.nationalPension.enrolled, true);
-  const freelancerAmounts = getMonthlyPayAmounts(freelancer, { grossPay: 2000000 });
-  assert.equal(freelancerAmounts.employeeGrossPay, 0);
-  assert.equal(freelancerAmounts.businessGrossPay, 2000000);
-  assert.equal(freelancerAmounts.source, "legacy-monthly-input");
+  assert.equal(amounts.businessGrossPay, 600000);
+  assert.equal(amounts.businessHours, 12);
+  assert.equal(amounts.source, "monthly-work-input");
+});
+
+test("복수 시급의 기본 월 입력 행은 각 시급 ID마다 한 줄만 만든다", () => {
+  const teacher = {
+    id: "multiple-defaults",
+    incomeComposition: "business",
+    defaultBusinessHourlyRate: 0,
+    usesMultipleRates: true,
+    businessRates: [
+      { id: "rate-a", hourlyRate: 50000 },
+      { id: "rate-b", hourlyRate: 70000 }
+    ]
+  };
+  const amounts = getMonthlyPayAmounts(teacher);
+
+  assert.deepEqual(amounts.businessWorkLines.map((line) => line.rateId), ["rate-a", "rate-b"]);
+  assert.equal(amounts.businessWorkLines.length, 2);
 });
 
 test("국민연금·건강보험·고용보험은 선생님별 가입 기간과 서로 다른 신고 기준액을 적용한다", () => {
@@ -280,7 +293,7 @@ test("교통비·주차료·기타 지급을 선택한 과세 방식으로 계�
     transportPolicy: { unitAmount: 1500, treatment: "business" }
   };
   const lines = createMonthlyEarningLines(teacher, "2026-08", {
-    businessWorkLines: [{ subjectName: "영어", hourlyRate: 50000, hours: 2 }],
+    businessWorkLines: [{ rateId: "rate-a", hourlyRate: 50000, hours: 2 }],
     transportTrips: 10,
     parkingAmount: 10000,
     parkingTreatment: "exempt",
@@ -418,27 +431,17 @@ test("회계사 고지액은 건강보험과 장기요양 합계로 한 번에 �
   assert.equal(payroll.reporting.healthAndLongTermCare, 123456);
 });
 
-test("과목과 반까지 지정된 가장 구체적인 시급 규칙을 선택한다", () => {
-  const rules = [
-    { teacherId: "t1", hourlyRate: 30000, effectiveFrom: "2026-01-01" },
-    { teacherId: "t1", subjectId: "math", hourlyRate: 40000, effectiveFrom: "2026-01-01" },
-    { teacherId: "t1", subjectId: "math", classId: "advanced", hourlyRate: 50000, effectiveFrom: "2026-01-01" }
-  ];
-  const selected = resolveRateRule(rules, { teacherId: "t1", subjectId: "math", classId: "advanced", workedOn: "2026-08-01" });
-  assert.equal(selected.hourlyRate, 50000);
-});
-
 test("여러 명의 월 급여 합계를 계산한다", () => {
   const first = calculatePayroll([{ hours: 2, hourlyRate: 50000, treatment: "exempt" }], demoPolicy);
   const second = calculatePayroll([{ hours: 3, hourlyRate: 50000, treatment: "exempt" }], demoPolicy);
   assert.deepEqual(summarizePayroll([first, second]), { gross: 250000, deductions: 0, net: 250000, insuredBase: 0 });
 });
 
-test("쉼표와 따옴표가 있는 CSV 수업명을 안전하게 읽는다", () => {
-  const rows = parseCsv('workedOn,teacherId,subjectName,hours\r\n2026-08-01,t1,"수학, 심화",2\r\n');
+test("쉼표와 따옴표가 있는 CSV 셀을 안전하게 읽는다", () => {
+  const rows = parseCsv('month,label,amount\r\n2026-08,"교통비, 주차비",20000\r\n');
   const objects = csvRowsToObjects(rows);
-  assert.equal(objects[0].subjectName, "수학, 심화");
-  assert.equal(objects[0].hours, "2");
+  assert.equal(objects[0].label, "교통비, 주차비");
+  assert.equal(objects[0].amount, "20000");
 });
 
 test("국세청 간이세액표 공식 예시와 자녀 공제를 적용한다", () => {

@@ -65,11 +65,12 @@ export const demoTeachers = [
       employmentInsurance: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null }
     },
     defaultEmployeePay: 3200000,
-    defaultBusinessPay: 0,
+    defaultBusinessHourlyRate: 0,
+    usesMultipleRates: false,
     businessRates: [],
-    subjects: ["초등 수학", "중등 수학"],
     contractSummary: "근로소득",
     paymentDay: 10,
+    profileCompleted: true,
     taxProfile: { dependentCount: 2, children8To20: 0, withholdingRatio: 1 }
   },
   {
@@ -84,12 +85,13 @@ export const demoTeachers = [
     incomeComposition: "business",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
-    defaultBusinessPay: 0,
-    businessRates: [{ id: "business-rate-02", subjectName: "중등 영어", hourlyRate: 45000 }],
+    defaultBusinessHourlyRate: 45000,
+    usesMultipleRates: false,
+    businessRates: [],
     transportPolicy: { regionLabel: "서울 시내", unitAmount: 1500, treatment: "business" },
-    subjects: ["중등 영어"],
     contractSummary: "사업소득",
     paymentDay: 10,
+    profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   },
   {
@@ -104,11 +106,15 @@ export const demoTeachers = [
     incomeComposition: "mixed",
     insuranceEnrolled: true,
     defaultEmployeePay: 3000000,
-    defaultBusinessPay: 0,
-    businessRates: [{ id: "business-rate-03", subjectName: "논술 특강", hourlyRate: 70000 }],
-    subjects: ["고등 수학", "논술 특강"],
+    defaultBusinessHourlyRate: 0,
+    usesMultipleRates: true,
+    businessRates: [
+      { id: "business-rate-03-a", hourlyRate: 70000 },
+      { id: "business-rate-03-b", hourlyRate: 85000 }
+    ],
     contractSummary: "근로소득 + 사업소득",
     paymentDay: 12,
+    profileCompleted: true,
     taxProfile: { dependentCount: 4, children8To20: 2, withholdingRatio: 1 }
   },
   {
@@ -123,11 +129,12 @@ export const demoTeachers = [
     incomeComposition: "business",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
-    defaultBusinessPay: 0,
-    businessRates: [{ id: "business-rate-04", subjectName: "과학 실험", hourlyRate: 50000 }],
-    subjects: ["과학 실험"],
+    defaultBusinessHourlyRate: 50000,
+    usesMultipleRates: false,
+    businessRates: [],
     contractSummary: "사업소득",
     paymentDay: 12,
+    profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   },
   {
@@ -142,48 +149,14 @@ export const demoTeachers = [
     incomeComposition: "business",
     insuranceEnrolled: false,
     defaultEmployeePay: 0,
-    defaultBusinessPay: 0,
-    businessRates: [{ id: "business-rate-05", subjectName: "중등 과학", hourlyRate: 50000 }],
-    subjects: ["중등 과학"],
+    defaultBusinessHourlyRate: 50000,
+    usesMultipleRates: false,
+    businessRates: [],
     contractSummary: "사업소득",
     paymentDay: 10,
+    profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
   }
-];
-
-export const demoRateRules = [
-  { id: "rate-01", teacherId: "teacher-01", subjectId: "math-elementary", subjectName: "초등 수학", hourlyRate: 35000, treatment: "employee", insuranceCovered: true, effectiveFrom: "2026-01-01" },
-  { id: "rate-02", teacherId: "teacher-01", subjectId: "math-middle", subjectName: "중등 수학", hourlyRate: 42000, treatment: "employee", insuranceCovered: true, effectiveFrom: "2026-01-01" },
-  { id: "rate-03", teacherId: "teacher-02", subjectId: "english-middle", subjectName: "중등 영어", hourlyRate: 45000, treatment: "business", insuranceCovered: false, effectiveFrom: "2026-03-01" },
-  { id: "rate-04", teacherId: "teacher-03", subjectId: "math-high", subjectName: "고등 수학", hourlyRate: 55000, treatment: "employee", insuranceCovered: true, effectiveFrom: "2026-01-01" },
-  { id: "rate-05", teacherId: "teacher-03", subjectId: "essay-special", subjectName: "논술 특강", hourlyRate: 70000, treatment: "business", insuranceCovered: false, effectiveFrom: "2026-06-01" },
-  { id: "rate-06", teacherId: "teacher-04", subjectId: "science-lab", subjectName: "과학 실험", hourlyRate: 50000, treatment: "exempt", insuranceCovered: false, effectiveFrom: "2026-01-01" }
-];
-
-export const demoEntries = [
-  ...monthEntries("2026-08", [
-    ["teacher-01", "math-elementary", "초등 수학", 34, 35000, "employee", true],
-    ["teacher-01", "math-middle", "중등 수학", 22, 42000, "employee", true],
-    ["teacher-02", "english-middle", "중등 영어", 48, 45000, "business", false],
-    ["teacher-03", "math-high", "고등 수학", 30, 55000, "employee", true],
-    ["teacher-03", "essay-special", "논술 특강", 9, 70000, "business", false],
-    ["teacher-04", "science-lab", "과학 실험", 24, 50000, "exempt", false]
-  ]),
-  ...monthEntries("2026-07", [
-    ["teacher-01", "math-elementary", "초등 수학", 32, 35000, "employee", true],
-    ["teacher-01", "math-middle", "중등 수학", 24, 42000, "employee", true],
-    ["teacher-02", "english-middle", "중등 영어", 45, 45000, "business", false],
-    ["teacher-03", "math-high", "고등 수학", 28, 55000, "employee", true],
-    ["teacher-03", "essay-special", "논술 특강", 8, 70000, "business", false],
-    ["teacher-04", "science-lab", "과학 실험", 22, 50000, "exempt", false]
-  ]),
-  ...monthEntries("2026-06", [
-    ["teacher-01", "math-elementary", "초등 수학", 30, 35000, "employee", true],
-    ["teacher-02", "english-middle", "중등 영어", 42, 45000, "business", false],
-    ["teacher-03", "math-high", "고등 수학", 26, 55000, "employee", true],
-    ["teacher-03", "essay-special", "논술 특강", 6, 70000, "business", false],
-    ["teacher-04", "science-lab", "과학 실험", 20, 50000, "exempt", false]
-  ])
 ];
 
 export const demoPayrollRuns = [
@@ -193,22 +166,27 @@ export const demoPayrollRuns = [
 ];
 
 export const demoOverrides = Object.fromEntries([
-  ["2026-08", "teacher-02", "business-rate-02", "중등 영어", 45000, 50],
-  ["2026-07", "teacher-02", "business-rate-02", "중등 영어", 45000, 45],
-  ["2026-06", "teacher-02", "business-rate-02", "중등 영어", 45000, 42],
-  ["2026-08", "teacher-03", "business-rate-03", "논술 특강", 70000, 10],
-  ["2026-07", "teacher-03", "business-rate-03", "논술 특강", 70000, 8],
-  ["2026-06", "teacher-03", "business-rate-03", "논술 특강", 70000, 6],
-  ["2026-08", "teacher-04", "business-rate-04", "과학 실험", 50000, 24],
-  ["2026-07", "teacher-04", "business-rate-04", "과학 실험", 50000, 22],
-  ["2026-06", "teacher-04", "business-rate-04", "과학 실험", 50000, 20]
-].map(([month, teacherId, rateId, subjectName, hourlyRate, hours]) => {
+  ["2026-08", "teacher-02", [["default-business-rate", 45000, 50]]],
+  ["2026-07", "teacher-02", [["default-business-rate", 45000, 45]]],
+  ["2026-06", "teacher-02", [["default-business-rate", 45000, 42]]],
+  ["2026-08", "teacher-03", [["business-rate-03-a", 70000, 10], ["business-rate-03-b", 85000, 2]]],
+  ["2026-07", "teacher-03", [["business-rate-03-a", 70000, 8], ["business-rate-03-b", 85000, 1]]],
+  ["2026-06", "teacher-03", [["business-rate-03-a", 70000, 6], ["business-rate-03-b", 85000, 1]]],
+  ["2026-08", "teacher-04", [["default-business-rate", 50000, 24]]],
+  ["2026-07", "teacher-04", [["default-business-rate", 50000, 22]]],
+  ["2026-06", "teacher-04", [["default-business-rate", 50000, 20]]]
+].map(([month, teacherId, rateRows]) => {
   const id = `${month}_${teacherId}`;
   return [`${month}:${teacherId}`, {
     id,
     month,
     teacherId,
-    businessWorkLines: [{ id: `${id}_business`, rateId, subjectName, hourlyRate, hours }],
+    businessWorkLines: rateRows.map(([rateId, hourlyRate, hours], index) => ({
+      id: `${id}_business-${index + 1}`,
+      rateId,
+      hourlyRate,
+      hours
+    })),
     ...(month === "2026-08" && teacherId === "teacher-02" ? {
       transportTrips: 20,
       transportUnitAmount: 1500,
@@ -236,19 +214,3 @@ export const demoTeacherMonthlyInputs = Object.fromEntries(Object.values(demoOve
   };
   return [`${override.month}:${override.teacherId}`, input];
 }));
-
-function monthEntries(month, rows) {
-  return rows.map((row, index) => ({
-    id: `${month}-entry-${index + 1}`,
-    month,
-    workedOn: `${month}-15`,
-    teacherId: row[0],
-    subjectId: row[1],
-    subjectName: row[2],
-    hours: row[3],
-    hourlyRate: row[4],
-    treatment: row[5],
-    insuranceCovered: row[6],
-    source: "demo"
-  }));
-}

@@ -79,7 +79,7 @@ test("미등록 승인 요청은 자기정보 입력 전용 임시 선생님으�
   assert.equal(provisional.email, "teacher@example.com");
   assert.equal(provisional.profileCompleted, false);
   assert.equal(provisional.defaultBusinessHourlyRate, 0);
-  assert.equal(provisional.usesSubjectRates, false);
+  assert.equal(provisional.usesMultipleRates, false);
   assert.deepEqual(provisional.businessRates, []);
   assert.equal(validateTeacherAccessApproval(request, provisional), true);
 });

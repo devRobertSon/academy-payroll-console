@@ -88,7 +88,7 @@ async function checkHtmlAssets() {
   if (!css.includes(".split-layout.single-column { grid-template-columns: minmax(0, 1fr); }")) {
     failures.push("Single-column teacher table layout must fill the available width.");
   }
-  const teacherModal = app.slice(app.indexOf("function openTeacherModal"), app.indexOf("function openRateModal"));
+  const teacherModal = app.slice(app.indexOf("function openTeacherModal"), app.indexOf("function openAccessApprovalModal"));
   if (!teacherModal.includes("incomeCompositionOptions()")) {
     failures.push("Teacher registration must render the controlled income-composition choices.");
   }
@@ -278,7 +278,7 @@ async function checkTeacherMonthlyPayroll() {
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
   for (const field of [
-    "insuranceSettings", "defaultEmployeePay", "defaultBusinessHourlyRate", "usesSubjectRates", "businessRates", "employeeGrossPay",
+    "insuranceSettings", "defaultEmployeePay", "defaultBusinessHourlyRate", "usesMultipleRates", "businessRates", "employeeGrossPay",
     "employeeWorkHours", "businessWorkLines", "transportTrips", "parkingAmount",
     "additionalEarnings", "nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"
   ]) {
@@ -334,8 +334,8 @@ async function checkTeacherMonthlyPayroll() {
   if (!rules.includes("hasValidTeacherIdentity") || !app.includes("parseTeacherIdentity")) {
     failures.push("Teacher birth-date and gender-code validation must be enforced in UI and Firestore rules.");
   }
-  if (!rules.includes("hasValidIncomeComposition") || !rules.includes("preservesLegacyIncomeComposition")) {
-    failures.push("Firestore rules must validate the teacher income-composition field and preserve legacy documents.");
+  if (!rules.includes("hasValidIncomeComposition") || !rules.includes("hasValidTeacherDocument")) {
+    failures.push("Firestore rules must validate the complete current teacher document.");
   }
   if ((app.match(/name="teacherIdentity"/g) || []).length !== 3
     || app.includes('name="birthDateCode"')
@@ -393,15 +393,15 @@ async function checkTeacherSelfService() {
   ]) {
     if (!app.includes(workflow) && !store.includes(workflow)) failures.push(`Admin notification workflow is missing: ${workflow}`);
   }
-  for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "defaultBusinessPay", "transportPolicy", "taxProfile"]) {
+  for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "transportPolicy", "taxProfile"]) {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (teacherUpdateRule.includes(`'${adminOnlyField}'`)) failures.push(`Teacher self-update rule exposes admin-only field: ${adminOnlyField}`);
   }
-  for (const selfField of ["insuranceSettings", "defaultBusinessHourlyRate", "usesSubjectRates", "businessRates", "profileCompleted"]) {
+  for (const selfField of ["insuranceSettings", "defaultBusinessHourlyRate", "usesMultipleRates", "businessRates", "profileCompleted"]) {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (!teacherUpdateRule.includes(`'${selfField}'`)) failures.push(`Teacher self-update rule is missing the allowed field: ${selfField}`);
   }
-  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidSelfIncomeComposition"]) {
+  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidBusinessRates", "hasValidSelfIncomeComposition"]) {
     if (!rules.includes(safeguard)) failures.push(`Teacher self-reported pay setting safeguard is missing: ${safeguard}`);
   }
   for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "시급 1개 사용", "여러 시급 사용", "businessRateLabel(index)"]) {
@@ -409,6 +409,11 @@ async function checkTeacherSelfService() {
   }
   for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject"]) {
     if (app.includes(removedSurface)) failures.push(`Subject-based hourly-rate input must be removed: ${removedSurface}`);
+  }
+  for (const legacyCollection of ["rateRules", "workEntries"]) {
+    if (app.includes(legacyCollection) || store.includes(`loadCollection("${legacyCollection}")`) || rules.includes(`match /${legacyCollection}/`)) {
+      failures.push(`Unused legacy collection must be removed: ${legacyCollection}`);
+    }
   }
   if (!guide.includes("선생님 정보와 수업시간 직접 입력")) {
     failures.push("User guide is missing the teacher self-service workflow.");

@@ -129,10 +129,8 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, rateRules, entries, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
+      const [teachers, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
-        loadCollection("rateRules"),
-        loadCollection("workEntries"),
         loadCollection("payrollRuns"),
         loadCollection("taxPolicies"),
         loadCollection("insurancePolicies"),
@@ -149,8 +147,6 @@ export async function createFirebaseStore(config) {
       ]);
       return {
         teachers,
-        rateRules,
-        entries,
         payrollRuns,
         taxPolicies,
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
@@ -260,10 +256,8 @@ export async function createFirebaseStore(config) {
   async function updateTeacher(teacher) {
     const batch = firestoreSdk.writeBatch(db);
     const updatedAt = firestoreSdk.serverTimestamp();
-    const { accountingReference: _legacyAccountingReference, ...teacherData } = teacher;
     batch.set(firestoreSdk.doc(db, "teachers", teacher.id), {
-      ...teacherData,
-      accountingReference: firestoreSdk.deleteField(),
+      ...teacher,
       updatedAt,
       updatedBy: auth.currentUser.uid
     }, { merge: true });

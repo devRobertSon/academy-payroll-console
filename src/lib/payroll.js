@@ -46,11 +46,8 @@ export function resolveIncomeComposition(teacher = {}) {
 
   const hasEmployeeIncome = Number(teacher.defaultEmployeePay) > 0
     || teacher.insuranceEnrolled === true
-    || teacher.employmentType === "insured"
     || Object.values(teacher.insuranceSettings || {}).some((item) => item?.enrolled === true);
-  const hasBusinessIncome = Number(teacher.defaultBusinessPay) > 0
-    || Number(teacher.defaultBusinessHourlyRate) > 0
-    || teacher.employmentType === "freelancer"
+  const hasBusinessIncome = Number(teacher.defaultBusinessHourlyRate) > 0
     || (Array.isArray(teacher.businessRates) && teacher.businessRates.length > 0);
 
   if (hasEmployeeIncome && hasBusinessIncome) return "mixed";
@@ -62,87 +59,30 @@ export function getTeacherPaySettings(teacher = {}) {
   const incomeComposition = resolveIncomeComposition(teacher);
   const hasEmployeeIncome = incomeComposition === "employee" || incomeComposition === "mixed";
   const hasBusinessIncome = incomeComposition === "business" || incomeComposition === "mixed";
-  const hasCurrentFields = teacher.incomeComposition != null
-    || teacher.insuranceEnrolled != null
-    || teacher.insuranceSettings != null
-    || teacher.defaultEmployeePay != null
-    || teacher.defaultBusinessPay != null
-    || teacher.defaultBusinessHourlyRate != null
-    || teacher.usesSubjectRates != null
-    || Array.isArray(teacher.businessRates);
-  if (hasCurrentFields) {
-    const insuranceSettings = hasEmployeeIncome
-      ? normalizeInsuranceSettings(teacher.insuranceSettings, teacher.insuranceEnrolled === true)
-      : normalizeInsuranceSettings();
-    const subjectBusinessRates = hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [];
-    const defaultBusinessHourlyRate = hasBusinessIncome
-      ? Math.max(0, won(teacher.defaultBusinessHourlyRate))
-      : 0;
-    const usesSubjectRates = hasBusinessIncome
-      && (teacher.usesSubjectRates == null ? subjectBusinessRates.length > 0 : teacher.usesSubjectRates === true);
-    const businessRates = usesSubjectRates
-      ? subjectBusinessRates
-      : defaultBusinessHourlyRate > 0
-        ? [{ id: DEFAULT_BUSINESS_RATE_ID, subjectName: businessRateLabel(0), hourlyRate: defaultBusinessHourlyRate }]
-        : [];
-    return {
-      incomeComposition,
-      insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
-      insuranceSettings,
-      defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
-      defaultBusinessPay: hasBusinessIncome ? Math.max(0, won(teacher.defaultBusinessPay)) : 0,
-      defaultBusinessHourlyRate,
-      usesSubjectRates,
-      subjectBusinessRates,
-      businessRates,
-      transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
-      source: "current"
-    };
-  }
-
-  const legacyPay = Math.max(0, won(teacher.baseMonthlyPay));
-  if (teacher.employmentType === "insured") {
-    return {
-      incomeComposition: "employee",
-      insuranceEnrolled: true,
-      insuranceSettings: normalizeInsuranceSettings(null, true),
-      defaultEmployeePay: legacyPay,
-      defaultBusinessPay: 0,
-      defaultBusinessHourlyRate: 0,
-      usesSubjectRates: false,
-      subjectBusinessRates: [],
-      businessRates: [],
-      transportPolicy: normalizeTransportPolicy(),
-      source: "legacy"
-    };
-  }
-  if (teacher.employmentType === "freelancer") {
-    return {
-      incomeComposition: "business",
-      insuranceEnrolled: false,
-      insuranceSettings: normalizeInsuranceSettings(),
-      defaultEmployeePay: 0,
-      defaultBusinessPay: legacyPay,
-      defaultBusinessHourlyRate: 0,
-      usesSubjectRates: false,
-      subjectBusinessRates: [],
-      businessRates: [],
-      transportPolicy: normalizeTransportPolicy(),
-      source: "legacy"
-    };
-  }
+  const insuranceSettings = hasEmployeeIncome
+    ? normalizeInsuranceSettings(teacher.insuranceSettings, teacher.insuranceEnrolled === true)
+    : normalizeInsuranceSettings();
+  const configuredBusinessRates = hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [];
+  const defaultBusinessHourlyRate = hasBusinessIncome
+    ? Math.max(0, won(teacher.defaultBusinessHourlyRate))
+    : 0;
+  const usesMultipleRates = hasBusinessIncome && teacher.usesMultipleRates === true;
+  const businessRates = usesMultipleRates
+    ? configuredBusinessRates
+    : defaultBusinessHourlyRate > 0
+      ? [{ id: DEFAULT_BUSINESS_RATE_ID, hourlyRate: defaultBusinessHourlyRate }]
+      : [];
   return {
     incomeComposition,
-    insuranceEnrolled: false,
-    insuranceSettings: normalizeInsuranceSettings(),
-    defaultEmployeePay: 0,
-    defaultBusinessPay: 0,
-    defaultBusinessHourlyRate: 0,
-    usesSubjectRates: false,
-    subjectBusinessRates: [],
-    businessRates: [],
-    transportPolicy: normalizeTransportPolicy(),
-    source: "unset"
+    insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
+    insuranceSettings,
+    defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
+    defaultBusinessHourlyRate,
+    usesMultipleRates,
+    configuredBusinessRates,
+    businessRates,
+    transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
+    source: "current"
   };
 }
 
@@ -162,40 +102,19 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     businessGrossPay = businessWorkLines.reduce((sum, line) => sum + line.amount, 0);
     businessHours = businessWorkLines.reduce((sum, line) => sum + line.hours, 0);
     source = "monthly-work-input";
-  } else if (override.employeeGrossPay != null || override.businessGrossPay != null) {
+  } else {
     employeeGrossPay = override.employeeGrossPay == null
       ? settings.defaultEmployeePay
       : Math.max(0, won(override.employeeGrossPay));
-    businessGrossPay = override.businessGrossPay == null
-      ? settings.defaultBusinessPay
-      : Math.max(0, won(override.businessGrossPay));
-    businessHours = 0;
-    businessWorkLines = [];
-    source = "monthly-input";
-  } else if (override.grossPay != null) {
-    const legacyPay = Math.max(0, won(override.grossPay));
-    if (teacher?.employmentType === "insured") {
-      employeeGrossPay = legacyPay;
-      businessGrossPay = settings.defaultBusinessPay;
-    } else {
-      employeeGrossPay = settings.defaultEmployeePay;
-      businessGrossPay = teacher?.employmentType === "freelancer" ? legacyPay : settings.defaultBusinessPay;
-    }
-    businessHours = 0;
-    businessWorkLines = [];
-    source = "legacy-monthly-input";
-  } else if (Array.isArray(teacher?.businessRates)) {
-    employeeGrossPay = settings.defaultEmployeePay;
     businessGrossPay = 0;
     businessHours = 0;
-    businessWorkLines = settings.businessRates.map((rate) => ({ ...rate, hours: 0, amount: 0 }));
+    businessWorkLines = settings.businessRates.map((rate) => ({
+      ...rate,
+      rateId: rate.id,
+      hours: 0,
+      amount: 0
+    }));
     source = "teacher-default";
-  } else {
-    employeeGrossPay = settings.defaultEmployeePay;
-    businessGrossPay = settings.defaultBusinessPay;
-    businessHours = 0;
-    businessWorkLines = [];
-    source = settings.source === "unset" ? "unset" : "teacher-default";
   }
 
   const employeeWorkHours = Math.max(0, Number(override.employeeWorkHours) || 0);
@@ -269,7 +188,7 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       month,
       teacherId: teacher.id,
       kind: "hourly-business",
-      subjectName: line.subjectName || "사업소득 강의",
+      subjectName: businessRateLabel(index),
       earningCategory: "lectureFee",
       hours: line.hours,
       hourlyRate: line.hourlyRate,
@@ -278,21 +197,6 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       note: override.grossPayNote || null,
       source: amounts.source
     }));
-  } else if (amounts.businessGrossPay > 0) {
-    lines.push({
-      id: `${month}_${teacher.id}_business-pay`,
-      month,
-      teacherId: teacher.id,
-      kind: "monthly",
-      subjectName: "월 사업소득",
-      earningCategory: "lectureFee",
-      hours: 1,
-      hourlyRate: amounts.businessGrossPay,
-      treatment: "business",
-      insuranceCovered: false,
-      note: override.grossPayNote || null,
-      source: amounts.source
-    });
   }
 
   if (amounts.transportAmount > 0) {
@@ -387,9 +291,8 @@ function normalizeAdditionalEarnings(lines) {
 function normalizeBusinessRates(rates) {
   return (Array.isArray(rates) ? rates : []).map((rate, index) => ({
     id: String(rate.id || `business-rate-${index + 1}`),
-    subjectName: businessRateLabel(index),
     hourlyRate: Math.max(0, won(rate.hourlyRate))
-  })).filter((rate) => rate.subjectName && rate.hourlyRate > 0);
+  })).filter((rate) => rate.hourlyRate > 0);
 }
 
 function normalizeBusinessWorkLines(lines) {
@@ -399,12 +302,11 @@ function normalizeBusinessWorkLines(lines) {
     return {
       id: String(line.id || `business-work-${index + 1}`),
       rateId: line.rateId ? String(line.rateId) : null,
-      subjectName: businessRateLabel(index),
       hours,
       hourlyRate,
       amount: won(hours * hourlyRate)
     };
-  }).filter((line) => line.subjectName && line.hourlyRate > 0);
+  }).filter((line) => line.hourlyRate > 0);
 }
 
 export function createMonthlyEarningLine(teacher, month, override = {}) {
@@ -797,23 +699,5 @@ export function parseEmploymentTaxTableRows(objects) {
     throw new Error("간이세액표 급여 구간이 연속되지 않습니다.");
   }
   return { tableRows, taxAtTenMillion };
-}
-
-export function resolveRateRule(rules, entry) {
-  const workedOn = new Date(entry.workedOn);
-  const candidates = rules.filter((rule) => {
-    const starts = !rule.effectiveFrom || workedOn >= new Date(rule.effectiveFrom);
-    const ends = !rule.effectiveTo || workedOn <= new Date(rule.effectiveTo);
-    const teacherMatches = rule.teacherId === entry.teacherId;
-    const subjectMatches = !rule.subjectId || rule.subjectId === entry.subjectId;
-    const classMatches = !rule.classId || rule.classId === entry.classId;
-    return starts && ends && teacherMatches && subjectMatches && classMatches;
-  });
-
-  return candidates.sort((a, b) => specificity(b) - specificity(a))[0] || null;
-}
-
-function specificity(rule) {
-  return Number(Boolean(rule.teacherId)) + Number(Boolean(rule.subjectId)) + Number(Boolean(rule.classId));
 }
 

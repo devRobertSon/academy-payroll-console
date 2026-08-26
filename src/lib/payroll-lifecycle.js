@@ -60,11 +60,10 @@ export function provisionalTeacherForAccessRequest(request) {
       employmentInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null }
     },
     defaultEmployeePay: 0,
-    defaultBusinessPay: 0,
     defaultBusinessHourlyRate: 0,
-    usesSubjectRates: false,
+    usesMultipleRates: false,
     businessRates: [],
-    subjects: [],
+    transportPolicy: { regionLabel: "", unitAmount: 0, treatment: "pending" },
     contractSummary: "사업소득",
     paymentDay: 10,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 },

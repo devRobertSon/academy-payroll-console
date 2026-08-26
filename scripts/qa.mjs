@@ -241,8 +241,16 @@ async function checkTeacherMonthlyPayroll() {
   if (!rules.includes("excludesResidentRegistrationNumber")) {
     failures.push("Firestore rules must reject resident-registration-number fields.");
   }
-  if (!rules.includes("hasValidTeacherIdentity") || !app.includes("validateTeacherIdentity")) {
+  if (!rules.includes("hasValidTeacherIdentity") || !app.includes("parseTeacherIdentity")) {
     failures.push("Teacher birth-date and gender-code validation must be enforced in UI and Firestore rules.");
+  }
+  if ((app.match(/name="teacherIdentity"/g) || []).length !== 3
+    || app.includes('name="birthDateCode"')
+    || app.includes('name="genderCode"')) {
+    failures.push("Teacher identity must use one combined 900101-1 input in all three profile forms.");
+  }
+  if (!app.includes('pattern="[0-9]{6}-[1-8]"') || !app.includes("function bindTeacherIdentityInput")) {
+    failures.push("Combined teacher identity formatting and input validation are missing.");
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");

@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-insurance-tax-preview-r12";
-import { helpArticles } from "./data/help-content.js?v=20260826-insurance-tax-preview-r12";
+import { appConfig } from "./config.js?v=20260826-combined-identity-r13";
+import { helpArticles } from "./data/help-content.js?v=20260826-combined-identity-r13";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-insurance-tax-preview-r12";
+} from "./data/demo-data.js?v=20260826-combined-identity-r13";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-insurance-tax-preview-r12";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-tax-preview-r12";
+} from "./data/nts-tax-policy.js?v=20260826-combined-identity-r13";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-combined-identity-r13";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-insurance-tax-preview-r12";
+} from "./lib/payroll.js?v=20260826-combined-identity-r13";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-tax-preview-r12";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-tax-preview-r12";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-combined-identity-r13";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-combined-identity-r13";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-insurance-tax-preview-r12";
+} from "./lib/teacher-self-service.js?v=20260826-combined-identity-r13";
 
 const state = {
   user: null,
@@ -1092,6 +1092,15 @@ function bindCommonControls() {
   elements.content.querySelectorAll("[data-control='search']").forEach((input) => input.addEventListener("input", () => { state.search = input.value; render(); }));
 }
 
+function bindTeacherIdentityInput(form) {
+  const input = form?.elements.teacherIdentity;
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const digits = input.value.replace(/\D/g, "").slice(0, 7);
+    input.value = digits.length > 6 ? `${digits.slice(0, 6)}-${digits.slice(6)}` : digits;
+  });
+}
+
 function treatmentOptions(selected = "pending") {
   return [
     ["pending", "처리 미확인"],
@@ -1450,8 +1459,7 @@ function openTeacherSelfProfileModal(teacher) {
     <form id="teacher-self-profile-form" class="form-grid">
       <div class="form-field"><label for="self-profile-name">이름</label><input id="self-profile-name" name="name" value="${e(teacher.name)}" required /></div>
       <div class="form-field"><label for="self-profile-phone">연락처</label><input id="self-profile-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="self-profile-birth">생년월일 6자리</label><input id="self-profile-birth" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" required /><span class="form-help">주민등록번호 앞 6자리만 저장합니다.</span></div>
-      <div class="form-field"><label for="self-profile-gender">성별번호 1자리</label><input id="self-profile-gender" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" required /><span class="form-help">주민등록번호 뒷자리의 첫 숫자만 저장합니다.</span></div>
+      <div class="form-field"><label for="self-profile-identity">생년월일·성별번호</label><input id="self-profile-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" value="${e(formatTeacherIdentity(teacher))}" placeholder="예: 900101-1" required /><span class="form-help">생년월일 6자리와 성별번호 1자리만 저장합니다.</span></div>
       <div class="form-field full"><label for="self-profile-subjects">담당 과목</label><input id="self-profile-subjects" name="subjects" value="${e((teacher.subjects || []).join(", "))}" placeholder="쉼표로 구분" /></div>
       <div class="form-field full"><label for="self-profile-email">Google 이메일</label><input id="self-profile-email" type="email" value="${e(teacher.email)}" readonly /><span class="form-help">로그인 이메일은 관리자만 변경할 수 있습니다.</span></div>
     </form>
@@ -1462,7 +1470,7 @@ function openTeacherSelfProfileModal(teacher) {
     const profile = {
       name: data.name.trim(),
       phone: data.phone.trim(),
-      ...validateTeacherIdentity(data.birthDateCode, data.genderCode),
+      ...parseTeacherIdentity(data.teacherIdentity),
       subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean)
     };
     if (state.store) await state.store.saveTeacherProfile(teacher.id, profile);
@@ -1473,6 +1481,7 @@ function openTeacherSelfProfileModal(teacher) {
     showToast("내 정보를 저장했습니다.");
     renderProfile();
   });
+  bindTeacherIdentityInput(document.querySelector("#teacher-self-profile-form"));
 }
 
 function openTeacherModal() {
@@ -1483,8 +1492,7 @@ function openTeacherModal() {
       <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 신고 기준액과 예상 근로자 부담액이 자동 계산됩니다.</span></div>
       ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
       <div class="form-field"><label for="teacher-phone">연락처</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-birth-date-code">생년월일 6자리</label><input id="teacher-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="예: 900101" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
-      <div class="form-field"><label for="teacher-gender-code">성별번호 1자리</label><input id="teacher-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" placeholder="예: 1" /><span class="form-help">생년월일과 함께 입력하거나 두 항목을 모두 비워 두세요.</span></div>
+      <div class="form-field"><label for="teacher-identity">생년월일·성별번호</label><input id="teacher-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" placeholder="예: 900101-1" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="0" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-transport-treatment">교통비 기본 처리</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
@@ -1503,7 +1511,7 @@ function openTeacherModal() {
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((teacher) => normalizeEmail(teacher.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
     const insuranceSettings = readInsuranceSettings(form, "teacher");
-    const identity = validateOptionalTeacherIdentity(data.birthDateCode, data.genderCode);
+    const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const teacher = {
       id: crypto.randomUUID(),
       name: data.name.trim(),
@@ -1534,6 +1542,7 @@ function openTeacherModal() {
       renderTeachers();
     });
   bindInsuranceEditorAutomation(document.querySelector("#teacher-form"), "teacher", "#teacher-employee-pay");
+  bindTeacherIdentityInput(document.querySelector("#teacher-form"));
   bindBusinessRateEditor("#teacher-business-rates");
 }
 
@@ -1624,8 +1633,7 @@ function openTeacherEditModal(teacher) {
       <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 자동 입력된 신고 기준액은 필요하면 보험별로 수정할 수 있습니다.</span></div>
       ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-phone">연락처</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
-      <div class="form-field"><label for="teacher-edit-birth-date-code">생년월일 6자리</label><input id="teacher-edit-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" placeholder="예: 900101" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
-      <div class="form-field"><label for="teacher-edit-gender-code">성별번호 1자리</label><input id="teacher-edit-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" placeholder="예: 1" /><span class="form-help">생년월일과 함께 입력하거나 두 항목을 모두 비워 두세요.</span></div>
+      <div class="form-field"><label for="teacher-edit-identity">생년월일·성별번호</label><input id="teacher-edit-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" value="${e(formatTeacherIdentity(teacher))}" placeholder="예: 900101-1" /><span class="form-help">생년월일 6자리와 성별번호 1자리만 저장합니다.</span></div>
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
@@ -1645,7 +1653,7 @@ function openTeacherEditModal(teacher) {
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((item) => item.id !== teacher.id && normalizeEmail(item.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
     const insuranceSettings = readInsuranceSettings(form, "teacher-edit");
-    const identity = validateOptionalTeacherIdentity(data.birthDateCode, data.genderCode);
+    const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const { accountingReference: _legacyAccountingReference, ...teacherWithoutLegacyReference } = teacher;
     const updated = {
       ...teacherWithoutLegacyReference,
@@ -1676,6 +1684,7 @@ function openTeacherEditModal(teacher) {
     renderTeachers();
   });
   bindInsuranceEditorAutomation(document.querySelector("#teacher-edit-form"), "teacher-edit", "#teacher-edit-employee-pay");
+  bindTeacherIdentityInput(document.querySelector("#teacher-edit-form"));
   bindBusinessRateEditor("#teacher-business-rates");
 }
 

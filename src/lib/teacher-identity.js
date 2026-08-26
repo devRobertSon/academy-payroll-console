@@ -49,6 +49,21 @@ export function validateOptionalTeacherIdentity(birthDateCode, genderCode) {
   return validateTeacherIdentity(normalizedBirthDateCode, normalizedGenderCode);
 }
 
+export function parseTeacherIdentity(value) {
+  const normalized = String(value || "").trim();
+  const match = normalized.match(/^(\d{6})-([1-8])$/);
+  if (!match) {
+    throw new Error("생년월일·성별번호는 900101-1 형식으로 입력해 주세요.");
+  }
+  return validateTeacherIdentity(match[1], match[2]);
+}
+
+export function parseOptionalTeacherIdentity(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return {};
+  return parseTeacherIdentity(normalized);
+}
+
 export function formatTeacherIdentity(teacher) {
   if (!/^\d{6}$/.test(String(teacher?.birthDateCode || ""))) return "";
   if (!/^[1-8]$/.test(String(teacher?.genderCode || ""))) return "";

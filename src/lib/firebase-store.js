@@ -189,7 +189,7 @@ export async function createFirebaseStore(config) {
     return reference.id;
   }
 
-  async function approveTeacherAccess(request, teacher) {
+  async function approveTeacherAccess(request, teacher, { createTeacher = false } = {}) {
     const batch = firestoreSdk.writeBatch(db);
     const reviewedAt = firestoreSdk.serverTimestamp();
     batch.set(firestoreSdk.doc(db, "users", request.uid), {
@@ -201,7 +201,15 @@ export async function createFirebaseStore(config) {
       updatedAt: reviewedAt,
       updatedBy: auth.currentUser.uid
     });
-    batch.update(firestoreSdk.doc(db, "teachers", teacher.id), {
+    const teacherReference = firestoreSdk.doc(db, "teachers", teacher.id);
+    const linkedTeacher = {
+      ...teacher,
+      authUid: request.uid,
+      updatedAt: reviewedAt,
+      updatedBy: auth.currentUser.uid
+    };
+    if (createTeacher) batch.set(teacherReference, linkedTeacher);
+    else batch.update(teacherReference, {
       authUid: request.uid,
       updatedAt: reviewedAt,
       updatedBy: auth.currentUser.uid

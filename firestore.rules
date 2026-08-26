@@ -68,6 +68,109 @@ service cloud.firestore {
         && data.incomeComposition in ['employee', 'business', 'mixed'];
     }
 
+    function validSelfInsuranceItem(item) {
+      return item is map
+        && item.keys().hasOnly(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
+        && item.keys().hasAll(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
+        && item.enrolled is bool;
+    }
+
+    function hasValidSelfInsuranceSettings(data) {
+      return data.insuranceSettings is map
+        && data.insuranceSettings.keys().hasOnly([
+          'nationalPension', 'healthInsurance', 'employmentInsurance'
+        ])
+        && data.insuranceSettings.keys().hasAll([
+          'nationalPension', 'healthInsurance', 'employmentInsurance'
+        ])
+        && validSelfInsuranceItem(data.insuranceSettings.nationalPension)
+        && validSelfInsuranceItem(data.insuranceSettings.healthInsurance)
+        && validSelfInsuranceItem(data.insuranceSettings.employmentInsurance)
+        && data.insuranceEnrolled is bool
+        && data.insuranceEnrolled == (
+          data.insuranceSettings.nationalPension.enrolled
+          || data.insuranceSettings.healthInsurance.enrolled
+          || data.insuranceSettings.employmentInsurance.enrolled
+        );
+    }
+
+    function preservesInsuranceAdministrationFields(data) {
+      return (!resource.data.keys().hasAny(['insuranceSettings'])
+          && data.insuranceSettings.nationalPension.defaultBaseAmount == null
+          && data.insuranceSettings.nationalPension.effectiveFrom == null
+          && data.insuranceSettings.nationalPension.effectiveTo == null
+          && data.insuranceSettings.healthInsurance.defaultBaseAmount == null
+          && data.insuranceSettings.healthInsurance.effectiveFrom == null
+          && data.insuranceSettings.healthInsurance.effectiveTo == null
+          && data.insuranceSettings.employmentInsurance.defaultBaseAmount == null
+          && data.insuranceSettings.employmentInsurance.effectiveFrom == null
+          && data.insuranceSettings.employmentInsurance.effectiveTo == null)
+        || (resource.data.keys().hasAny(['insuranceSettings'])
+          && data.insuranceSettings.nationalPension.defaultBaseAmount == resource.data.insuranceSettings.nationalPension.defaultBaseAmount
+          && data.insuranceSettings.nationalPension.effectiveFrom == resource.data.insuranceSettings.nationalPension.effectiveFrom
+          && data.insuranceSettings.nationalPension.effectiveTo == resource.data.insuranceSettings.nationalPension.effectiveTo
+          && data.insuranceSettings.healthInsurance.defaultBaseAmount == resource.data.insuranceSettings.healthInsurance.defaultBaseAmount
+          && data.insuranceSettings.healthInsurance.effectiveFrom == resource.data.insuranceSettings.healthInsurance.effectiveFrom
+          && data.insuranceSettings.healthInsurance.effectiveTo == resource.data.insuranceSettings.healthInsurance.effectiveTo
+          && data.insuranceSettings.employmentInsurance.defaultBaseAmount == resource.data.insuranceSettings.employmentInsurance.defaultBaseAmount
+          && data.insuranceSettings.employmentInsurance.effectiveFrom == resource.data.insuranceSettings.employmentInsurance.effectiveFrom
+          && data.insuranceSettings.employmentInsurance.effectiveTo == resource.data.insuranceSettings.employmentInsurance.effectiveTo);
+    }
+
+    function validBusinessRateAt(rates, index) {
+      return rates.size() <= index ? true : (
+        rates[index] is map
+        && rates[index].keys().hasOnly(['id', 'subjectName', 'hourlyRate'])
+        && rates[index].keys().hasAll(['id', 'subjectName', 'hourlyRate'])
+        && rates[index].id is string
+        && rates[index].id.size() > 0
+        && rates[index].id.size() <= 100
+        && rates[index].subjectName is string
+        && rates[index].subjectName.size() > 0
+        && rates[index].subjectName.size() <= 50
+        && rates[index].hourlyRate is number
+        && rates[index].hourlyRate > 0
+        && rates[index].hourlyRate <= 10000000
+      );
+    }
+
+    function hasValidSelfBusinessRates(data) {
+      return data.defaultBusinessHourlyRate is number
+        && data.defaultBusinessHourlyRate >= 0
+        && data.defaultBusinessHourlyRate <= 10000000
+        && data.usesSubjectRates is bool
+        && data.businessRates is list
+        && data.businessRates.size() <= 10
+        && data.subjects is list
+        && data.subjects.size() <= 10
+        && validBusinessRateAt(data.businessRates, 0)
+        && validBusinessRateAt(data.businessRates, 1)
+        && validBusinessRateAt(data.businessRates, 2)
+        && validBusinessRateAt(data.businessRates, 3)
+        && validBusinessRateAt(data.businessRates, 4)
+        && validBusinessRateAt(data.businessRates, 5)
+        && validBusinessRateAt(data.businessRates, 6)
+        && validBusinessRateAt(data.businessRates, 7)
+        && validBusinessRateAt(data.businessRates, 8)
+        && validBusinessRateAt(data.businessRates, 9)
+        && (data.usesSubjectRates
+          ? data.defaultBusinessHourlyRate == 0
+            && data.businessRates.size() >= 2
+            && data.subjects.size() == data.businessRates.size()
+          : data.businessRates.size() == 0
+            && data.subjects.size() == 0);
+    }
+
+    function hasValidSelfIncomeComposition(data) {
+      return data.insuranceEnrolled
+        ? ((data.defaultBusinessHourlyRate > 0 || data.businessRates.size() > 0)
+          ? data.incomeComposition == 'mixed' && data.contractSummary == '근로소득 + 사업소득'
+          : data.incomeComposition == 'employee' && data.contractSummary == '근로소득')
+        : data.incomeComposition == 'business'
+          && data.contractSummary == '사업소득'
+          && (data.defaultBusinessHourlyRate > 0 || data.businessRates.size() > 0);
+    }
+
     function preservesLegacyIncomeComposition(data) {
       return !resource.data.keys().hasAny(['incomeComposition'])
         && !data.keys().hasAny(['incomeComposition']);
@@ -175,13 +278,19 @@ service cloud.firestore {
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
           && request.resource.data.phone is string
-          && request.resource.data.subjects is list
           && hasValidTeacherIdentity(request.resource.data)
+          && hasValidSelfInsuranceSettings(request.resource.data)
+          && preservesInsuranceAdministrationFields(request.resource.data)
+          && hasValidSelfBusinessRates(request.resource.data)
+          && hasValidSelfIncomeComposition(request.resource.data)
+          && request.resource.data.profileCompleted == true
           && excludesResidentRegistrationNumber(request.resource.data)
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'name', 'phone', 'birthDateCode', 'genderCode', 'subjects',
+            'incomeComposition', 'contractSummary', 'insuranceEnrolled', 'insuranceSettings',
+            'defaultBusinessHourlyRate', 'usesSubjectRates', 'businessRates', 'profileCompleted',
             'updatedAt', 'updatedBy'
           ]));
       allow delete: if false;

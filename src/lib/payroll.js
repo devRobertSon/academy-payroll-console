@@ -18,6 +18,8 @@ export const INCOME_COMPOSITION_LABELS = {
   mixed: "근로소득 + 사업소득"
 };
 
+export const DEFAULT_BUSINESS_RATE_ID = "default-business-rate";
+
 const INCOME_COMPOSITIONS = new Set(Object.keys(INCOME_COMPOSITION_LABELS));
 
 const won = (value) => Math.round(Number(value) || 0);
@@ -42,6 +44,7 @@ export function resolveIncomeComposition(teacher = {}) {
     || teacher.employmentType === "insured"
     || Object.values(teacher.insuranceSettings || {}).some((item) => item?.enrolled === true);
   const hasBusinessIncome = Number(teacher.defaultBusinessPay) > 0
+    || Number(teacher.defaultBusinessHourlyRate) > 0
     || teacher.employmentType === "freelancer"
     || (Array.isArray(teacher.businessRates) && teacher.businessRates.length > 0);
 
@@ -59,18 +62,34 @@ export function getTeacherPaySettings(teacher = {}) {
     || teacher.insuranceSettings != null
     || teacher.defaultEmployeePay != null
     || teacher.defaultBusinessPay != null
+    || teacher.defaultBusinessHourlyRate != null
+    || teacher.usesSubjectRates != null
     || Array.isArray(teacher.businessRates);
   if (hasCurrentFields) {
     const insuranceSettings = hasEmployeeIncome
       ? normalizeInsuranceSettings(teacher.insuranceSettings, teacher.insuranceEnrolled === true)
       : normalizeInsuranceSettings();
+    const subjectBusinessRates = hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [];
+    const defaultBusinessHourlyRate = hasBusinessIncome
+      ? Math.max(0, won(teacher.defaultBusinessHourlyRate))
+      : 0;
+    const usesSubjectRates = hasBusinessIncome
+      && (teacher.usesSubjectRates == null ? subjectBusinessRates.length > 0 : teacher.usesSubjectRates === true);
+    const businessRates = usesSubjectRates
+      ? subjectBusinessRates
+      : defaultBusinessHourlyRate > 0
+        ? [{ id: DEFAULT_BUSINESS_RATE_ID, subjectName: "일반 수업", hourlyRate: defaultBusinessHourlyRate }]
+        : [];
     return {
       incomeComposition,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
       defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
       defaultBusinessPay: hasBusinessIncome ? Math.max(0, won(teacher.defaultBusinessPay)) : 0,
-      businessRates: hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [],
+      defaultBusinessHourlyRate,
+      usesSubjectRates,
+      subjectBusinessRates,
+      businessRates,
       transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
       source: "current"
     };
@@ -84,6 +103,9 @@ export function getTeacherPaySettings(teacher = {}) {
       insuranceSettings: normalizeInsuranceSettings(null, true),
       defaultEmployeePay: legacyPay,
       defaultBusinessPay: 0,
+      defaultBusinessHourlyRate: 0,
+      usesSubjectRates: false,
+      subjectBusinessRates: [],
       businessRates: [],
       transportPolicy: normalizeTransportPolicy(),
       source: "legacy"
@@ -96,6 +118,9 @@ export function getTeacherPaySettings(teacher = {}) {
       insuranceSettings: normalizeInsuranceSettings(),
       defaultEmployeePay: 0,
       defaultBusinessPay: legacyPay,
+      defaultBusinessHourlyRate: 0,
+      usesSubjectRates: false,
+      subjectBusinessRates: [],
       businessRates: [],
       transportPolicy: normalizeTransportPolicy(),
       source: "legacy"
@@ -107,6 +132,9 @@ export function getTeacherPaySettings(teacher = {}) {
     insuranceSettings: normalizeInsuranceSettings(),
     defaultEmployeePay: 0,
     defaultBusinessPay: 0,
+    defaultBusinessHourlyRate: 0,
+    usesSubjectRates: false,
+    subjectBusinessRates: [],
     businessRates: [],
     transportPolicy: normalizeTransportPolicy(),
     source: "unset"

@@ -7,6 +7,7 @@ import {
   nextPayrollRevision,
   payslipId,
   payslipVersionId,
+  provisionalTeacherForAccessRequest,
   validateTeacherAccessApproval
 } from "../src/lib/payroll-lifecycle.js";
 
@@ -66,4 +67,19 @@ test("현재 명세서와 불변 버전 문서 ID를 구분한다", () => {
   assert.equal(payslipVersionId("2026-08", "teacher-1", 3), "2026-08_teacher-1_v3");
   assert.equal(payslipVersionId("2026-08", "teacher-1", 3, "employee"), "2026-08_teacher-1_employee_v3");
   assert.equal(payslipVersionId("2026-08", "teacher-1", 3, "business"), "2026-08_teacher-1_business_v3");
+});
+
+test("미등록 승인 요청은 자기정보 입력 전용 임시 선생님으로 만들 수 있다", () => {
+  const provisional = provisionalTeacherForAccessRequest({
+    ...request,
+    displayName: "신규 강사"
+  });
+
+  assert.equal(provisional.id, "teacher-auth-uid-1");
+  assert.equal(provisional.email, "teacher@example.com");
+  assert.equal(provisional.profileCompleted, false);
+  assert.equal(provisional.defaultBusinessHourlyRate, 0);
+  assert.equal(provisional.usesSubjectRates, false);
+  assert.deepEqual(provisional.businessRates, []);
+  assert.equal(validateTeacherAccessApproval(request, provisional), true);
 });

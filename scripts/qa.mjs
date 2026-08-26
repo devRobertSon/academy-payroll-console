@@ -238,7 +238,7 @@ async function checkTeacherMonthlyPayroll() {
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
   for (const field of [
-    "insuranceSettings", "defaultEmployeePay", "businessRates", "employeeGrossPay",
+    "insuranceSettings", "defaultEmployeePay", "defaultBusinessHourlyRate", "usesSubjectRates", "businessRates", "employeeGrossPay",
     "employeeWorkHours", "businessWorkLines", "transportTrips", "parkingAmount",
     "additionalEarnings", "nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"
   ]) {
@@ -353,9 +353,19 @@ async function checkTeacherSelfService() {
   ]) {
     if (!app.includes(workflow) && !store.includes(workflow)) failures.push(`Admin notification workflow is missing: ${workflow}`);
   }
-  for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "businessRates", "insuranceSettings", "taxProfile"]) {
+  for (const adminOnlyField of ["email", "authUid", "status", "defaultEmployeePay", "defaultBusinessPay", "transportPolicy", "taxProfile"]) {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (teacherUpdateRule.includes(`'${adminOnlyField}'`)) failures.push(`Teacher self-update rule exposes admin-only field: ${adminOnlyField}`);
+  }
+  for (const selfField of ["insuranceSettings", "defaultBusinessHourlyRate", "usesSubjectRates", "businessRates", "profileCompleted"]) {
+    const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
+    if (!teacherUpdateRule.includes(`'${selfField}'`)) failures.push(`Teacher self-update rule is missing the allowed field: ${selfField}`);
+  }
+  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidSelfIncomeComposition"]) {
+    if (!rules.includes(safeguard)) failures.push(`Teacher self-reported pay setting safeguard is missing: ${safeguard}`);
+  }
+  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "모든 수업 같은 시급", "과목별 시급 다름"]) {
+    if (!app.includes(onboardingSurface)) failures.push(`Teacher self-onboarding surface is missing: ${onboardingSurface}`);
   }
   if (!guide.includes("선생님 정보와 수업시간 직접 입력")) {
     failures.push("User guide is missing the teacher self-service workflow.");

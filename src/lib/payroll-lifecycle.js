@@ -41,6 +41,38 @@ export function payslipId(month, teacherId, incomeType = null) {
   return `${month}_${teacherId}${suffix}`;
 }
 
+export function provisionalTeacherForAccessRequest(request) {
+  const uid = String(request?.uid || request?.id || "").replaceAll("/", "_");
+  const displayName = String(request?.displayName || "").trim();
+  const email = normalizeEmail(request?.email);
+  return {
+    id: `teacher-${uid}`,
+    authUid: null,
+    name: displayName || email.split("@")[0] || "신규 선생님",
+    email,
+    phone: "",
+    status: "active",
+    incomeComposition: "business",
+    insuranceEnrolled: false,
+    insuranceSettings: {
+      nationalPension: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
+      healthInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
+      employmentInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null }
+    },
+    defaultEmployeePay: 0,
+    defaultBusinessPay: 0,
+    defaultBusinessHourlyRate: 0,
+    usesSubjectRates: false,
+    businessRates: [],
+    subjects: [],
+    contractSummary: "사업소득",
+    paymentDay: 10,
+    taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 },
+    profileCompleted: false,
+    createdFromAccessRequest: true
+  };
+}
+
 export function payslipVersionId(month, teacherId, revision, incomeType = null) {
   return `${payslipId(month, teacherId, incomeType)}_v${revision}`;
 }

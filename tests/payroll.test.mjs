@@ -152,6 +152,28 @@ test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 �
   assert.equal(payroll.deductions.businessIncomeTax, 54000);
 });
 
+test("과목 구분이 없으면 기본 시급 하나로 수업시간과 3.3%를 계산한다", () => {
+  const teacher = {
+    id: "default-rate",
+    incomeComposition: "business",
+    defaultBusinessHourlyRate: 48000,
+    usesSubjectRates: false,
+    businessRates: []
+  };
+  const settings = getTeacherPaySettings(teacher);
+  const lines = createMonthlyEarningLines(teacher, "2026-08", {
+    businessWorkLines: [{ ...settings.businessRates[0], rateId: settings.businessRates[0].id, hours: 20 }]
+  });
+  const payroll = calculatePayroll(lines, demoPolicy);
+
+  assert.equal(settings.businessRates.length, 1);
+  assert.equal(settings.businessRates[0].subjectName, "일반 수업");
+  assert.equal(lines[0].hourlyRate, 48000);
+  assert.equal(payroll.grossByTreatment.business, 960000);
+  assert.equal(payroll.deductions.businessIncomeTax, 28800);
+  assert.equal(payroll.deductions.businessLocalTax, 2880);
+});
+
 test("근로소득과 사업소득을 모두 0원으로 지정하면 해당 월 계산 대상에서 제외한다", () => {
   const teacher = { id: "t3", insuranceEnrolled: true, defaultEmployeePay: 3000000, businessRates: [{ id: "math", subjectName: "수학", hourlyRate: 50000 }] };
   assert.deepEqual(createMonthlyEarningLines(teacher, "2026-08", {

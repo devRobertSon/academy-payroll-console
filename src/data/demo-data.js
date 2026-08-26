@@ -26,8 +26,8 @@ export const demoAccessRequests = [
   {
     id: "demo-pending-teacher",
     uid: "demo-pending-teacher",
-    displayName: "정강사",
-    email: "teacher05@example.invalid",
+    displayName: "신규강사",
+    email: "teacher06@example.invalid",
     status: "pending",
     requestedAt: "2026-08-25T09:00:00Z"
   }

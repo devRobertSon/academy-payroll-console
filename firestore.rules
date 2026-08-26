@@ -204,6 +204,13 @@ service cloud.firestore {
           && data.contractSummary == '근로소득 + 사업소득');
     }
 
+    function hasValidPhoneNumber(phone) {
+      return phone is string
+        && phone.size() <= 14
+        && (phone == ''
+          || phone.matches('^([0-9]{4}-[0-9]{4}|02-[0-9]{3,4}-[0-9]{4}|[0-9]{3,4}-[0-9]{3,4}-[0-9]{4})$'));
+    }
+
     function hasValidTeacherDocument(data, teacherId) {
       return data.id == teacherId
         && data.name is string
@@ -212,8 +219,7 @@ service cloud.firestore {
         && data.email is string
         && data.email.size() > 3
         && data.email.size() <= 320
-        && data.phone is string
-        && data.phone.size() <= 30
+        && hasValidPhoneNumber(data.phone)
         && data.status in ['active', 'inactive']
         && (data.authUid == null || data.authUid is string)
         && data.profileCompleted is bool
@@ -328,7 +334,7 @@ service cloud.firestore {
         || (isOwnTeacher(teacherId)
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
-          && request.resource.data.phone is string
+          && hasValidPhoneNumber(request.resource.data.phone)
           && hasValidTeacherIdentity(request.resource.data)
           && hasValidInsuranceSettings(request.resource.data)
           && preservesInsuranceAdministrationFields(request.resource.data)

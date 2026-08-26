@@ -17,8 +17,8 @@ test("이메일과 주민등록번호 형태를 외부 AI 전송 전에 감지�
   assert.deepEqual(detected, ["이메일 주소", "주민등록번호"]);
 });
 
-test("생년월일과 성별번호 조합도 외부 AI 전송 전에 감지한다", () => {
-  assert.deepEqual(detectSensitiveInput("선생님 정보는 900101-1입니다"), ["생년월일·성별번호"]);
+test("생년월일 식별값도 외부 AI 전송 전에 감지한다", () => {
+  assert.deepEqual(detectSensitiveInput("선생님 정보는 900101-1입니다"), ["생년월일 식별값"]);
 });
 
 test("개인정보가 포함된 질문에는 로컬에서도 삭제 안내를 반환한다", () => {

@@ -320,6 +320,15 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .form-field textarea { min-height: 90px; resize: vertical; }
 .form-field textarea[spellcheck="false"] { min-height: 180px; font-family: Consolas, "Courier New", monospace; font-size: 10px; line-height: 1.5; }
 .form-help { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.teacher-identity-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.teacher-identity-field > legend { margin-bottom: 6px; padding: 0; font-size: 11px; font-weight: 600; }
+.teacher-identity-editor { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+.teacher-identity-birth { display: grid; flex: 1 1 212px; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; max-width: 212px; min-width: 0; }
+.form-field .teacher-identity-digit { width: 100%; min-width: 0; min-height: 40px; padding: 8px 2px; text-align: center; font-size: 15px; }
+.form-field .teacher-identity-rear-first { flex: 0 0 32px; width: 32px; }
+.teacher-identity-hyphen { flex: 0 0 auto; color: var(--muted); font-weight: 700; }
+.teacher-identity-mask { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; min-height: 40px; }
+.teacher-identity-mask-dot { width: 6px; height: 6px; border-radius: 50%; background: #111827; }
 .editor-heading { display: flex; align-items: center; gap: 12px; }
 .editor-heading > label { margin-right: auto; }
 .payroll-primary-field { padding: 14px 16px; border-left: 3px solid var(--brand); background: var(--brand-pale); }

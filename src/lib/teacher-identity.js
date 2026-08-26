@@ -17,7 +17,7 @@ export function validateTeacherIdentity(birthDateCode, genderCode) {
     throw new Error("생년월일은 주민등록번호 앞의 숫자 6자리로 입력해 주세요.");
   }
   if (!/^[1-8]$/.test(normalizedGenderCode)) {
-    throw new Error("성별번호는 주민등록번호 뒷자리의 첫 숫자 1개로 입력해 주세요.");
+    throw new Error("주민등록번호 뒷자리의 첫 숫자 1개를 확인해 주세요.");
   }
 
   const year = CENTURY_BY_GENDER_CODE[normalizedGenderCode] + Number(normalizedBirthDateCode.slice(0, 2));
@@ -53,7 +53,7 @@ export function parseTeacherIdentity(value) {
   const normalized = String(value || "").trim();
   const match = normalized.match(/^(\d{6})-([1-8])$/);
   if (!match) {
-    throw new Error("생년월일·성별번호는 900101-1 형식으로 입력해 주세요.");
+    throw new Error("생년월일 입력칸의 숫자 7자리를 모두 입력해 주세요.");
   }
   return validateTeacherIdentity(match[1], match[2]);
 }
@@ -68,5 +68,10 @@ export function formatTeacherIdentity(teacher) {
   if (!/^\d{6}$/.test(String(teacher?.birthDateCode || ""))) return "";
   if (!/^[1-8]$/.test(String(teacher?.genderCode || ""))) return "";
   return `${teacher.birthDateCode}-${teacher.genderCode}`;
+}
+
+export function formatMaskedTeacherIdentity(teacher) {
+  const identity = formatTeacherIdentity(teacher);
+  return identity ? `${identity}●●●●●●` : "";
 }
 

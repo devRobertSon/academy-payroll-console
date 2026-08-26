@@ -44,6 +44,7 @@ async function checkRequiredFiles() {
     "docs/ai-assistant-setup.md",
     "src/data/help-content.js",
     "src/lib/help-assistant.js",
+    "src/lib/phone-number.js",
     "src/lib/teacher-self-service.js",
     "src/lib/admin-notifications.js",
     ".nojekyll"
@@ -150,6 +151,7 @@ async function checkHtmlAssets() {
       "./lib/payroll.js",
       "./lib/payroll-lifecycle.js",
       "./lib/payslip-file.js",
+      "./lib/phone-number.js",
       "./lib/teacher-identity.js",
       "./lib/teacher-self-service.js"
     ]) {
@@ -300,7 +302,7 @@ async function checkTeacherMonthlyPayroll() {
   for (const reportField of ["lectureWithholding", "additionalPaymentWithholding", "healthAndLongTermCare", "insuranceBases", "unconfirmedEarningLines"]) {
     if (!payroll.includes(reportField)) failures.push(`Accounting payroll report field is missing: ${reportField}`);
   }
-  for (const heading of ["생년월일·성별번호", "소득 구분", "총 지급액<br>(신고액)", "강사료 원천징수<br>(3.3%)", "교통·주차·기타<br>원천징수", "건강+요양", "보험료 합계", "실 지급액"]) {
+  for (const heading of ["생년월일", "소득 구분", "총 지급액<br>(신고액)", "강사료 원천징수<br>(3.3%)", "교통·주차·기타<br>원천징수", "건강+요양", "보험료 합계", "실 지급액"]) {
     if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
   }
   if (!payroll.includes("export function splitPayrollByIncome") || !tests.includes("혼합 급여는 근로소득과 사업소득 명세서 두 개로 분리")) {
@@ -337,13 +339,25 @@ async function checkTeacherMonthlyPayroll() {
   if (!rules.includes("hasValidIncomeComposition") || !rules.includes("hasValidTeacherDocument")) {
     failures.push("Firestore rules must validate the complete current teacher document.");
   }
-  if ((app.match(/name="teacherIdentity"/g) || []).length !== 3
+  if ((app.match(/teacherIdentityEditorHtml\(/g) || []).length !== 4
+    || !app.includes('type="hidden" name="teacherIdentity"')
     || app.includes('name="birthDateCode"')
     || app.includes('name="genderCode"')) {
-    failures.push("Teacher identity must use one combined 900101-1 input in all three profile forms.");
+    failures.push("All three teacher profile forms must use the shared segmented identity editor.");
   }
-  if (!app.includes('pattern="[0-9]{6}-[1-8]"') || !app.includes("function bindTeacherIdentityInput")) {
-    failures.push("Combined teacher identity formatting and input validation are missing.");
+  if (!app.includes('data-identity-index="6"')
+    || !app.includes("teacher-identity-mask-dot")
+    || !app.includes("function bindTeacherIdentityInput")
+    || app.includes("생년월일·성별번호")
+    || app.includes("생년월일 6자리와 성별번호 1자리만 저장합니다.")) {
+    failures.push("Segmented teacher identity entry, rear-number masking, or concise labels are missing.");
+  }
+  const phone = await readFile(join(root, "src", "lib", "phone-number.js"), "utf8");
+  if ((app.match(/data-phone-input/g) || []).length !== 4
+    || !app.includes("normalizePhoneNumber(data.phone)")
+    || !phone.includes("formatKoreanPhoneNumber")
+    || !rules.includes("hasValidPhoneNumber")) {
+    failures.push("Teacher phone inputs must enforce digits, automatic hyphens, and Firestore validation.");
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");
@@ -433,7 +447,7 @@ async function checkHelpAssistantSafety() {
   for (const safeguard of ["detectSensitiveInput", "buildGeminiPrompt", "buildLocalHelpAnswer"]) {
     if (!app.includes(safeguard)) failures.push(`AI help safeguard is not connected: ${safeguard}`);
   }
-  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "생년월일·성별번호", "계좌번호"]) {
+  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "생년월일 식별값", "계좌번호"]) {
     if (!helper.includes(label)) failures.push(`Sensitive input detector is missing: ${label}`);
   }
   if (!store.includes('import(sdk("ai"))') || !store.includes("GoogleAIBackend")) {

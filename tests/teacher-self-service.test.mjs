@@ -42,7 +42,7 @@ test("관리자가 등록한 시급에는 선생님 입력 시수만 결합한�
   assert.equal(merged.businessWorkLines[2].id, "admin-special");
 });
 
-test("사업소득 시간 객체는 등록된 과목 ID만 저장한다", () => {
+test("사업소득 시간 객체는 등록된 시급 항목 ID만 저장한다", () => {
   assert.deepEqual(buildBusinessHours(rates, { math: 5, essay: 3, unknown: 100 }), { math: 5, essay: 3 });
   assert.deepEqual(businessHoursFromWorkLines(rates, [{ rateId: "math", hours: 8 }]), { math: 8, essay: 0 });
 });

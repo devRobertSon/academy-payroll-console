@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  businessRateLabel,
   calculateEmploymentIncomeTax,
   calculatePayroll,
   createMonthlyEarningLines,
@@ -21,6 +22,21 @@ import {
   officialInsurancePolicies
 } from "../src/data/nts-tax-policy.js";
 import { csvRowsToObjects, parseCsv } from "../src/lib/csv.js";
+
+test("여러 시급의 표시명은 입력값과 무관하게 순서대로 자동 생성한다", () => {
+  const settings = getTeacherPaySettings({
+    incomeComposition: "business",
+    usesSubjectRates: true,
+    businessRates: [
+      { id: "legacy-math", subjectName: "기존 과목명", hourlyRate: 50000 },
+      { id: "legacy-essay", subjectName: "다른 과목명", hourlyRate: 70000 }
+    ]
+  });
+
+  assert.equal(businessRateLabel(0), "시급 1");
+  assert.deepEqual(settings.businessRates.map((rate) => rate.subjectName), ["시급 1", "시급 2"]);
+  assert.deepEqual(settings.businessRates.map((rate) => rate.id), ["legacy-math", "legacy-essay"]);
+});
 
 test("계약 요약은 근로소득·사업소득·혼합형을 명시적으로 구분한다", () => {
   const employee = getTeacherPaySettings({
@@ -144,7 +160,7 @@ test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 �
   });
   const payroll = calculatePayroll(lines, demoPolicy);
 
-  assert.equal(lines[0].subjectName, "중등 영어");
+  assert.equal(lines[0].subjectName, "시급 1");
   assert.equal(lines[0].treatment, "business");
   assert.equal(lines[0].insuranceCovered, false);
   assert.equal(payroll.grossByTreatment.business, 1800000);
@@ -152,7 +168,7 @@ test("사업소득만 받는 선생님은 4대보험 없이 사업소득으로 �
   assert.equal(payroll.deductions.businessIncomeTax, 54000);
 });
 
-test("과목 구분이 없으면 기본 시급 하나로 수업시간과 3.3%를 계산한다", () => {
+test("시급이 한 개면 시급 1로 수업시간과 3.3%를 계산한다", () => {
   const teacher = {
     id: "default-rate",
     incomeComposition: "business",
@@ -167,7 +183,7 @@ test("과목 구분이 없으면 기본 시급 하나로 수업시간과 3.3%를
   const payroll = calculatePayroll(lines, demoPolicy);
 
   assert.equal(settings.businessRates.length, 1);
-  assert.equal(settings.businessRates[0].subjectName, "일반 수업");
+  assert.equal(settings.businessRates[0].subjectName, "시급 1");
   assert.equal(lines[0].hourlyRate, 48000);
   assert.equal(payroll.grossByTreatment.business, 960000);
   assert.equal(payroll.deductions.businessIncomeTax, 28800);
@@ -182,7 +198,7 @@ test("근로소득과 사업소득을 모두 0원으로 지정하면 해당 월 
   }), []);
 });
 
-test("사업소득은 과목별 시급과 수업 시수를 곱해 합산하고 3.3%를 공제한다", () => {
+test("사업소득은 시급 항목별 금액과 수업시간을 곱해 합산하고 3.3%를 공제한다", () => {
   const teacher = { id: "subjects", insuranceEnrolled: false, defaultEmployeePay: 0, businessRates: [] };
   const lines = createMonthlyEarningLines(teacher, "2026-08", {
     businessWorkLines: [

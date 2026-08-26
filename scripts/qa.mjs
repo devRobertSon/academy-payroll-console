@@ -288,7 +288,7 @@ async function checkTeacherMonthlyPayroll() {
   if (adminNav.includes('"entries"') || adminNav.includes('"rates"')) {
     failures.push("Legacy class and hourly-rate pages must not be in the admin navigation.");
   }
-  if (!payroll.includes("createMonthlyEarningLines") || !tests.includes("수업이 없어도") || !tests.includes("시급과 수업 시수를 곱해")) {
+  if (!payroll.includes("createMonthlyEarningLines") || !tests.includes("수업이 없어도") || !tests.includes("시급 항목별 금액과 수업시간을 곱해")) {
     failures.push("Monthly salary calculation must cover insured teachers without classes.");
   }
   if (!payroll.includes("floorToUnit") || !payroll.includes("rule.baseUnit") || !payroll.includes("rule.roundingUnit")) {
@@ -404,8 +404,11 @@ async function checkTeacherSelfService() {
   for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidSelfIncomeComposition"]) {
     if (!rules.includes(safeguard)) failures.push(`Teacher self-reported pay setting safeguard is missing: ${safeguard}`);
   }
-  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "모든 수업 같은 시급", "과목별 시급 다름"]) {
+  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "시급 1개 사용", "여러 시급 사용", "businessRateLabel(index)"]) {
     if (!app.includes(onboardingSurface)) failures.push(`Teacher self-onboarding surface is missing: ${onboardingSurface}`);
+  }
+  for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject"]) {
+    if (app.includes(removedSurface)) failures.push(`Subject-based hourly-rate input must be removed: ${removedSurface}`);
   }
   if (!guide.includes("선생님 정보와 수업시간 직접 입력")) {
     failures.push("User guide is missing the teacher self-service workflow.");

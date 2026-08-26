@@ -20,6 +20,11 @@ export const INCOME_COMPOSITION_LABELS = {
 
 export const DEFAULT_BUSINESS_RATE_ID = "default-business-rate";
 
+export function businessRateLabel(index = 0) {
+  const normalizedIndex = Math.max(0, Math.floor(Number(index) || 0));
+  return `시급 ${normalizedIndex + 1}`;
+}
+
 const INCOME_COMPOSITIONS = new Set(Object.keys(INCOME_COMPOSITION_LABELS));
 
 const won = (value) => Math.round(Number(value) || 0);
@@ -78,7 +83,7 @@ export function getTeacherPaySettings(teacher = {}) {
     const businessRates = usesSubjectRates
       ? subjectBusinessRates
       : defaultBusinessHourlyRate > 0
-        ? [{ id: DEFAULT_BUSINESS_RATE_ID, subjectName: "일반 수업", hourlyRate: defaultBusinessHourlyRate }]
+        ? [{ id: DEFAULT_BUSINESS_RATE_ID, subjectName: businessRateLabel(0), hourlyRate: defaultBusinessHourlyRate }]
         : [];
     return {
       incomeComposition,
@@ -382,7 +387,7 @@ function normalizeAdditionalEarnings(lines) {
 function normalizeBusinessRates(rates) {
   return (Array.isArray(rates) ? rates : []).map((rate, index) => ({
     id: String(rate.id || `business-rate-${index + 1}`),
-    subjectName: String(rate.subjectName || "사업소득 강의").trim(),
+    subjectName: businessRateLabel(index),
     hourlyRate: Math.max(0, won(rate.hourlyRate))
   })).filter((rate) => rate.subjectName && rate.hourlyRate > 0);
 }
@@ -394,7 +399,7 @@ function normalizeBusinessWorkLines(lines) {
     return {
       id: String(line.id || `business-work-${index + 1}`),
       rateId: line.rateId ? String(line.rateId) : null,
-      subjectName: String(line.subjectName || "사업소득 강의").trim(),
+      subjectName: businessRateLabel(index),
       hours,
       hourlyRate,
       amount: won(hours * hourlyRate)

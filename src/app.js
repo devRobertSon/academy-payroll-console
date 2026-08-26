@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-legal-notices-r21";
-import { helpArticles } from "./data/help-content.js?v=20260826-legal-notices-r21";
+import { appConfig } from "./config.js?v=20260826-hourly-rate-items-r22";
+import { helpArticles } from "./data/help-content.js?v=20260826-hourly-rate-items-r22";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,17 +10,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-legal-notices-r21";
+} from "./data/demo-data.js?v=20260826-hourly-rate-items-r22";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-legal-notices-r21";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-legal-notices-r21";
+} from "./data/nts-tax-policy.js?v=20260826-hourly-rate-items-r22";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-hourly-rate-items-r22";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-legal-notices-r21";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-hourly-rate-items-r22";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -31,8 +31,9 @@ import {
   payslipVersionId,
   provisionalTeacherForAccessRequest,
   validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js?v=20260826-legal-notices-r21";
+} from "./lib/payroll-lifecycle.js?v=20260826-hourly-rate-items-r22";
 import {
+  businessRateLabel,
   calculatePayroll,
   createMonthlyEarningLines,
   getMonthlyPayAmounts,
@@ -45,16 +46,16 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-legal-notices-r21";
+} from "./lib/payroll.js?v=20260826-hourly-rate-items-r22";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-legal-notices-r21";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-legal-notices-r21";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-hourly-rate-items-r22";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-hourly-rate-items-r22";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-legal-notices-r21";
+} from "./lib/teacher-self-service.js?v=20260826-hourly-rate-items-r22";
 
 const state = {
   user: null,
@@ -445,7 +446,7 @@ function renderPayrollInputs() {
       <span class="toolbar-spacer"></span>
       <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="선생님 검색" aria-label="선생님 검색" data-control="search" /></div>
     </div>
-    <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득은 월급으로, 사업소득은 과목별 시급 × 수업 시수로 계산한 뒤 3.3%를 원천징수합니다. 한 선생님에게 두 소득을 함께 적용할 수 있습니다."}</span></div>
+    <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득은 월급으로, 사업소득은 시급 항목별 금액 × 수업시간으로 계산한 뒤 3.3%를 원천징수합니다. 한 선생님에게 두 소득을 함께 적용할 수 있습니다."}</span></div>
     <section class="content-section">
       <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·강사료·교통비·주차료·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
       <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">주차비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
@@ -520,7 +521,7 @@ function renderTeachers() {
     <div class="split-layout ${selected ? "" : "single-column"}">
       <section class="data-surface table-scroll">
         <table><thead><tr><th>선생님</th><th>가입 보험</th><th>급여 구성</th><th class="numeric">기본 근로소득</th><th>사업 시급</th><th>상태</th></tr></thead><tbody>
-          ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; const rateLabel = settings.usesSubjectRates ? `${settings.subjectBusinessRates.length}개 과목` : settings.defaultBusinessHourlyRate > 0 ? `${formatWon(settings.defaultBusinessHourlyRate)}/시간` : settings.defaultBusinessPay > 0 ? "기존 월액" : "미등록"; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</td><td>${e(teacherContractLabel(teacher))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${rateLabel}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`; }).join("") || emptyRow(6)}
+          ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; const rateLabel = settings.usesSubjectRates ? `${settings.subjectBusinessRates.length}개 시급` : settings.defaultBusinessHourlyRate > 0 ? `${formatWon(settings.defaultBusinessHourlyRate)}/시간` : settings.defaultBusinessPay > 0 ? "기존 월액" : "미등록"; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</td><td>${e(teacherContractLabel(teacher))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${rateLabel}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`; }).join("") || emptyRow(6)}
         </tbody></table>
       </section>
       ${selected ? `<aside class="detail-panel">
@@ -529,7 +530,6 @@ function renderTeachers() {
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
         ${teacherPaySettings(selected).insuranceEnrolled || teacherPaySettings(selected).defaultEmployeePay > 0 ? `<div class="detail-block"><div class="detail-title-row"><h3>근로소득 원천징수 정보</h3><button class="icon-button" type="button" title="원천징수 정보 수정" aria-label="${e(selected.name)} 원천징수 정보 수정" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>공제대상가족</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}명</dd></div><div><dt>8~20세 자녀</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}명</dd></div><div><dt>원천징수 비율</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>` : `<div class="detail-block"><h3>원천징수</h3><p class="form-help">사업소득 지급액에는 사업소득 원천징수 기준이 적용됩니다.</p></div>`}
-        <div class="detail-block"><h3>담당 과목</h3><div class="tag-list">${selected.subjects.map((subject) => `<span class="tag">${e(subject)}</span>`).join("")}</div></div>
       </aside>` : ""}
     </div>
   `;
@@ -703,7 +703,7 @@ function renderWorkHours() {
     </div>
     <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? `${formatMonth(state.month)} 급여가 확정되어 수업시간을 수정할 수 없습니다.` : "등록 정보에서 보험 가입 여부와 시급을 입력할 수 있습니다. 월급, 보험 신고 기준액과 세금 정보는 관리자가 검토합니다."}</span></div>
     <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} 수업시간</h2><p>기본 시급이면 전체 수업시간을 한 번에, 과목별 시급이면 과목별 총 수업시간을 입력합니다.</p></div>${current?.submittedAt ? `<span class="cell-subtext">최근 저장 ${e(formatDateTime(current.submittedAt))}</span>` : ""}</div>
+      <div class="section-heading"><div><h2>${formatMonth(state.month)} 수업시간</h2><p>시급이 한 개면 전체 수업시간을 한 번에, 여러 시급을 사용하면 시급 항목별 총 수업시간을 입력합니다.</p></div>${current?.submittedAt ? `<span class="cell-subtext">최근 저장 ${e(formatDateTime(current.submittedAt))}</span>` : ""}</div>
       ${hasWorkTypes ? `<form id="teacher-work-hours-form" class="data-surface teacher-work-hours-form">
         ${canEnterEmployeeHours ? `<div class="teacher-work-hour-row"><div><strong>근로소득 수업</strong><span>월급과 별도로 수업시간만 기록됩니다.</span></div><div class="input-suffix"><input name="employeeWorkHours" type="number" min="0" max="744" step="0.5" value="${e(employeeWorkHours)}" ${locked ? "disabled" : ""} aria-label="근로소득 수업시간" /><span>시간</span></div></div>` : ""}
         ${settings.businessRates.map((rate) => `<div class="teacher-work-hour-row"><div><strong>${e(rate.subjectName)}</strong><span>사업소득 수업</span></div><div class="input-suffix"><input type="number" min="0" max="744" step="0.5" value="${e(businessHours[rate.id] || 0)}" data-business-hour="${e(rate.id)}" ${locked ? "disabled" : ""} aria-label="${e(rate.subjectName)} 수업시간" /><span>시간</span></div></div>`).join("")}
@@ -821,7 +821,7 @@ function renderProfile() {
   elements.content.innerHTML = teacher ? `
     ${teacher.profileCompleted === false ? `<div class="notice warning"><i data-lucide="circle-alert"></i><span>계정 연결이 완료되었습니다. 내 정보 수정에서 개인정보, 보험 가입 여부와 시급을 먼저 입력해 주세요.</span></div>` : ""}
     <div class="split-layout"><section class="detail-panel"><div class="detail-panel-header"><h2>${e(teacher.name)}</h2><p>${e(teacher.email)}</p></div><div class="detail-block"><h3>개인 정보</h3><dl class="definition-list"><div><dt>연락처</dt><dd>${e(teacher.phone || "미등록")}</dd></div><div><dt>생년월일·성별번호</dt><dd>${e(formatTeacherIdentity(teacher) || "미등록")}</dd></div></dl></div><div class="detail-block"><h3>직접 입력한 급여 조건</h3><dl class="definition-list"><div><dt>보험 가입</dt><dd>${e(enrolledInsurance.join(", ") || "미가입")}</dd></div><div><dt>사업소득 시급</dt><dd>${e(rateSummary)}</dd></div></dl></div></section>
-    <section><div class="notice"><i data-lucide="user-pen"></i><span>이름, 연락처, 생년월일·성별번호, 보험 가입 여부와 시급은 직접 수정할 수 있습니다. 과목별 시급이 다를 때만 과목명을 입력합니다.</span></div><div class="notice"><i data-lucide="lock-keyhole"></i><span>Google 이메일, 계정 상태, 근로소득 월급, 보험 신고 기준액, 세금과 공제 정보는 관리자가 검토하고 수정합니다.</span></div></section></div>
+    <section><div class="notice"><i data-lucide="user-pen"></i><span>이름, 연락처, 생년월일·성별번호, 보험 가입 여부와 시급은 직접 수정할 수 있습니다. 시급이 여러 개일 때만 여러 시급 사용을 선택합니다.</span></div><div class="notice"><i data-lucide="lock-keyhole"></i><span>Google 이메일, 계정 상태, 근로소득 월급, 보험 신고 기준액, 세금과 공제 정보는 관리자가 검토하고 수정합니다.</span></div></section></div>
   ` : `<div class="empty-state">연결된 선생님 정보가 없습니다.</div>`;
   elements.topbarActions.querySelector("[data-action='edit-my-profile']")?.addEventListener("click", () => openTeacherSelfProfileModal(teacher));
 }
@@ -985,7 +985,7 @@ function teacherPaySettings(teacher) {
   if (!Array.isArray(teacher?.businessRates)) {
     const legacyRates = state.data.rateRules
       .filter((rule) => rule.teacherId === teacher?.id && rule.treatment === "business")
-      .map((rule) => ({ id: rule.id, subjectName: rule.subjectName, hourlyRate: Number(rule.hourlyRate) }));
+      .map((rule, index) => ({ id: rule.id, subjectName: businessRateLabel(index), hourlyRate: Number(rule.hourlyRate) }));
     settings.subjectBusinessRates = legacyRates;
     settings.businessRates = legacyRates;
     settings.usesSubjectRates = legacyRates.length > 0;
@@ -1184,8 +1184,8 @@ function teacherContractLabel(teacher) {
 function incomeCompositionOptions(selected = "") {
   return [
     ["employee", "근로소득", "월 지급액·4대보험·근로소득세"],
-    ["business", "사업소득", "과목별 시급·수업 시수·3.3%"],
-    ["mixed", "근로소득 + 사업소득", "월 지급액과 과목별 시급을 함께 관리"]
+    ["business", "사업소득", "시급 항목·수업시간·3.3%"],
+    ["mixed", "근로소득 + 사업소득", "월 지급액과 시급 항목을 함께 관리"]
   ].map(([value, label, description]) => `<label class="income-composition-option">
     <input type="radio" name="incomeComposition" value="${value}" ${selected === value ? "checked" : ""} required />
     <span><strong>${label}</strong><small>${description}</small></span>
@@ -1408,42 +1408,64 @@ function readAdditionalEarnings(containerSelector) {
 }
 
 function businessRateEditorHtml(rates, containerId) {
-  const rows = rates.length ? rates : [{ id: crypto.randomUUID(), subjectName: "", hourlyRate: "" }];
+  const rows = rates.length > 1 ? rates : [
+    { id: crypto.randomUUID(), hourlyRate: "" },
+    { id: crypto.randomUUID(), hourlyRate: "" }
+  ];
   return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>과목별 사업소득 시급</label><button class="button button-secondary button-compact" type="button" data-add-business-rate="${e(containerId)}"><i data-lucide="plus"></i><span>시급 추가</span></button></div>
+    <div class="editor-heading"><label>시급 항목</label><button class="button button-secondary button-compact" type="button" data-add-business-rate="${e(containerId)}"><i data-lucide="plus"></i><span>시급 추가</span></button></div>
     <div id="${e(containerId)}" class="business-line-editor">${rows.map(businessRateRowHtml).join("")}</div>
-    <span class="form-help">과목마다 시급이 다르면 줄을 추가합니다. 월별 수업 시수는 월 급여 입력에서 기록합니다.</span>
+    <span class="form-help">시급 금액이 실제로 여러 개일 때만 항목을 추가합니다. 월별 수업시간은 각 시급 항목별로 기록합니다.</span>
   </div>`;
 }
 
-function businessRateRowHtml(rate = {}) {
+function businessRateRowHtml(rate = {}, index = 0) {
+  const label = businessRateLabel(index);
   return `<div class="business-line-row rate-row" data-business-rate-row data-line-id="${e(rate.id || crypto.randomUUID())}">
-    <input type="text" value="${e(rate.subjectName || "")}" placeholder="과목명" aria-label="사업소득 과목명" data-rate-subject />
-    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="사업소득 시급" data-rate-hourly /><span>원/시간</span></div>
+    <span class="business-rate-label" data-rate-label>${e(label)}</span>
+    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-rate-hourly /><span>원/시간</span></div>
     <button class="icon-button" type="button" title="시급 삭제" aria-label="사업소득 시급 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
   </div>`;
+}
+
+function renumberBusinessRateRows(container) {
+  const rows = [...container.querySelectorAll("[data-business-rate-row]")];
+  rows.forEach((row, index) => {
+    const label = businessRateLabel(index);
+    row.querySelector("[data-rate-label]").textContent = label;
+    row.querySelector("[data-rate-hourly]").setAttribute("aria-label", `${label} 금액`);
+    row.querySelector("[data-remove-business-line]").disabled = rows.length <= 2;
+  });
 }
 
 function bindBusinessRateEditor(containerSelector) {
   const container = document.querySelector(containerSelector);
   if (!container) return;
   document.querySelector(`[data-add-business-rate='${container.id}']`)?.addEventListener("click", () => {
-    container.insertAdjacentHTML("beforeend", businessRateRowHtml());
+    const rowCount = container.querySelectorAll("[data-business-rate-row]").length;
+    if (rowCount >= 10) {
+      showToast("시급 항목은 최대 10개까지 등록할 수 있습니다.");
+      return;
+    }
+    container.insertAdjacentHTML("beforeend", businessRateRowHtml({}, rowCount));
+    renumberBusinessRateRows(container);
     refreshIcons();
   });
   container.addEventListener("click", (event) => {
     const remove = event.target.closest("[data-remove-business-line]");
-    if (remove) remove.closest("[data-business-rate-row]")?.remove();
+    if (!remove) return;
+    remove.closest("[data-business-rate-row]")?.remove();
+    renumberBusinessRateRows(container);
   });
+  renumberBusinessRateRows(container);
 }
 
 function readBusinessRates(containerSelector) {
-  return [...document.querySelectorAll(`${containerSelector} [data-business-rate-row]`)].map((row) => {
-    const subjectName = row.querySelector("[data-rate-subject]").value.trim();
+  return [...document.querySelectorAll(`${containerSelector} [data-business-rate-row]`)].map((row, index) => {
     const hourlyRate = Number(row.querySelector("[data-rate-hourly]").value);
-    if (!subjectName && !hourlyRate) return null;
-    if (!subjectName || !Number.isFinite(hourlyRate) || hourlyRate <= 0) throw new Error("사업소득 과목명과 0원보다 큰 시급을 함께 입력해 주세요.");
-    return { id: row.dataset.lineId || crypto.randomUUID(), subjectName, hourlyRate };
+    if (!hourlyRate) return null;
+    if (!Number.isFinite(hourlyRate) || hourlyRate <= 0) throw new Error("각 시급 항목에 0원보다 큰 금액을 입력해 주세요.");
+    return { id: row.dataset.lineId || crypto.randomUUID(), subjectName: businessRateLabel(index), hourlyRate };
   }).filter(Boolean);
 }
 
@@ -1456,10 +1478,10 @@ function businessPayRateEditorHtml(settings, prefix, containerId) {
   return `<fieldset class="form-field full business-rate-mode" data-business-rate-mode="${e(prefix)}">
     <legend>사업소득 시급</legend>
     <div class="income-composition-options">
-      <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="default" ${useSubjectRates ? "" : "checked"} /><span><strong>모든 수업 같은 시급</strong><small>과목명 없이 기본 시급 하나를 사용합니다.</small></span></label>
-      <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="subject" ${useSubjectRates ? "checked" : ""} /><span><strong>과목별 시급 다름</strong><small>시급이 다른 과목만 이름과 시급을 나눠 입력합니다.</small></span></label>
+      <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="default" ${useSubjectRates ? "" : "checked"} /><span><strong>시급 1개 사용</strong><small>하나의 시급 금액으로 모든 수업시간을 계산합니다.</small></span></label>
+      <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="subject" ${useSubjectRates ? "checked" : ""} /><span><strong>여러 시급 사용</strong><small>서로 다른 시급이 2개 이상일 때만 선택합니다.</small></span></label>
     </div>
-    <div class="form-field" data-default-business-rate ${useSubjectRates ? "hidden" : ""}><label for="${e(prefix)}-default-business-rate">기본 시급</label><div class="input-suffix"><input id="${e(prefix)}-default-business-rate" name="${e(prefix)}-default-business-rate" type="number" min="0" step="1" value="${e(defaultHourlyRate)}" /><span>원/시간</span></div></div>
+    <div class="form-field" data-default-business-rate ${useSubjectRates ? "hidden" : ""}><label for="${e(prefix)}-default-business-rate">시급 1</label><div class="input-suffix"><input id="${e(prefix)}-default-business-rate" name="${e(prefix)}-default-business-rate" type="number" min="0" step="1" value="${e(defaultHourlyRate)}" /><span>원/시간</span></div></div>
     <div data-subject-business-rates ${useSubjectRates ? "" : "hidden"}>${businessRateEditorHtml(subjectRates.length > 1 ? subjectRates : [], containerId)}</div>
   </fieldset>`;
 }
@@ -1481,7 +1503,7 @@ function readBusinessPaySettings(form, prefix, containerSelector) {
   const usesSubjectRates = form.elements[`${prefix}-business-rate-mode`].value === "subject";
   if (usesSubjectRates) {
     const businessRates = readBusinessRates(containerSelector);
-    if (businessRates.length < 2) throw new Error("과목별 시급을 사용하려면 시급이 다른 과목을 2개 이상 입력해 주세요.");
+    if (businessRates.length < 2) throw new Error("여러 시급을 사용하려면 시급 금액을 2개 이상 입력해 주세요.");
     return { defaultBusinessHourlyRate: 0, usesSubjectRates: true, businessRates };
   }
   const defaultBusinessHourlyRate = Number(form.elements[`${prefix}-default-business-rate`].value || 0);
@@ -1492,29 +1514,41 @@ function readBusinessPaySettings(form, prefix, containerSelector) {
 }
 
 function businessWorkEditorHtml(lines, containerId) {
-  const rows = lines.length ? lines : [{ id: crypto.randomUUID(), rateId: null, subjectName: "", hourlyRate: "", hours: "" }];
+  const rows = lines.length ? lines : [{ id: crypto.randomUUID(), rateId: null, hourlyRate: "", hours: "" }];
   return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>${formatMonth(state.month)} 사업소득 수업</label><button class="button button-secondary button-compact" type="button" data-add-business-work="${e(containerId)}"><i data-lucide="plus"></i><span>수업 추가</span></button></div>
+    <div class="editor-heading"><label>${formatMonth(state.month)} 사업소득 수업</label><button class="button button-secondary button-compact" type="button" data-add-business-work="${e(containerId)}"><i data-lucide="plus"></i><span>시급 항목 추가</span></button></div>
     <div id="${e(containerId)}" class="business-line-editor">${rows.map(businessWorkRowHtml).join("")}</div>
     <div class="business-work-summary"><div><span>수업 시수</span><strong id="business-hours-total">0시간</strong></div><div><span>사업소득 총액</span><strong id="business-gross-total">0원</strong></div><div><span>예상 3.3%</span><strong id="business-tax-total">0원</strong></div><div><span>사업소득 예상 지급액</span><strong id="business-net-total">0원</strong></div></div>
   </div>`;
 }
 
-function businessWorkRowHtml(line = {}) {
+function businessWorkRowHtml(line = {}, index = 0) {
+  const label = businessRateLabel(index);
   return `<div class="business-line-row work-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}">
-    <input type="text" value="${e(line.subjectName || "")}" placeholder="과목명" aria-label="사업소득 수업 과목명" data-work-subject />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.hourlyRate || "")}" placeholder="시급" aria-label="사업소득 수업 시급" data-work-hourly /><span>원</span></div>
-    <div class="input-suffix"><input type="number" min="0" step="0.5" value="${e(line.hours || "")}" placeholder="시수" aria-label="사업소득 수업 시수" data-work-hours /><span>시간</span></div>
+    <span class="business-rate-label" data-work-label>${e(label)}</span>
+    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(line.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-work-hourly /><span>원</span></div>
+    <div class="input-suffix"><input type="number" min="0" step="0.5" value="${e(line.hours || "")}" placeholder="수업시간" aria-label="${e(label)} 수업시간" data-work-hours /><span>시간</span></div>
     <strong class="business-line-amount" data-work-amount>0원</strong>
     <button class="icon-button" type="button" title="수업 삭제" aria-label="사업소득 수업 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
   </div>`;
+}
+
+function renumberBusinessWorkRows(container) {
+  [...container.querySelectorAll("[data-business-work-row]")].forEach((row, index) => {
+    const label = businessRateLabel(index);
+    row.querySelector("[data-work-label]").textContent = label;
+    row.querySelector("[data-work-hourly]").setAttribute("aria-label", `${label} 금액`);
+    row.querySelector("[data-work-hours]").setAttribute("aria-label", `${label} 수업시간`);
+  });
 }
 
 function bindBusinessWorkEditor(containerSelector) {
   const container = document.querySelector(containerSelector);
   if (!container) return;
   document.querySelector(`[data-add-business-work='${container.id}']`)?.addEventListener("click", () => {
-    container.insertAdjacentHTML("beforeend", businessWorkRowHtml());
+    const rowCount = container.querySelectorAll("[data-business-work-row]").length;
+    container.insertAdjacentHTML("beforeend", businessWorkRowHtml({}, rowCount));
+    renumberBusinessWorkRows(container);
     refreshIcons();
     updateBusinessWorkSummary(containerSelector);
   });
@@ -1523,19 +1557,20 @@ function bindBusinessWorkEditor(containerSelector) {
     const remove = event.target.closest("[data-remove-business-line]");
     if (!remove) return;
     remove.closest("[data-business-work-row]")?.remove();
+    renumberBusinessWorkRows(container);
     updateBusinessWorkSummary(containerSelector);
   });
+  renumberBusinessWorkRows(container);
   updateBusinessWorkSummary(containerSelector);
 }
 
 function readBusinessWorkLines(containerSelector) {
-  return [...document.querySelectorAll(`${containerSelector} [data-business-work-row]`)].map((row) => {
-    const subjectName = row.querySelector("[data-work-subject]").value.trim();
+  return [...document.querySelectorAll(`${containerSelector} [data-business-work-row]`)].map((row, index) => {
     const hourlyRate = Number(row.querySelector("[data-work-hourly]").value);
     const hours = Number(row.querySelector("[data-work-hours]").value);
-    if (!subjectName && !hourlyRate && !hours) return null;
-    if (!subjectName || !Number.isFinite(hourlyRate) || hourlyRate <= 0 || !Number.isFinite(hours) || hours < 0) throw new Error("사업소득 과목명, 시급과 0 이상의 수업 시수를 확인해 주세요.");
-    return { id: row.dataset.lineId || crypto.randomUUID(), rateId: row.dataset.rateId || null, subjectName, hourlyRate, hours };
+    if (!hourlyRate && !hours) return null;
+    if (!Number.isFinite(hourlyRate) || hourlyRate <= 0 || !Number.isFinite(hours) || hours < 0) throw new Error("각 시급 항목의 금액과 0 이상의 수업시간을 확인해 주세요.");
+    return { id: row.dataset.lineId || crypto.randomUUID(), rateId: row.dataset.rateId || null, subjectName: businessRateLabel(index), hourlyRate, hours };
   }).filter(Boolean);
 }
 
@@ -1623,7 +1658,7 @@ function openTeacherSelfProfileModal(teacher) {
       <div class="form-field full form-section-heading"><strong>4대보험 가입 여부</strong><span class="form-help">현재 실제 가입 상태만 선택하세요. 신고 기준액과 보험료는 관리자가 입력합니다.</span></div>
       ${Object.entries(INSURANCE_LABELS).map(([key, label]) => `<label class="checkbox-row"><input name="self-insurance-${key}" type="checkbox" ${settings.insuranceSettings[key]?.enrolled ? "checked" : ""} /> ${e(label)} 가입</label>`).join("")}
       <div class="form-field full"><span class="form-help">산재보험은 사업주 부담이므로 근로자 공제 항목에서는 별도로 입력하지 않습니다.</span></div>
-      <div class="form-field full form-section-heading"><strong>시급</strong><span class="form-help">과목에 관계없이 시급이 같으면 과목명을 입력하지 않습니다.</span></div>
+      <div class="form-field full form-section-heading"><strong>시급</strong><span class="form-help">시급이 한 개면 기본 입력만 사용하고, 실제 시급이 여러 개일 때만 항목을 늘립니다.</span></div>
       ${businessPayRateEditorHtml(settings, "self", "self-business-rates")}
     </form>
   `, "저장", async () => {
@@ -1638,7 +1673,7 @@ function openTeacherSelfProfileModal(teacher) {
     const insuranceEnrolled = Object.values(insuranceSettings).some((item) => item.enrolled);
     const hasBusinessRate = businessPaySettings.defaultBusinessHourlyRate > 0 || businessPaySettings.businessRates.length > 0;
     if (!insuranceEnrolled && !hasBusinessRate) {
-      throw new Error("보험 미가입이면 사업소득 기본 시급 또는 과목별 시급을 입력해 주세요.");
+      throw new Error("보험 미가입이면 사업소득 시급을 한 개 이상 입력해 주세요.");
     }
     const incomeComposition = insuranceEnrolled ? (hasBusinessRate ? "mixed" : "employee") : "business";
     const profile = {
@@ -1674,7 +1709,6 @@ function openTeacherModal() {
       <div class="form-field"><label for="teacher-email">Google 이메일</label><input id="teacher-email" name="email" type="email" required /></div>
       <div class="form-field"><label for="teacher-phone">연락처</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-identity">생년월일·성별번호</label><input id="teacher-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" placeholder="예: 900101-1" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
-      <div class="form-field full"><label for="teacher-subjects">담당 과목</label><input id="teacher-subjects" name="subjects" placeholder="쉼표로 구분" /></div>
       <fieldset class="form-field full income-composition-field">
         <legend>계약 요약</legend>
         <div class="income-composition-options">${incomeCompositionOptions()}</div>
@@ -1692,7 +1726,7 @@ function openTeacherModal() {
         </div>
       </section>
       <section class="conditional-form-section full" data-income-section="business" hidden>
-        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>기본 시급 또는 과목별 시급과 월별 수업 시수로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
+        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>한 개 또는 여러 개의 시급과 월별 수업시간으로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
         <div class="form-grid">${businessPayRateEditorHtml(getTeacherPaySettings({ incomeComposition: "business" }), "teacher", "teacher-business-rates")}</div>
       </section>
       <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준과 지급일은 모든 계약 유형에 적용됩니다.</span></div>
@@ -1734,7 +1768,7 @@ function openTeacherModal() {
         unitAmount: Number(data.transportUnitAmount || 0),
         treatment: data.transportTreatment
       },
-      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
+      subjects: businessPaySettings.usesSubjectRates ? businessPaySettings.businessRates.map((rate) => rate.subjectName) : [],
       contractSummary: INCOME_COMPOSITION_LABELS[incomeComposition],
       paymentDay: Number(data.paymentDay),
       status: "active",
@@ -1877,7 +1911,6 @@ function openTeacherEditModal(teacher) {
       <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
       <div class="form-field"><label for="teacher-edit-phone">연락처</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-edit-identity">생년월일·성별번호</label><input id="teacher-edit-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" value="${e(formatTeacherIdentity(teacher))}" placeholder="예: 900101-1" /><span class="form-help">생년월일 6자리와 성별번호 1자리만 저장합니다.</span></div>
-      <div class="form-field full"><label for="teacher-edit-subjects">담당 과목</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="쉼표로 구분" /></div>
       <fieldset class="form-field full income-composition-field">
         <legend>계약 요약</legend>
         <div class="income-composition-options">${incomeCompositionOptions(incomeComposition)}</div>
@@ -1894,7 +1927,7 @@ function openTeacherEditModal(teacher) {
         </div>
       </section>
       <section class="conditional-form-section full" data-income-section="business" hidden>
-        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>기본 시급 또는 과목별 시급과 월별 수업 시수로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
+        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>한 개 또는 여러 개의 시급과 월별 수업시간으로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
         <div class="form-grid">${businessPayRateEditorHtml(paySettings, "teacher-edit", "teacher-business-rates")}</div>
       </section>
       <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준, 지급일과 계정 상태는 모든 계약 유형에 적용됩니다.</span></div>
@@ -1938,7 +1971,7 @@ function openTeacherEditModal(teacher) {
         unitAmount: Number(data.transportUnitAmount || 0),
         treatment: data.transportTreatment
       },
-      subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
+      subjects: businessPaySettings.usesSubjectRates ? businessPaySettings.businessRates.map((rate) => rate.subjectName) : [],
       contractSummary: INCOME_COMPOSITION_LABELS[updatedIncomeComposition],
       paymentDay: Number(data.paymentDay),
       status: data.status,
@@ -1994,7 +2027,7 @@ function openMonthlyPayModal(teacher) {
     : 0;
   openModal(`${teacher.name} 월 지급액`, `
     <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비·주차료·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
-    ${legacyBusinessAmount ? `<div class="notice warning"><i data-lucide="history"></i><span>기존 고정 사업소득 ${formatWon(legacyBusinessAmount)}을 읽었습니다. 아래에 과목·시급·시수를 저장하면 새 계산 방식으로 전환됩니다.</span></div>` : ""}
+    ${legacyBusinessAmount ? `<div class="notice warning"><i data-lucide="history"></i><span>기존 고정 사업소득 ${formatWon(legacyBusinessAmount)}을 읽었습니다. 아래에 시급 항목과 수업시간을 저장하면 새 계산 방식으로 전환됩니다.</span></div>` : ""}
     <form id="monthly-pay-form" class="form-grid">
       <div class="form-field"><label for="monthly-pay-default-employee">기본 근로소득</label><input id="monthly-pay-default-employee" type="text" value="${e(formatWon(settings.defaultEmployeePay))}" readonly /></div>
       <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>

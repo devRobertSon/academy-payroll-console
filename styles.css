@@ -384,9 +384,10 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .ledger-total { background: var(--surface-subtle); }
 .business-line-editor { display: grid; gap: 8px; }
 .business-line-row { display: grid; align-items: center; gap: 8px; }
-.business-line-row.rate-row { grid-template-columns: minmax(150px, 1.4fr) minmax(160px, 1fr) 36px; }
-.business-line-row.work-row { grid-template-columns: minmax(130px, 1.35fr) minmax(130px, 1fr) minmax(105px, .8fr) 90px 36px; }
+.business-line-row.rate-row { grid-template-columns: minmax(90px, .55fr) minmax(160px, 1fr) 36px; }
+.business-line-row.work-row { grid-template-columns: minmax(90px, .55fr) minmax(130px, 1fr) minmax(105px, .8fr) 90px 36px; }
 .business-line-row > input, .business-line-row .input-suffix { min-width: 0; }
+.business-rate-label { color: var(--text); font-size: 11px; font-weight: 700; }
 .business-line-row .icon-button { width: 36px; height: 36px; color: var(--muted); }
 .input-suffix { display: flex; align-items: center; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
 .form-field .input-suffix input { min-width: 0; min-height: 38px; border: 0; }

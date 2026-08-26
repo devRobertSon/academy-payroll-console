@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-teacher-table-r8";
-import { helpArticles } from "./data/help-content.js?v=20260826-teacher-table-r8";
+import { appConfig } from "./config.js?v=20260826-insurance-preview-r9";
+import { helpArticles } from "./data/help-content.js?v=20260826-insurance-preview-r9";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-teacher-table-r8";
+} from "./data/demo-data.js?v=20260826-insurance-preview-r9";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-teacher-table-r8";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-teacher-table-r8";
+} from "./data/nts-tax-policy.js?v=20260826-insurance-preview-r9";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-preview-r9";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-teacher-table-r8";
+} from "./lib/payroll.js?v=20260826-insurance-preview-r9";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-teacher-table-r8";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-teacher-table-r8";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-preview-r9";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-preview-r9";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-teacher-table-r8";
+} from "./lib/teacher-self-service.js?v=20260826-insurance-preview-r9";
 
 const state = {
   user: null,
@@ -1104,16 +1104,26 @@ function treatmentOptions(selected = "pending") {
 
 function insuranceEditorHtml(settings, prefix) {
   return `<div class="form-field full insurance-editor-field">
-    <div class="editor-heading"><label>보험별 가입·신고 기준</label><span class="form-help">가입한 보험만 선택하고 공단에 신고한 기준액과 적용 기간을 각각 입력합니다.</span></div>
+    <div class="editor-heading"><label>4대보험 가입·신고 기준</label><span class="form-help">가입 항목을 선택하면 월 지급액이 신고 기준액으로 자동 입력됩니다.</span></div>
     <div class="insurance-editor">${Object.entries(INSURANCE_LABELS).map(([key, label]) => {
       const item = settings?.[key] || {};
       return `<div class="insurance-setting-row">
         <label class="checkbox-row"><input name="${prefix}-${key}-enrolled" type="checkbox" ${item.enrolled ? "checked" : ""} /> ${e(label)} 가입</label>
-        <div class="input-suffix"><input name="${prefix}-${key}-base" type="number" min="0" step="1000" value="${item.defaultBaseAmount ?? ""}" placeholder="신고 기준액" aria-label="${e(label)} 기본 신고 기준액" /><span>원</span></div>
+        <div class="input-suffix"><input name="${prefix}-${key}-base" type="number" min="0" step="1" value="${item.defaultBaseAmount ?? ""}" placeholder="신고 기준액" aria-label="${e(label)} 기본 신고 기준액" /><span>원</span></div>
         <input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} 적용 시작일" />
         <input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} 적용 종료일" />
       </div>`;
     }).join("")}</div>
+    <div class="insurance-auto-preview" data-insurance-preview="${e(prefix)}" aria-live="polite">
+      <div class="insurance-preview-heading"><span>예상 근로자 부담액</span><strong data-insurance-total>0원</strong></div>
+      <div class="insurance-preview-grid">
+        <div><span>국민연금</span><strong data-insurance-estimate="nationalPension">0원</strong></div>
+        <div><span>건강보험·장기요양</span><strong data-insurance-estimate="healthInsurance">0원</strong></div>
+        <div><span>고용보험</span><strong data-insurance-estimate="employmentInsurance">0원</strong></div>
+        <div><span>산재보험</span><strong>근로자 공제 없음</strong></div>
+      </div>
+      <span class="form-help">현재 적용 중인 요율의 예상값입니다. 산재보험은 사업주 부담이며, 실제 공단 고지액과 신고 기준액을 최종 확인하세요.</span>
+    </div>
     <span class="form-help">건강보험 항목은 건강보험과 장기요양을 함께 관리합니다. 종료일이 없으면 계속 적용됩니다.</span>
   </div>`;
 }
@@ -1134,6 +1144,65 @@ function readInsuranceSettings(form, prefix) {
       effectiveTo
     }];
   }));
+}
+
+function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
+  const payInput = form.querySelector(payInputSelector);
+  const preview = form.querySelector(`[data-insurance-preview="${prefix}"]`);
+  if (!payInput || !preview) return;
+
+  const fields = Object.keys(INSURANCE_LABELS).map((key) => ({
+    key,
+    enrolled: form.elements[`${prefix}-${key}-enrolled`],
+    base: form.elements[`${prefix}-${key}-base`],
+    effectiveFrom: form.elements[`${prefix}-${key}-from`],
+    effectiveTo: form.elements[`${prefix}-${key}-to`]
+  }));
+  fields.forEach(({ base }) => { base.dataset.autoBase = base.value === "" ? "true" : "false"; });
+
+  const update = (syncBases = false) => {
+    const monthlyPay = Math.max(0, Math.round(Number(payInput.value) || 0));
+    if (syncBases) {
+      fields.forEach(({ enrolled, base }) => {
+        if (enrolled.checked && (base.value === "" || base.dataset.autoBase === "true")) {
+          base.value = monthlyPay > 0 ? String(monthlyPay) : "";
+          base.dataset.autoBase = "true";
+        }
+      });
+    }
+    const insuranceSettings = Object.fromEntries(fields.map(({ key, enrolled, base, effectiveFrom, effectiveTo }) => [key, {
+      enrolled: enrolled.checked,
+      defaultBaseAmount: base.value === "" ? null : Number(base.value),
+      effectiveFrom: effectiveFrom.value || null,
+      effectiveTo: effectiveTo.value || null
+    }]));
+    const payroll = calculatePayroll([{
+      id: "insurance-preview",
+      month: state.month,
+      hours: 1,
+      hourlyRate: monthlyPay,
+      treatment: "employee",
+      insuranceCovered: true
+    }], policyForMonth(state.month), { insuranceSettings }, { dependentCount: 1, children8To20: 0, withholdingRatio: 1 });
+    const estimates = {
+      nationalPension: payroll.reporting.nationalPension,
+      healthInsurance: payroll.reporting.healthAndLongTermCare,
+      employmentInsurance: payroll.reporting.employmentInsurance
+    };
+    Object.entries(estimates).forEach(([key, amount]) => {
+      preview.querySelector(`[data-insurance-estimate="${key}"]`).textContent = formatWon(amount);
+    });
+    preview.querySelector("[data-insurance-total]").textContent = formatWon(payroll.reporting.insuranceTotal);
+  };
+
+  payInput.addEventListener("input", () => update(true));
+  fields.forEach(({ enrolled, base, effectiveFrom, effectiveTo }) => {
+    enrolled.addEventListener("change", () => update(true));
+    base.addEventListener("input", () => { base.dataset.autoBase = "false"; update(); });
+    effectiveFrom.addEventListener("change", () => update());
+    effectiveTo.addEventListener("change", () => update());
+  });
+  update();
 }
 
 function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
@@ -1209,7 +1278,7 @@ function businessRateEditorHtml(rates, containerId) {
 function businessRateRowHtml(rate = {}) {
   return `<div class="business-line-row rate-row" data-business-rate-row data-line-id="${e(rate.id || crypto.randomUUID())}">
     <input type="text" value="${e(rate.subjectName || "")}" placeholder="과목명" aria-label="사업소득 과목명" data-rate-subject />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="사업소득 시급" data-rate-hourly /><span>원/시간</span></div>
+    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="사업소득 시급" data-rate-hourly /><span>원/시간</span></div>
     <button class="icon-button" type="button" title="시급 삭제" aria-label="사업소득 시급 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
   </div>`;
 }
@@ -1391,13 +1460,13 @@ function openTeacherModal() {
     <form id="teacher-form" class="form-grid">
       <div class="form-field"><label for="teacher-name">이름</label><input id="teacher-name" name="name" required /></div>
       <div class="form-field"><label for="teacher-email">Google 이메일</label><input id="teacher-email" name="email" type="email" required /></div>
+      <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 신고 기준액과 예상 근로자 부담액이 자동 계산됩니다.</span></div>
+      ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
       <div class="form-field"><label for="teacher-phone">연락처</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-birth-date-code">생년월일 6자리</label><input id="teacher-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="예: 900101" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
       <div class="form-field"><label for="teacher-gender-code">성별번호 1자리</label><input id="teacher-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" placeholder="예: 1" /><span class="form-help">생년월일과 함께 입력하거나 두 항목을 모두 비워 두세요.</span></div>
-      ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
-      <div class="form-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="0" required /></div>
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
-      <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="0" /><span>원</span></div></div>
+      <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="0" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-transport-treatment">교통비 기본 처리</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
       ${businessRateEditorHtml([], "teacher-business-rates")}
       <div class="form-field full"><label for="teacher-subjects">담당 과목</label><input id="teacher-subjects" name="subjects" placeholder="쉼표로 구분" /></div>
@@ -1444,6 +1513,7 @@ function openTeacherModal() {
       showToast("선생님을 등록했습니다.");
       renderTeachers();
     });
+  bindInsuranceEditorAutomation(document.querySelector("#teacher-form"), "teacher", "#teacher-employee-pay");
   bindBusinessRateEditor("#teacher-business-rates");
 }
 
@@ -1531,13 +1601,13 @@ function openTeacherEditModal(teacher) {
     <form id="teacher-edit-form" class="form-grid">
       <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
       <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
+      <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 자동 입력된 신고 기준액은 필요하면 보험별로 수정할 수 있습니다.</span></div>
+      ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-phone">연락처</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-edit-birth-date-code">생년월일 6자리</label><input id="teacher-edit-birth-date-code" name="birthDateCode" type="text" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" value="${e(teacher.birthDateCode || "")}" placeholder="예: 900101" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
       <div class="form-field"><label for="teacher-edit-gender-code">성별번호 1자리</label><input id="teacher-edit-gender-code" name="genderCode" type="text" inputmode="numeric" autocomplete="off" minlength="1" maxlength="1" pattern="[1-8]" value="${e(teacher.genderCode || "")}" placeholder="예: 1" /><span class="form-help">생년월일과 함께 입력하거나 두 항목을 모두 비워 두세요.</span></div>
-      ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
-      <div class="form-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1000" value="${e(paySettings.defaultEmployeePay)}" required /></div>
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
-      <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
+      <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
       ${businessRateEditorHtml(paySettings.businessRates, "teacher-business-rates")}
       <div class="form-field full"><label for="teacher-edit-subjects">담당 과목</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="쉼표로 구분" /></div>
@@ -1585,6 +1655,7 @@ function openTeacherEditModal(teacher) {
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
     renderTeachers();
   });
+  bindInsuranceEditorAutomation(document.querySelector("#teacher-edit-form"), "teacher-edit", "#teacher-edit-employee-pay");
   bindBusinessRateEditor("#teacher-business-rates");
 }
 

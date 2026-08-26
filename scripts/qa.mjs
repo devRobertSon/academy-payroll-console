@@ -84,6 +84,19 @@ async function checkHtmlAssets() {
   if (!css.includes(".split-layout.single-column { grid-template-columns: minmax(0, 1fr); }")) {
     failures.push("Single-column teacher table layout must fill the available width.");
   }
+  const teacherModal = app.slice(app.indexOf("function openTeacherModal"), app.indexOf("function openRateModal"));
+  if (teacherModal.indexOf("teacher-employee-pay") > teacherModal.indexOf("insuranceEditorHtml")) {
+    failures.push("Teacher registration must show monthly employee pay before insurance settings.");
+  }
+  if (!teacherModal.includes('id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1"')) {
+    failures.push("Teacher monthly pay must accept one-won increments.");
+  }
+  if (!app.includes("function bindInsuranceEditorAutomation") || !app.includes("data-insurance-preview")) {
+    failures.push("Teacher insurance settings must provide automatic bases and deduction previews.");
+  }
+  if (!css.includes(".insurance-auto-preview") || !css.includes(".insurance-preview-grid")) {
+    failures.push("Automatic insurance preview styles are missing.");
+  }
   for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
     if (css.includes(legacyGreen)) failures.push(`Legacy green workspace color remains: ${legacyGreen}`);
   }

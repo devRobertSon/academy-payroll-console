@@ -320,6 +320,12 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .form-field textarea { min-height: 90px; resize: vertical; }
 .form-field textarea[spellcheck="false"] { min-height: 180px; font-family: Consolas, "Courier New", monospace; font-size: 10px; line-height: 1.5; }
 .form-help { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.mobile-phone-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.mobile-phone-field > legend { margin-bottom: 6px; padding: 0; font-size: 11px; font-weight: 600; }
+.mobile-phone-editor { display: grid; grid-template-columns: 48px auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; }
+.mobile-phone-prefix { min-height: 40px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface-subtle); font-size: 13px; font-weight: 700; }
+.mobile-phone-hyphen { color: var(--muted); font-weight: 700; }
+.form-field .mobile-phone-editor input { min-width: 0; padding-inline: 6px; text-align: center; font-size: 14px; }
 .teacher-identity-field { min-width: 0; margin: 0; padding: 0; border: 0; }
 .teacher-identity-field > legend { margin-bottom: 6px; padding: 0; font-size: 11px; font-weight: 600; }
 .teacher-identity-editor { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }

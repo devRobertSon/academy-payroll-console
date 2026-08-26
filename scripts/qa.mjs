@@ -353,11 +353,14 @@ async function checkTeacherMonthlyPayroll() {
     failures.push("Segmented teacher identity entry, rear-number masking, or concise labels are missing.");
   }
   const phone = await readFile(join(root, "src", "lib", "phone-number.js"), "utf8");
-  if ((app.match(/data-phone-input/g) || []).length !== 4
-    || !app.includes("normalizePhoneNumber(data.phone)")
-    || !phone.includes("formatKoreanPhoneNumber")
-    || !rules.includes("hasValidPhoneNumber")) {
-    failures.push("Teacher phone inputs must enforce digits, automatic hyphens, and Firestore validation.");
+  if ((app.match(/mobilePhoneEditorHtml\(/g) || []).length !== 4
+    || !app.includes('type="hidden" name="phone"')
+    || !app.includes("normalizeMobilePhoneNumber(data.phone)")
+    || !phone.includes("MOBILE_PHONE_PATTERN")
+    || !phone.includes("return digits;")
+    || !rules.includes("phone.matches('^010[0-9]{8}$')")
+    || app.includes("<th>연락처</th>")) {
+    failures.push("Teacher mobile-phone inputs must fix the 010 prefix and store only 11 digits in Firestore.");
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");
@@ -447,7 +450,7 @@ async function checkHelpAssistantSafety() {
   for (const safeguard of ["detectSensitiveInput", "buildGeminiPrompt", "buildLocalHelpAnswer"]) {
     if (!app.includes(safeguard)) failures.push(`AI help safeguard is not connected: ${safeguard}`);
   }
-  for (const label of ["이메일 주소", "전화번호", "주민등록번호", "생년월일 식별값", "계좌번호"]) {
+  for (const label of ["이메일 주소", "휴대전화 번호", "주민등록번호", "생년월일 식별값", "계좌번호"]) {
     if (!helper.includes(label)) failures.push(`Sensitive input detector is missing: ${label}`);
   }
   if (!store.includes('import(sdk("ai"))') || !store.includes("GoogleAIBackend")) {

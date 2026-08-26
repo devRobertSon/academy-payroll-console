@@ -206,9 +206,9 @@ service cloud.firestore {
 
     function hasValidPhoneNumber(phone) {
       return phone is string
-        && phone.size() <= 14
+        && phone.size() <= 11
         && (phone == ''
-          || phone.matches('^([0-9]{4}-[0-9]{4}|02-[0-9]{3,4}-[0-9]{4}|[0-9]{3,4}-[0-9]{3,4}-[0-9]{4})$'));
+          || phone.matches('^010[0-9]{8}$'));
     }
 
     function hasValidTeacherDocument(data, teacherId) {

@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-teacher-delete-r26";
-import { helpArticles } from "./data/help-content.js?v=20260826-teacher-delete-r26";
+import { appConfig } from "./config.js?v=20260826-input-flow-r27";
+import { helpArticles } from "./data/help-content.js?v=20260826-input-flow-r27";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-teacher-delete-r26";
+} from "./data/demo-data.js?v=20260826-input-flow-r27";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-teacher-delete-r26";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-teacher-delete-r26";
+} from "./data/nts-tax-policy.js?v=20260826-input-flow-r27";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-input-flow-r27";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-teacher-delete-r26";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-input-flow-r27";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -31,7 +31,7 @@ import {
   teacherDeletionBlockers,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260826-teacher-delete-r26";
+} from "./lib/payroll-lifecycle.js?v=20260826-input-flow-r27";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -46,17 +46,18 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-teacher-delete-r26";
+} from "./lib/payroll.js?v=20260826-input-flow-r27";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-teacher-delete-r26";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-teacher-delete-r26";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-teacher-delete-r26";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-input-flow-r27";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-input-flow-r27";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260826-input-flow-r27";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-input-flow-r27";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-teacher-delete-r26";
+} from "./lib/teacher-self-service.js?v=20260826-input-flow-r27";
 
 const state = {
   user: null,
@@ -1143,6 +1144,36 @@ function mobilePhoneEditorHtml(phone, idPrefix, { required = false } = {}) {
   </fieldset>`;
 }
 
+function focusNextFormControl(form, current) {
+  const controls = [...(form?.elements || [])].filter((element) => (
+    element.matches?.("input, select, textarea, button")
+    && element.type !== "hidden"
+    && !element.disabled
+    && !element.readOnly
+    && !element.closest("[hidden]")
+  ));
+  const currentIndex = controls.indexOf(current);
+  controls[currentIndex + 1]?.focus();
+}
+
+function bindPersonNameInput(form) {
+  form?.querySelectorAll("[data-person-name]").forEach((input) => {
+    let composing = false;
+    const sanitize = () => {
+      input.value = sanitizePersonNameInput(input.value);
+    };
+    input.addEventListener("compositionstart", () => { composing = true; });
+    input.addEventListener("compositionend", () => { composing = false; sanitize(); });
+    input.addEventListener("beforeinput", (event) => {
+      if (!event.isComposing && event.inputType === "insertText" && event.data && /[^A-Za-z가-힣 ]/.test(event.data)) {
+        event.preventDefault();
+      }
+    });
+    input.addEventListener("input", () => { if (!composing) sanitize(); });
+    sanitize();
+  });
+}
+
 function bindTeacherIdentityInput(form) {
   form?.querySelectorAll("[data-teacher-identity]").forEach((editor) => {
     const inputs = [...editor.querySelectorAll("[data-identity-digit]")];
@@ -1159,7 +1190,10 @@ function bindTeacherIdentityInput(form) {
       input.addEventListener("input", () => {
         input.value = input.value.replace(/\D/g, "").slice(0, 1);
         sync();
-        if (input.value && inputs[index + 1]) inputs[index + 1].focus();
+        if (input.value) {
+          if (inputs[index + 1]) inputs[index + 1].focus();
+          else focusNextFormControl(form, input);
+        }
       });
       input.addEventListener("keydown", (event) => {
         if (event.key === "Backspace" && !input.value && inputs[index - 1]) {
@@ -1178,7 +1212,9 @@ function bindTeacherIdentityInput(form) {
         event.preventDefault();
         [...pastedDigits].forEach((digit, offset) => { inputs[index + offset].value = digit; });
         sync();
-        inputs[Math.min(index + pastedDigits.length, inputs.length - 1)].focus();
+        const nextIndex = index + pastedDigits.length;
+        if (inputs[nextIndex]) inputs[nextIndex].focus();
+        else focusNextFormControl(form, inputs.at(-1));
       });
     });
     sync();
@@ -1202,7 +1238,10 @@ function bindMobilePhoneInput(form) {
       input.addEventListener("input", () => {
         input.value = input.value.replace(/\D/g, "").slice(0, 4);
         sync();
-        if (input.value.length === 4 && inputs[index + 1]) inputs[index + 1].focus();
+        if (input.value.length === 4) {
+          if (inputs[index + 1]) inputs[index + 1].focus();
+          else focusNextFormControl(form, input);
+        }
       });
       input.addEventListener("keydown", (event) => {
         if (event.key === "Backspace" && !input.value && inputs[index - 1]) inputs[index - 1].focus();
@@ -1215,9 +1254,11 @@ function bindMobilePhoneInput(form) {
         if (index === 0) {
           middle.value = pastedDigits.slice(0, 4);
           last.value = pastedDigits.slice(4, 8);
-          last.focus();
+          if (last.value.length === 4) focusNextFormControl(form, last);
+          else last.focus();
         } else {
           last.value = pastedDigits.slice(0, 4);
+          if (last.value.length === 4) focusNextFormControl(form, last);
         }
         sync();
       });
@@ -1684,7 +1725,7 @@ function openTeacherSelfProfileModal(teacher) {
     <div class="notice"><i data-lucide="shield-check"></i><span>직접 입력한 보험 가입 여부와 시급은 관리자가 월급·신고 기준액·세금 정보와 함께 최종 검토합니다.</span></div>
     <form id="teacher-self-profile-form" class="form-grid">
       <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong></div>
-      <div class="form-field"><label for="self-profile-name">이름</label><input id="self-profile-name" name="name" value="${e(teacher.name)}" required /></div>
+      <div class="form-field"><label for="self-profile-name">이름</label><input id="self-profile-name" name="name" autocomplete="name" maxlength="100" pattern="[A-Za-z가-힣]+( [A-Za-z가-힣]+)*" value="${e(teacher.name)}" data-person-name required /><span class="form-help">한글 또는 영문으로 입력하세요.</span></div>
       ${mobilePhoneEditorHtml(teacher.phone, "self-profile-phone", { required: true })}
       ${teacherIdentityEditorHtml(teacher, "self-profile-identity", { required: true })}
       <div class="form-field full"><label for="self-profile-email">Google 이메일</label><input id="self-profile-email" type="email" value="${e(teacher.email)}" readonly /><span class="form-help">로그인 이메일은 관리자만 변경할 수 있습니다.</span></div>
@@ -1710,7 +1751,7 @@ function openTeacherSelfProfileModal(teacher) {
     }
     const incomeComposition = insuranceEnrolled ? (hasBusinessRate ? "mixed" : "employee") : "business";
     const profile = {
-      name: data.name.trim(),
+      name: normalizePersonName(data.name),
       phone: normalizeMobilePhoneNumber(data.phone),
       ...parseTeacherIdentity(data.teacherIdentity),
       incomeComposition,
@@ -1729,6 +1770,7 @@ function openTeacherSelfProfileModal(teacher) {
     renderProfile();
   });
   const form = document.querySelector("#teacher-self-profile-form");
+  bindPersonNameInput(form);
   bindTeacherIdentityInput(form);
   bindMobilePhoneInput(form);
   bindBusinessPayRateEditor(form, "self", "#self-business-rates");
@@ -1738,7 +1780,7 @@ function openTeacherModal() {
   openModal("선생님 등록", `
     <form id="teacher-form" class="form-grid">
       <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong><span class="form-help">선생님 식별과 Google 계정 연결에 필요한 기본 정보입니다.</span></div>
-      <div class="form-field"><label for="teacher-name">이름</label><input id="teacher-name" name="name" required /></div>
+      <div class="form-field"><label for="teacher-name">이름</label><input id="teacher-name" name="name" autocomplete="name" maxlength="100" pattern="[A-Za-z가-힣]+( [A-Za-z가-힣]+)*" data-person-name required /><span class="form-help">한글 또는 영문으로 입력하세요.</span></div>
       <div class="form-field"><label for="teacher-email">Google 이메일</label><input id="teacher-email" name="email" type="email" required /></div>
       ${mobilePhoneEditorHtml("", "teacher-phone")}
       ${teacherIdentityEditorHtml({}, "teacher-identity", { help: "비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다." })}
@@ -1786,7 +1828,7 @@ function openTeacherModal() {
     const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const teacher = {
       id: crypto.randomUUID(),
-      name: data.name.trim(),
+      name: normalizePersonName(data.name),
       email,
       phone: normalizeMobilePhoneNumber(data.phone),
       ...identity,
@@ -1816,6 +1858,7 @@ function openTeacherModal() {
       renderTeachers();
     });
   const form = document.querySelector("#teacher-form");
+  bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
   bindInsuranceEditorAutomation(form, "teacher", "#teacher-employee-pay");
   bindTeacherIdentityInput(form);
@@ -1935,7 +1978,7 @@ function openTeacherEditModal(teacher) {
     <div class="notice"><i data-lucide="user-cog"></i><span>비활성화하면 다음 로그인부터 접근이 차단되며 과거 급여 자료는 삭제되지 않습니다.</span></div>
     <form id="teacher-edit-form" class="form-grid">
       <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong><span class="form-help">선생님 식별과 Google 계정 연결에 필요한 기본 정보입니다.</span></div>
-      <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
+      <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" autocomplete="name" maxlength="100" pattern="[A-Za-z가-힣]+( [A-Za-z가-힣]+)*" value="${e(teacher.name)}" data-person-name required /><span class="form-help">한글 또는 영문으로 입력하세요.</span></div>
       <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
       ${mobilePhoneEditorHtml(teacher.phone, "teacher-edit-phone")}
       ${teacherIdentityEditorHtml(teacher, "teacher-edit-identity")}
@@ -1983,7 +2026,7 @@ function openTeacherEditModal(teacher) {
     const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const updated = {
       ...teacher,
-      name: data.name.trim(),
+      name: normalizePersonName(data.name),
       email,
       phone: normalizeMobilePhoneNumber(data.phone),
       ...identity,
@@ -2011,6 +2054,7 @@ function openTeacherEditModal(teacher) {
     renderTeachers();
   });
   const form = document.querySelector("#teacher-edit-form");
+  bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
   bindInsuranceEditorAutomation(form, "teacher-edit", "#teacher-edit-employee-pay");
   bindTeacherIdentityInput(form);

@@ -1,3 +1,5 @@
+import { sanitizePersonNameInput } from "./person-name.js";
+
 export function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -80,12 +82,13 @@ export function payslipId(month, teacherId, incomeType = null) {
 
 export function provisionalTeacherForAccessRequest(request) {
   const uid = String(request?.uid || request?.id || "").replaceAll("/", "_");
-  const displayName = String(request?.displayName || "").trim();
   const email = normalizeEmail(request?.email);
+  const displayName = sanitizePersonNameInput(request?.displayName).trim();
+  const emailName = sanitizePersonNameInput(email.split("@")[0]).trim();
   return {
     id: `teacher-${uid}`,
     authUid: null,
-    name: displayName || email.split("@")[0] || "신규 선생님",
+    name: displayName || emailName || "신규 선생님",
     email,
     phone: "",
     status: "active",

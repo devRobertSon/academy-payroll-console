@@ -112,3 +112,12 @@ test("미등록 승인 요청은 자기정보 입력 전용 임시 선생님으�
   assert.deepEqual(provisional.businessRates, []);
   assert.equal(validateTeacherAccessApproval(request, provisional), true);
 });
+
+test("임시 선생님 이름에서 숫자와 기호를 제거한다", () => {
+  const provisional = provisionalTeacherForAccessRequest({
+    ...request,
+    displayName: "Teacher 123!"
+  });
+
+  assert.equal(provisional.name, "Teacher");
+});

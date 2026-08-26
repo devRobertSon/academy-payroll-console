@@ -44,6 +44,7 @@ async function checkRequiredFiles() {
     "docs/ai-assistant-setup.md",
     "src/data/help-content.js",
     "src/lib/help-assistant.js",
+    "src/lib/person-name.js",
     "src/lib/phone-number.js",
     "src/lib/teacher-self-service.js",
     "src/lib/admin-notifications.js",
@@ -365,6 +366,7 @@ async function checkTeacherMonthlyPayroll() {
     failures.push("Segmented teacher identity entry, rear-number masking, or concise labels are missing.");
   }
   const phone = await readFile(join(root, "src", "lib", "phone-number.js"), "utf8");
+  const personName = await readFile(join(root, "src", "lib", "person-name.js"), "utf8");
   if ((app.match(/mobilePhoneEditorHtml\(/g) || []).length !== 4
     || !app.includes('type="hidden" name="phone"')
     || !app.includes("normalizeMobilePhoneNumber(data.phone)")
@@ -373,6 +375,14 @@ async function checkTeacherMonthlyPayroll() {
     || !rules.includes("phone.matches('^010[0-9]{8}$')")
     || app.includes("<th>연락처</th>")) {
     failures.push("Teacher mobile-phone inputs must fix the 010 prefix and store only 11 digits in Firestore.");
+  }
+  if ((app.match(/data-person-name/g) || []).length !== 4
+    || (app.match(/normalizePersonName\(data\.name\)/g) || []).length !== 3
+    || !app.includes("function bindPersonNameInput")
+    || !app.includes("focusNextFormControl(form, input)")
+    || !personName.includes("PERSON_NAME_PATTERN")
+    || !rules.includes("hasValidPersonName")) {
+    failures.push("Teacher profile inputs must validate names and advance completed numeric fields in order.");
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");

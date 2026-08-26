@@ -211,11 +211,16 @@ service cloud.firestore {
           || phone.matches('^010[0-9]{8}$'));
     }
 
+    function hasValidPersonName(name) {
+      return name is string
+        && name.size() > 0
+        && name.size() <= 100
+        && name.matches('^[A-Za-z가-힣]+( [A-Za-z가-힣]+)*$');
+    }
+
     function hasValidTeacherDocument(data, teacherId) {
       return data.id == teacherId
-        && data.name is string
-        && data.name.size() > 0
-        && data.name.size() <= 100
+        && hasValidPersonName(data.name)
         && data.email is string
         && data.email.size() > 3
         && data.email.size() <= 320
@@ -273,8 +278,7 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (request.auth.uid == uid
           && hasRole('teacher')
-          && request.resource.data.displayName is string
-          && request.resource.data.displayName.size() > 0
+          && hasValidPersonName(request.resource.data.displayName)
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -332,8 +336,7 @@ service cloud.firestore {
       allow update: if (isAdmin()
           && hasValidTeacherDocument(request.resource.data, teacherId))
         || (isOwnTeacher(teacherId)
-          && request.resource.data.name is string
-          && request.resource.data.name.size() > 0
+          && hasValidPersonName(request.resource.data.name)
           && hasValidPhoneNumber(request.resource.data.phone)
           && hasValidTeacherIdentity(request.resource.data)
           && hasValidInsuranceSettings(request.resource.data)

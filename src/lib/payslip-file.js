@@ -1,14 +1,15 @@
-export function payslipFilename(academyName, teacherName, month) {
+export function payslipFilename(academyName, teacherName, month, incomeLabel = "") {
   const academy = safeFilenamePart(academyName) || "academy";
   const teacher = safeFilenamePart(teacherName) || "teacher";
-  return `${academy}-${month}-${teacher}-급여명세서.pdf`;
+  const income = safeFilenamePart(incomeLabel);
+  return `${academy}-${month}-${teacher}${income ? `-${income}` : ""}-급여명세서.pdf`;
 }
 
-export async function createPayslipPdfFile(element, { academyName, teacherName, month }) {
+export async function createPayslipPdfFile(element, { academyName, teacherName, month, incomeLabel = "" }) {
   if (!element) throw new Error("PDF로 만들 급여명세서를 찾지 못했습니다.");
   if (typeof window.html2pdf !== "function") throw new Error("PDF 생성 모듈을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
 
-  const filename = payslipFilename(academyName, teacherName, month);
+  const filename = payslipFilename(academyName, teacherName, month, incomeLabel);
   element.classList.add("pdf-export");
   try {
     const worker = window.html2pdf().set({

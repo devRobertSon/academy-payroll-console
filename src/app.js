@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-insurance-base-r16";
-import { helpArticles } from "./data/help-content.js?v=20260826-insurance-base-r16";
+import { appConfig } from "./config.js?v=20260826-split-payslips-r17";
+import { helpArticles } from "./data/help-content.js?v=20260826-split-payslips-r17";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,17 +10,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-insurance-base-r16";
+} from "./data/demo-data.js?v=20260826-split-payslips-r17";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-insurance-base-r16";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-base-r16";
+} from "./data/nts-tax-policy.js?v=20260826-split-payslips-r17";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-split-payslips-r17";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-split-payslips-r17";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -30,7 +30,7 @@ import {
   payslipId,
   payslipVersionId,
   validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js";
+} from "./lib/payroll-lifecycle.js?v=20260826-split-payslips-r17";
 import {
   calculatePayroll,
   createMonthlyEarningLines,
@@ -41,18 +41,19 @@ import {
   parseEmploymentTaxTableRows,
   resolveIncomeComposition,
   resolveEffectivePolicy,
+  splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-insurance-base-r16";
+} from "./lib/payroll.js?v=20260826-split-payslips-r17";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-base-r16";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-base-r16";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-split-payslips-r17";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-split-payslips-r17";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-insurance-base-r16";
+} from "./lib/teacher-self-service.js?v=20260826-split-payslips-r17";
 
 const state = {
   user: null,
@@ -61,6 +62,7 @@ const state = {
   search: "",
   selectedTeacherId: null,
   selectedPayslipMonth: currentCalendarMonth(),
+  selectedPayslipType: null,
   helpSearch: "",
   assistantMessages: [],
   assistantBusy: false,
@@ -557,16 +559,17 @@ function renderRates() {
 }
 
 function renderLedger() {
-  const payrolls = payrollsForMonth(state.month);
-  const summary = summarizePayroll(payrolls.map((item) => item.payroll));
+  const ledgerItems = ledgerItemsForMonth(state.month);
+  const summary = summarizePayroll(ledgerItems.map((item) => item.payroll));
   setPage("월별 급여내역서", formatMonth(state.month), `
     <button class="button button-secondary" type="button" data-action="print"><i data-lucide="printer"></i><span>인쇄</span></button>
     <button class="button button-primary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>CSV 저장</span></button>
   `);
   elements.content.innerHTML = `
     <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" /></div>
+    <div class="notice"><i data-lucide="split"></i><span>근로소득과 사업소득을 함께 받는 선생님은 소득 구분별로 두 줄이 표시됩니다. 교통·주차·기타 원천징수는 강사료 외 추가 지급을 사업소득 또는 기타소득으로 처리하면서 공제한 세금입니다.</span></div>
     <section class="content-section"><div class="section-heading"><div><h2>${e(appConfig.academyName)} 급여내역서</h2><p>기장 전달용 · ${formatMonth(state.month)}</p></div></div>
-    <div class="data-surface table-scroll">${ledgerTable(payrolls, summary)}</div></section>
+    <div class="data-surface table-scroll">${ledgerTable(ledgerItems, summary)}</div></section>
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='print']").addEventListener("click", () => window.print());
@@ -742,14 +745,29 @@ function renderPayslips() {
   const teacher = teacherById(teacherId);
   const months = availablePayslipMonths(teacherId);
   if (!months.includes(state.selectedPayslipMonth)) state.selectedPayslipMonth = months[0] || state.month;
-  const payroll = payrollForTeacher(teacherId, state.selectedPayslipMonth);
+  const payrollItem = payrollForTeacher(teacherId, state.selectedPayslipMonth);
+  const documents = payrollItem && teacher
+    ? payslipDocumentsFor(teacher, payrollItem.payroll, state.selectedPayslipMonth)
+    : [];
+  if (!documents.some((document) => document.incomeType === state.selectedPayslipType)) {
+    state.selectedPayslipType = documents[0]?.incomeType || null;
+  }
+  const selectedDocument = documents.find((document) => document.incomeType === state.selectedPayslipType) || null;
+  const listItems = months.flatMap((month) => {
+    const item = payrollForTeacher(teacherId, month);
+    return item && teacher
+      ? payslipDocumentsFor(teacher, item.payroll, month).map((document) => ({ month, ...document }))
+      : [];
+  });
   const run = { ...runForMonth(state.selectedPayslipMonth), status: payslipStatus(teacherId, state.selectedPayslipMonth) };
   const isAdmin = state.user.role === "admin";
-  const delivery = deliveryFor(teacherId, state.selectedPayslipMonth);
+  const delivery = selectedDocument
+    ? deliveryFor(teacherId, state.selectedPayslipMonth, selectedDocument.payslipId)
+    : null;
   setPage(state.user.role === "teacher" ? "급여명세서" : `${teacher?.name || "선생님"} 급여명세서`, "발행된 월별 내역", `
-    <button class="button button-secondary" type="button" title="PDF 다운로드" aria-label="급여명세서 PDF 다운로드" data-action="download-payslip" ${payroll ? "" : "disabled"}><i data-lucide="download"></i><span>PDF 다운로드</span></button>
-    <button class="button button-secondary" type="button" title="인쇄" aria-label="급여명세서 인쇄" data-action="print-payslip" ${payroll ? "" : "disabled"}><i data-lucide="printer"></i><span>인쇄</span></button>
-    ${isAdmin ? `<button class="button button-primary" type="button" title="이메일 발송" aria-label="급여명세서 이메일 발송" data-action="email-payslip" ${payroll && run.status === "published" ? "" : "disabled"}><i data-lucide="mail-plus"></i><span>이메일 발송</span></button>` : ""}
+    <button class="button button-secondary" type="button" title="PDF 다운로드" aria-label="급여명세서 PDF 다운로드" data-action="download-payslip" ${selectedDocument ? "" : "disabled"}><i data-lucide="download"></i><span>PDF 다운로드</span></button>
+    <button class="button button-secondary" type="button" title="인쇄" aria-label="급여명세서 인쇄" data-action="print-payslip" ${selectedDocument ? "" : "disabled"}><i data-lucide="printer"></i><span>인쇄</span></button>
+    ${isAdmin ? `<button class="button button-primary" type="button" title="이메일 발송" aria-label="급여명세서 이메일 발송" data-action="email-payslip" ${selectedDocument && run.status === "published" ? "" : "disabled"}><i data-lucide="mail-plus"></i><span>이메일 발송</span></button>` : ""}
   `);
   const notice = state.user.role === "teacher"
     ? "본인에게 발행된 급여명세서만 표시됩니다. 파일을 내려받은 공용 기기에서는 사용 후 삭제해 주세요."
@@ -757,24 +775,27 @@ function renderPayslips() {
       ? "관리자 미리보기입니다. 이메일 첨부 발송은 급여 확정 후 사용할 수 있습니다."
       : delivery
         ? `${delivery.recipientEmail} 주소로 ${formatDeliveryAt(delivery.sentAt)}에 첨부 발송했습니다.`
-        : "확정된 명세서입니다. 수신자와 금액을 확인한 뒤 PDF 다운로드 또는 이메일 첨부 발송을 진행하세요.";
+        : `확정된 ${selectedDocument?.incomeLabel || "급여"} 명세서입니다. 수신자와 실 지급액을 확인한 뒤 PDF 다운로드 또는 이메일 첨부 발송을 진행하세요.`;
   elements.content.innerHTML = `
     <div class="notice"><i data-lucide="${delivery ? "mail-check" : "lock-keyhole"}"></i><span>${e(notice)}</span></div>
     <div class="payslip-layout">
       <aside class="payslip-list"><div class="payslip-list-header"><h2>명세서 내역</h2></div>
-        ${months.map((month) => { const item = payrollForTeacher(teacherId, month); return `<button class="payslip-item ${month === state.selectedPayslipMonth ? "active" : ""}" type="button" data-payslip-month="${e(month)}"><strong>${formatMonth(month)}</strong><span>${payslipStatus(teacherId, month) === "published" ? "발행 완료" : "관리자 미리보기"}</span><span class="amount">${formatWon(item?.payroll.net)}</span></button>`; }).join("") || `<div class="empty-state">발행된 명세서가 없습니다.</div>`}
+        ${listItems.map((item) => `<button class="payslip-item ${item.month === state.selectedPayslipMonth && item.incomeType === state.selectedPayslipType ? "active" : ""}" type="button" data-payslip-month="${e(item.month)}" data-payslip-type="${e(item.incomeType)}"><strong>${formatMonth(item.month)}</strong><span>${e(item.incomeLabel)} 명세서 · ${payslipStatus(teacherId, item.month) === "published" ? "발행 완료" : "관리자 미리보기"}</span><span class="amount">${formatWon(item.payroll.net)}</span></button>`).join("") || `<div class="empty-state">발행된 명세서가 없습니다.</div>`}
       </aside>
-      ${payroll && teacher ? payslipSheet(teacher, payroll.payroll, state.selectedPayslipMonth, run) : `<div class="empty-state">확인할 명세서가 없습니다.</div>`}
+      ${selectedDocument && teacher ? payslipSheet(teacher, selectedDocument.payroll, state.selectedPayslipMonth, run, selectedDocument.incomeLabel) : `<div class="empty-state">확인할 명세서가 없습니다.</div>`}
     </div>
   `;
   elements.topbarActions.querySelector("[data-action='download-payslip']")?.addEventListener("click", downloadCurrentPayslip);
   elements.topbarActions.querySelector("[data-action='print-payslip']")?.addEventListener("click", () => window.print());
-  elements.topbarActions.querySelector("[data-action='email-payslip']")?.addEventListener("click", () => openPayslipEmailModal(teacher, payroll?.payroll, run));
+  elements.topbarActions.querySelector("[data-action='email-payslip']")?.addEventListener("click", () => openPayslipEmailModal(teacher, selectedDocument, run));
   elements.content.querySelectorAll("[data-payslip-month]").forEach((button) => button.addEventListener("click", () => {
     state.selectedPayslipMonth = button.dataset.payslipMonth;
+    state.selectedPayslipType = button.dataset.payslipType;
     renderPayslips();
   }));
-  if (state.user.role === "teacher" && payroll && run.status === "published") recordPayslipViewed(teacherId, state.selectedPayslipMonth);
+  if (state.user.role === "teacher" && selectedDocument && run.status === "published") {
+    recordPayslipViewed(teacherId, state.selectedPayslipMonth, selectedDocument.payslipId);
+  }
 }
 
 function renderProfile() {
@@ -890,7 +911,7 @@ function payrollsForMonth(month) {
 
 function payrollForTeacher(teacherId, month) {
   if (!appConfig.demoMode && state.data.payslips.length) {
-    const saved = state.data.payslips.find((item) => item.month === month && item.teacherId === teacherId);
+    const saved = state.data.payslips.find((item) => item.id === payslipId(month, teacherId));
     if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
     if (state.user?.role === "teacher") return null;
   }
@@ -914,6 +935,28 @@ function payrollForTeacher(teacherId, month) {
       teacher.taxProfile
     )
   };
+}
+
+function payslipDocumentsFor(teacher, payroll, month) {
+  if (!teacher || !payroll) return [];
+  return splitPayrollByIncome(payroll, policyForMonth(month), teacher.taxProfile).map((document) => {
+    const saved = state.data.payslips.find((item) => (
+      item.id === payslipId(month, teacher.id, document.incomeType)
+      && item.status === "published"
+    ));
+    return {
+      ...document,
+      payroll: saved?.calculation || document.payroll,
+      payslipId: saved?.id || payslipId(month, teacher.id),
+      persistedSeparately: Boolean(saved)
+    };
+  });
+}
+
+function ledgerItemsForMonth(month) {
+  return payrollsForMonth(month).flatMap(({ teacher, payroll }) => (
+    payslipDocumentsFor(teacher, payroll, month).map((document) => ({ teacher, ...document }))
+  ));
 }
 
 function entriesForMonth(month) { return state.data.entries.filter((entry) => entry.month === month); }
@@ -998,9 +1041,9 @@ function mergeBuiltInInsurancePolicies(policies) {
 
 function availablePayslipMonths(teacherId) {
   if (!appConfig.demoMode && state.data.payslips.length) {
-    return state.data.payslips
+    return [...new Set(state.data.payslips
       .filter((item) => item.teacherId === teacherId && (state.user.role === "admin" || item.status === "published"))
-      .map((item) => item.month)
+      .map((item) => item.month))]
       .sort()
       .reverse();
   }
@@ -1010,12 +1053,12 @@ function availablePayslipMonths(teacherId) {
 }
 
 function payslipStatus(teacherId, month) {
-  const saved = state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
+  const saved = state.data.payslips.find((item) => item.id === payslipId(month, teacherId));
   return saved?.status || runForMonth(month).status;
 }
 
 function currentPayslip(teacherId, month) {
-  return state.data.payslips.find((item) => item.teacherId === teacherId && item.month === month);
+  return state.data.payslips.find((item) => item.id === payslipId(month, teacherId));
 }
 
 function payrollTable(items) {
@@ -1029,12 +1072,12 @@ function payrollTable(items) {
 }
 
 function ledgerTable(items, summary) {
-  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>연락처</th><th>생년월일·성별번호</th><th class="numeric">신고액</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 세액공제</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">주차료</th><th class="numeric">기타</th><th class="numeric">추가 지급 원천징수</th><th class="numeric">세액공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">지급액</th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
+  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>연락처</th><th>생년월일·성별번호</th><th>소득 구분</th><th class="numeric">총 지급액<br>(신고액)</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 원천징수<br>(3.3%)</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">주차료</th><th class="numeric">기타</th><th class="numeric" title="강사료 외 교통비·주차료·기타 지급 중 사업소득 또는 기타소득으로 처리해 공제한 세금">교통·주차·기타<br>원천징수</th><th class="numeric">세금 공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">실 지급액</th></tr></thead><tbody>${items.map(({ teacher, incomeType, incomeLabel, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     const withholdingTotal = report.lectureWithholding + report.additionalPaymentWithholding;
-    return `<tr><td>${e(teacher.name)}</td><td>${e(teacher.phone || "")}</td><td>${e(formatTeacherIdentity(teacher))}</td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
-  }).join("")}<tr class="ledger-total"><td colspan="3"><strong>합계</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="18"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
+    return `<tr data-ledger-income="${e(incomeType)}"><td>${e(teacher.name)}</td><td>${e(teacher.phone || "")}</td><td>${e(formatTeacherIdentity(teacher))}</td><td><span class="status-chip ${incomeType === "employee" ? "published" : "ready"}">${e(incomeLabel)}</span></td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
+  }).join("")}<tr class="ledger-total"><td colspan="4"><strong>합계</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="18"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
 }
 
 function insuranceBasesFor(payroll) {
@@ -1070,11 +1113,11 @@ function accountingReportFor(payroll) {
   };
 }
 
-function payslipSheet(teacher, payroll, month, run) {
+function payslipSheet(teacher, payroll, month, run, incomeLabel = payrollCompositionLabel(payroll)) {
   const deductionRows = Object.entries(deductionLabels()).filter(([key]) => payroll.deductions[key] > 0);
   return `<article class="payslip-sheet">
-    <header class="payslip-title"><div><h2>${formatMonth(month)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><span class="brand-mark" aria-hidden="true">AP</span></header>
-    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>급여 구성</span><strong>${e(payrollCompositionLabel(payroll))} · 사회보험 ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "적용" : "미적용"}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? `${artifactRevision(run)}차 발행 완료` : "미리보기"}</strong></div></div>
+    <header class="payslip-title"><div><h2>${formatMonth(month)} ${e(incomeLabel)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><span class="brand-mark" aria-hidden="true">AP</span></header>
+    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>소득 구분</span><strong>${e(incomeLabel)} · 사회보험 ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "적용" : "미적용"}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? `${artifactRevision(run)}차 발행 완료` : "미리보기"}</strong></div></div>
     <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>지급 항목</th><th>소득 구분</th><th>산정 기준</th><th class="numeric">금액</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td><td>${e(earningBasisLabel(line))}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
     <div class="payslip-totals"><div><span>총 지급액</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>총 공제액</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>실 지급액</span><strong>${formatWon(payroll.net)}</strong></div></div>
@@ -1463,6 +1506,7 @@ function bindPayrollRows() {
   elements.content.querySelectorAll("[data-view-payslip]").forEach((button) => button.addEventListener("click", () => {
     state.selectedTeacherId = button.dataset.viewPayslip;
     state.selectedPayslipMonth = state.month;
+    state.selectedPayslipType = null;
     state.view = "adminPayslip";
     render();
   }));
@@ -2178,10 +2222,8 @@ function openPublishModal() {
     if (state.store && missingAccounts.length) throw new Error(`로그인 UID가 연결되지 않은 선생님이 있습니다: ${missingAccounts.map(({ teacher }) => teacher.name).join(", ")}`);
     const publishedAt = new Date().toISOString();
     const run = { ...currentRun, status: "published", revision, releaseId: `${state.month}_v${revision}`, publishedAt, cancellationId: null, cancellationReason: null, cancelledAt: null };
-    const payslips = payrolls.map(({ teacher, payroll }) => ({
-      id: payslipId(state.month, teacher.id),
-      versionId: payslipVersionId(state.month, teacher.id, revision),
-      data: {
+    const payslips = payrolls.flatMap(({ teacher, payroll }) => {
+      const common = {
         month: state.month,
         teacherId: teacher.id,
         teacherUid: teacher.authUid,
@@ -2192,10 +2234,27 @@ function openPublishModal() {
         policyVersion: payroll.policyVersion,
         taxPolicyVersion: payroll.taxPolicyVersion,
         insurancePolicyVersion: payroll.insurancePolicyVersion,
-        calculation: payroll,
         publishedAt
-      }
-    }));
+      };
+      const combined = {
+        id: payslipId(state.month, teacher.id),
+        versionId: payslipVersionId(state.month, teacher.id, revision),
+        data: { ...common, documentType: "combined", calculation: payroll }
+      };
+      const incomeDocuments = splitPayrollByIncome(payroll, policyForMonth(state.month), teacher.taxProfile);
+      if (incomeDocuments.length < 2) return [combined];
+      return [combined, ...incomeDocuments.map((document) => ({
+        id: payslipId(state.month, teacher.id, document.incomeType),
+        versionId: payslipVersionId(state.month, teacher.id, revision, document.incomeType),
+        data: {
+          ...common,
+          documentType: "income",
+          incomeType: document.incomeType,
+          incomeLabel: document.incomeLabel,
+          calculation: document.payroll
+        }
+      }))];
+    });
     if (state.store) {
       await state.store.publishPayrollRun(
         run,
@@ -2250,7 +2309,7 @@ function openCancelPayrollModal() {
     const archives = currentPayslips
       .map((item) => {
         const { id, ...data } = item;
-        return { id: payslipVersionId(state.month, item.teacherId, revision), data: { ...data, status: "published", revision } };
+        return { id: `${item.id}_v${revision}`, data: { ...data, status: "published", revision } };
       })
       .filter((archive) => !state.data.payslipVersions.some((item) => item.id === archive.id));
     const run = { ...currentRun, status: "cancelled", revision, cancellationId, cancellationReason: reason, cancelledAt };
@@ -2300,12 +2359,12 @@ function openModal(title, body, submitLabel, onSubmit) {
 function closeModal() { elements.modalRoot.innerHTML = ""; }
 
 function exportLedger() {
-  const rows = [["급여월", "성명", "연락처", "생년월일·성별번호", "신고액", "수업시간", "강사료", "강사료 세액공제", "교통 횟수", "교통비", "주차료", "기타", "추가 지급 원천징수", "세액공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "지급액"]];
-  payrollsForMonth(state.month).forEach(({ teacher, payroll }) => {
+  const rows = [["급여월", "성명", "연락처", "생년월일·성별번호", "소득 구분", "총 지급액(신고액)", "수업시간", "강사료", "강사료 원천징수(3.3%)", "교통 횟수", "교통비", "주차료", "기타", "교통·주차·기타 원천징수", "세금 공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "실 지급액"]];
+  ledgerItemsForMonth(state.month).forEach(({ teacher, incomeLabel, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     rows.push([
-      state.month, teacher.name, teacher.phone || "", formatTeacherIdentity(teacher),
+      state.month, teacher.name, teacher.phone || "", formatTeacherIdentity(teacher), incomeLabel,
       report.reportedGross, report.classHours, report.lectureFeeGross, report.lectureWithholding,
       report.transportTrips, report.transportAmount, report.parkingAmount, report.otherPaymentAmount,
       report.additionalPaymentWithholding, report.lectureWithholding + report.additionalPaymentWithholding,
@@ -2325,7 +2384,8 @@ async function downloadCurrentPayslip(event) {
   button.disabled = true;
   try {
     const teacher = teacherById(state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId);
-    const file = await createCurrentPayslipPdf(teacher);
+    const document = selectedPayslipDocument(teacher);
+    const file = await createCurrentPayslipPdf(teacher, document);
     downloadFile(file);
     showToast("급여명세서 PDF를 저장했습니다.");
   } catch (error) {
@@ -2335,25 +2395,37 @@ async function downloadCurrentPayslip(event) {
   }
 }
 
-function createCurrentPayslipPdf(teacher) {
+function selectedPayslipDocument(teacher) {
+  if (!teacher) return null;
+  const payrollItem = payrollForTeacher(teacher.id, state.selectedPayslipMonth);
+  if (!payrollItem) return null;
+  const documents = payslipDocumentsFor(teacher, payrollItem.payroll, state.selectedPayslipMonth);
+  return documents.find((document) => document.incomeType === state.selectedPayslipType) || documents[0] || null;
+}
+
+function createCurrentPayslipPdf(teacher, document = selectedPayslipDocument(teacher)) {
   if (!teacher) throw new Error("선생님 정보를 찾지 못했습니다.");
+  if (!document) throw new Error("급여명세서를 찾지 못했습니다.");
   return createPayslipPdfFile(elements.content.querySelector(".payslip-sheet"), {
     academyName: appConfig.academyName,
     teacherName: teacher.name,
-    month: state.selectedPayslipMonth
+    month: state.selectedPayslipMonth,
+    incomeLabel: document.incomeLabel
   });
 }
 
-function openPayslipEmailModal(teacher, payroll, run) {
-  if (!teacher || !payroll || run.status !== "published") {
+function openPayslipEmailModal(teacher, document, run) {
+  if (!teacher || !document?.payroll || run.status !== "published") {
     showToast("확정된 급여명세서만 이메일로 발송할 수 있습니다.");
     return;
   }
-  const revision = artifactRevision(currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
+  const payroll = document.payroll;
+  const persisted = state.data.payslips.find((item) => item.id === document.payslipId);
+  const revision = artifactRevision(persisted || currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
   const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
-  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} 급여명세서${revisionLabel}`;
-  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
-  const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth);
+  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}`;
+  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
+  const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth, document.incomeLabel);
   openModal("급여명세서 이메일 발송", `
     <div class="notice compact"><i data-lucide="shield-check"></i><span>발송할 때 관리자 Google 계정에 Gmail 전송 권한만 요청합니다. 권한 토큰과 첨부 파일은 저장하지 않습니다.</span></div>
     <div class="delivery-summary">
@@ -2377,7 +2449,7 @@ function openPayslipEmailModal(teacher, payroll, run) {
     if (!state.store) throw new Error("데모에서는 실제 메일을 발송하지 않습니다. Firebase 연결 후 사용해 주세요.");
 
     await state.store.authorizeGmailSend();
-    const file = await createCurrentPayslipPdf(teacher);
+    const file = await createCurrentPayslipPdf(teacher, document);
     const raw = buildGmailMessage({
       to: data.to,
       subject: data.subject,
@@ -2387,7 +2459,7 @@ function openPayslipEmailModal(teacher, payroll, run) {
     });
     const result = await state.store.sendGmailMessage(raw);
     const deliveryData = {
-      payslipId: payslipId(state.selectedPayslipMonth, teacher.id),
+      payslipId: document.payslipId,
       teacherId: teacher.id,
       month: state.selectedPayslipMonth,
       revision,
@@ -2412,7 +2484,7 @@ function openPayslipEmailModal(teacher, payroll, run) {
     const data = Object.fromEntries(new FormData(form));
     button.disabled = true;
     try {
-      downloadFile(await createCurrentPayslipPdf(teacher));
+      downloadFile(await createCurrentPayslipPdf(teacher, document));
       window.location.href = `mailto:${encodeURIComponent(data.to)}?subject=${encodeURIComponent(data.subject)}&body=${encodeURIComponent(data.body)}`;
       showToast("PDF를 저장했습니다. 열린 메일에 파일을 첨부해 주세요.");
     } catch (error) {
@@ -2453,16 +2525,15 @@ function portalUrl() {
   return appConfig.portalUrl || new URL(".", window.location.href).href;
 }
 
-async function recordPayslipViewed(teacherId, month) {
-  if (receiptFor(teacherId, month)) return;
-  const current = currentPayslip(teacherId, month);
+async function recordPayslipViewed(teacherId, month, selectedPayslipId = payslipId(month, teacherId)) {
+  if (receiptFor(teacherId, month, selectedPayslipId)) return;
+  const current = state.data.payslips.find((item) => item.id === selectedPayslipId) || currentPayslip(teacherId, month);
   const revision = artifactRevision(current || runForMonth(month));
-  const currentPayslipId = payslipId(month, teacherId);
-  const receipt = { id: `${currentPayslipId}_v${revision}_${state.user.uid}`, payslipId: currentPayslipId, teacherId, teacherUid: state.user.uid, month, revision, viewedAt: new Date().toISOString() };
+  const receipt = { id: `${selectedPayslipId}_v${revision}_${state.user.uid}`, payslipId: selectedPayslipId, teacherId, teacherUid: state.user.uid, month, revision, viewedAt: new Date().toISOString() };
   state.data.payslipReceipts.push(receipt);
   if (state.store) {
     try {
-      await state.store.recordPayslipView(currentPayslipId, teacherId, month, revision);
+      await state.store.recordPayslipView(selectedPayslipId, teacherId, month, revision);
     } catch (error) {
       state.data.payslipReceipts = state.data.payslipReceipts.filter((item) => item.id !== receipt.id);
       console.error("급여명세서 열람 기록 저장 실패", error);
@@ -2470,14 +2541,20 @@ async function recordPayslipViewed(teacherId, month) {
   }
 }
 
-function receiptFor(teacherId, month) {
+function receiptFor(teacherId, month, selectedPayslipId = null) {
   const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
-  return currentArtifactForRevision(state.data.payslipReceipts, teacherId, month, revision);
+  const receipts = selectedPayslipId
+    ? state.data.payslipReceipts.filter((item) => item.payslipId === selectedPayslipId)
+    : state.data.payslipReceipts;
+  return currentArtifactForRevision(receipts, teacherId, month, revision);
 }
 
-function deliveryFor(teacherId, month) {
+function deliveryFor(teacherId, month, selectedPayslipId = null) {
   const revision = artifactRevision(currentPayslip(teacherId, month) || runForMonth(month));
-  return currentArtifactForRevision(state.data.payslipDeliveries, teacherId, month, revision);
+  const deliveries = selectedPayslipId
+    ? state.data.payslipDeliveries.filter((item) => item.payslipId === selectedPayslipId)
+    : state.data.payslipDeliveries;
+  return currentArtifactForRevision(deliveries, teacherId, month, revision);
 }
 
 function formatViewedAt(value) {

@@ -266,7 +266,7 @@
 
 `published` 상태에서는 취소 전환 외의 수정이 금지됩니다. 취소 후 재발행할 때만 `revision`이 1 증가합니다.
 
-### `payslips/{yyyy-mm}_{teacherId}`
+### `payslips/{yyyy-mm}_{teacherId}` 및 소득 구분 문서
 
 ```json
 {
@@ -275,6 +275,7 @@
   "teacherUid": "Firebase Authentication UID",
   "teacherName": "발행 시점 이름",
   "status": "published",
+  "documentType": "combined",
   "revision": 2,
   "releaseId": "2026-08_v2",
   "policyVersion": "NTS-2024-02-29 / INSURANCE-2026-01",
@@ -293,9 +294,11 @@
 
 선생님 조회 쿼리는 `teacherUid == request.auth.uid`와 `status == published` 조건을 모두 포함해야 합니다.
 
+합산 확정본인 `{yyyy-mm}_{teacherId}`는 월 마감과 대시보드 계산의 기준입니다. 근로소득과 사업소득을 함께 받는 선생님은 같은 차수에 `{yyyy-mm}_{teacherId}_employee`와 `{yyyy-mm}_{teacherId}_business`가 추가되며, 각각 `documentType: income`, `incomeType`, `incomeLabel`과 해당 소득만의 계산 결과를 보존합니다. 선생님 화면의 두 명세서, PDF, 열람 기록과 이메일 발송 기록은 이 소득 구분 문서 ID를 사용합니다. 한 가지 소득만 받는 선생님은 합산 확정본 하나만 사용합니다.
+
 ### `payslipVersions/{yyyy-mm_teacherId_vN}`
 
-각 발행 차수의 급여명세서 스냅샷입니다. `payslips`는 선생님에게 보이는 현재본이고 `payslipVersions`는 관리자 감사용 불변 원본입니다. 생성 후 수정·삭제할 수 없습니다.
+각 발행 차수의 급여명세서 스냅샷입니다. 혼합형 소득 구분 문서는 `{yyyy-mm}_{teacherId}_employee_vN`과 `{yyyy-mm}_{teacherId}_business_vN` 형식을 사용합니다. `payslips`는 선생님에게 보이는 현재본이고 `payslipVersions`는 관리자 감사용 불변 원본입니다. 생성 후 수정·삭제할 수 없습니다.
 
 ### `payrollCancellations/{yyyy-mm_vN}`
 

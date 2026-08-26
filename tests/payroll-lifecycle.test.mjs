@@ -61,5 +61,9 @@ test("현재 차수의 열람·발송 이력만 선택한다", () => {
 
 test("현재 명세서와 불변 버전 문서 ID를 구분한다", () => {
   assert.equal(payslipId("2026-08", "teacher-1"), "2026-08_teacher-1");
+  assert.equal(payslipId("2026-08", "teacher-1", "employee"), "2026-08_teacher-1_employee");
+  assert.equal(payslipId("2026-08", "teacher-1", "business"), "2026-08_teacher-1_business");
   assert.equal(payslipVersionId("2026-08", "teacher-1", 3), "2026-08_teacher-1_v3");
+  assert.equal(payslipVersionId("2026-08", "teacher-1", 3, "employee"), "2026-08_teacher-1_employee_v3");
+  assert.equal(payslipVersionId("2026-08", "teacher-1", 3, "business"), "2026-08_teacher-1_business_v3");
 });

@@ -527,6 +527,54 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
   };
 }
 
+export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
+  const earningLines = Array.isArray(payroll?.earningLines) ? payroll.earningLines : [];
+  if (!earningLines.length) return [];
+
+  const hasEmployeeIncome = Number(payroll.grossByTreatment?.employee) > 0;
+  const hasBusinessIncome = Number(payroll.grossByTreatment?.business) > 0;
+  const specifications = hasEmployeeIncome && hasBusinessIncome
+    ? [
+      { incomeType: "employee", lines: earningLines.filter((line) => line.treatment !== "business") },
+      { incomeType: "business", lines: earningLines.filter((line) => line.treatment === "business") }
+    ]
+    : [{ incomeType: hasBusinessIncome ? "business" : "employee", lines: earningLines }];
+  const deductions = payroll.deductions || {};
+  const bases = payroll.insuranceBases || {};
+
+  return specifications.filter(({ lines }) => lines.length).map(({ incomeType, lines }) => {
+    const employeeDocument = incomeType === "employee";
+    const includesOtherIncome = lines.some((line) => line.treatment === "other");
+    const split = calculatePayroll(lines, policyBundle, {
+      nationalPension: employeeDocument ? deductions.nationalPension : 0,
+      healthInsurance: employeeDocument ? deductions.healthInsurance : 0,
+      longTermCare: employeeDocument ? deductions.longTermCare : 0,
+      employmentInsurance: employeeDocument ? deductions.employmentInsurance : 0,
+      employeeIncomeTax: employeeDocument ? deductions.employeeIncomeTax : 0,
+      employeeLocalTax: employeeDocument ? deductions.employeeLocalTax : 0,
+      businessIncomeTax: incomeType === "business" ? deductions.businessIncomeTax : 0,
+      businessLocalTax: incomeType === "business" ? deductions.businessLocalTax : 0,
+      otherIncomeTax: includesOtherIncome ? deductions.otherIncomeTax : 0,
+      otherLocalTax: includesOtherIncome ? deductions.otherLocalTax : 0,
+      custom: employeeDocument || !hasEmployeeIncome ? deductions.custom : 0,
+      nationalPensionBase: employeeDocument ? bases.nationalPension : 0,
+      healthInsuranceBase: employeeDocument ? bases.healthInsurance : 0,
+      employmentInsuranceBase: employeeDocument ? bases.employmentInsurance : 0
+    }, taxProfile);
+
+    return {
+      incomeType,
+      incomeLabel: INCOME_COMPOSITION_LABELS[incomeType],
+      payroll: {
+        ...split,
+        policyVersion: payroll.policyVersion || split.policyVersion,
+        taxPolicyVersion: payroll.taxPolicyVersion || split.taxPolicyVersion,
+        insurancePolicyVersion: payroll.insurancePolicyVersion || split.insurancePolicyVersion
+      }
+    };
+  });
+}
+
 function resolveInsuranceBases(overrides, fallbackBase, month) {
   const configured = overrides.insuranceSettings;
   const baseFields = {

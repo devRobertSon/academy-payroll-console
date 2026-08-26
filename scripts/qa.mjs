@@ -144,6 +144,8 @@ async function checkHtmlAssets() {
       "./lib/admin-notifications.js",
       "./lib/firebase-store.js",
       "./lib/payroll.js",
+      "./lib/payroll-lifecycle.js",
+      "./lib/payslip-file.js",
       "./lib/teacher-identity.js",
       "./lib/teacher-self-service.js"
     ]) {
@@ -250,8 +252,20 @@ async function checkTeacherMonthlyPayroll() {
   for (const reportField of ["lectureWithholding", "additionalPaymentWithholding", "healthAndLongTermCare", "insuranceBases", "unconfirmedEarningLines"]) {
     if (!payroll.includes(reportField)) failures.push(`Accounting payroll report field is missing: ${reportField}`);
   }
-  for (const heading of ["생년월일·성별번호", "강사료 세액공제", "건강+요양", "보험료 합계"]) {
+  for (const heading of ["생년월일·성별번호", "소득 구분", "총 지급액<br>(신고액)", "강사료 원천징수<br>(3.3%)", "교통·주차·기타<br>원천징수", "건강+요양", "보험료 합계", "실 지급액"]) {
     if (!app.includes(heading)) failures.push(`Accounting ledger column is missing: ${heading}`);
+  }
+  if (!payroll.includes("export function splitPayrollByIncome") || !tests.includes("혼합 급여는 근로소득과 사업소득 명세서 두 개로 분리")) {
+    failures.push("Mixed employee and business income must be split with a regression-tested calculation.");
+  }
+  for (const splitSurface of ["ledgerItemsForMonth", "data-ledger-income", "data-payslip-type", 'documentType: "income"', "selectedPayslipType"]) {
+    if (!app.includes(splitSurface)) failures.push(`Mixed-income ledger or payslip surface is missing: ${splitSurface}`);
+  }
+  if (!app.includes('"총 지급액(신고액)"') || !app.includes('"실 지급액"')) {
+    failures.push("Accounting CSV must distinguish reported gross from the actual net payment.");
+  }
+  if (app.includes("추가 지급 원천징수") || app.includes("강사료 세액공제")) {
+    failures.push("Ambiguous withholding labels must not remain in the application UI or CSV.");
   }
   if (app.includes("사업 시수")) failures.push("Use '수업 시수' instead of the incorrect '사업 시수' label.");
   if (app.includes("수업료")) failures.push("Use '강사료' for teacher compensation instead of '수업료'.");
@@ -285,6 +299,10 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (app.includes("회계사 식별번호") || app.includes("validateAccountingReference")) {
     failures.push("Legacy accountant reference input must not remain in the admin UI.");
+  }
+  const guide = await readFile(join(root, "docs", "user-guide.md"), "utf8");
+  if (!guide.includes("근로소득 명세서") || !guide.includes("교통·주차·기타 원천징수")) {
+    failures.push("User guide must explain split payslips and non-lecture payment withholding.");
   }
 }
 

@@ -371,7 +371,7 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .additional-line-row > input, .additional-line-row > select { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
 .checkbox-row.compact { min-height: 36px; font-size: 10px; }
 .definition-subtext { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
-.accounting-ledger { min-width: 2500px; }
+.accounting-ledger { min-width: 2700px; }
 .accounting-ledger th { max-width: 125px; white-space: normal; }
 .ledger-total { background: var(--surface-subtle); }
 .business-line-editor { display: grid; gap: 8px; }

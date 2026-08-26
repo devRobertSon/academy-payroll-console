@@ -36,12 +36,13 @@ export function artifactRevision(value) {
   return Math.max(1, Number(value?.revision) || 1);
 }
 
-export function payslipId(month, teacherId) {
-  return `${month}_${teacherId}`;
+export function payslipId(month, teacherId, incomeType = null) {
+  const suffix = ["employee", "business"].includes(incomeType) ? `_${incomeType}` : "";
+  return `${month}_${teacherId}${suffix}`;
 }
 
-export function payslipVersionId(month, teacherId, revision) {
-  return `${payslipId(month, teacherId)}_v${revision}`;
+export function payslipVersionId(month, teacherId, revision, incomeType = null) {
+  return `${payslipId(month, teacherId, incomeType)}_v${revision}`;
 }
 
 export function currentArtifactForRevision(items, teacherId, month, revision) {

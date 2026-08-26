@@ -10,6 +10,7 @@ import {
   resolveIncomeComposition,
   resolveEffectivePolicy,
   resolveRateRule,
+  splitPayrollByIncome,
   summarizePayroll
 } from "../src/lib/payroll.js";
 import { demoPolicy } from "../src/data/demo-data.js";
@@ -76,6 +77,24 @@ test("한 선생님의 근로소득과 사업소득을 분리 계산한 뒤 합�
   assert.equal(payroll.deductions.businessLocalTax, 420);
   assert.equal(payroll.gross, 640000);
   assert.equal(payroll.net, payroll.gross - payroll.totalDeductions);
+});
+
+test("혼합 급여는 근로소득과 사업소득 명세서 두 개로 분리해도 합계가 일치한다", () => {
+  const combined = calculatePayroll([
+    { month: "2026-08", subjectName: "월 근로소득", hours: 1, hourlyRate: 3000000, treatment: "employee", insuranceCovered: false },
+    { month: "2026-08", subjectName: "논술 특강", hours: 10, hourlyRate: 70000, treatment: "business", insuranceCovered: false },
+    { month: "2026-08", subjectName: "교통비", hours: 1, hourlyRate: 50000, treatment: "exempt", insuranceCovered: false }
+  ], demoPolicy, { employeeIncomeTax: 100000, employeeLocalTax: 10000, custom: 5000 });
+  const documents = splitPayrollByIncome(combined, demoPolicy);
+
+  assert.deepEqual(documents.map((item) => item.incomeType), ["employee", "business"]);
+  assert.equal(documents[0].payroll.gross, 3050000);
+  assert.equal(documents[1].payroll.gross, 700000);
+  assert.equal(documents[1].payroll.deductions.businessIncomeTax, 21000);
+  assert.equal(documents[1].payroll.deductions.businessLocalTax, 2100);
+  assert.equal(documents.reduce((sum, item) => sum + item.payroll.gross, 0), combined.gross);
+  assert.equal(documents.reduce((sum, item) => sum + item.payroll.totalDeductions, 0), combined.totalDeductions);
+  assert.equal(documents.reduce((sum, item) => sum + item.payroll.net, 0), combined.net);
 });
 
 test("보험 미적용 근로소득은 보험 기준액에 포함하지 않는다", () => {

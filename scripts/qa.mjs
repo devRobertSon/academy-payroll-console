@@ -483,6 +483,9 @@ async function checkHelpAssistantSafety() {
   }
   if (/gemini(?:Api)?Key\s*:/i.test(config)) failures.push("A Gemini API key must not be stored in public client configuration.");
   if (app.includes("askHelpAssistant(state.data")) failures.push("Payroll workspace data must not be passed to the AI assistant.");
+  for (const safeguard of ["소득 누락", "허위 계약", "가공 경비", "실제 고용관계", "국세청 126"]) {
+    if (!store.includes(safeguard)) failures.push(`Tax guidance safeguard is missing: ${safeguard}`);
+  }
 }
 
 async function checkAuthenticationCompatibility() {

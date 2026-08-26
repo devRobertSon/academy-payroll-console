@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260826-delete-policy-r28" />
+    <link rel="stylesheet" href="./styles.css?v=20260827-tax-guidance-r29" />
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
     <script src="./vendor/html2pdf.bundle.min.js" defer></script>
   </head>
@@ -75,7 +75,7 @@
             </button>
             <button id="assistant-toggle" class="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
               <i data-lucide="message-circle-question" aria-hidden="true"></i>
-              <span><strong>AI 도움말</strong><small>사용법 질문하기</small></span>
+              <span><strong>AI 도움말</strong><small>사용법·세무 질문</small></span>
               <i data-lucide="chevron-right" aria-hidden="true"></i>
             </button>
           </div>
@@ -112,22 +112,22 @@
       <header class="assistant-header">
         <div>
           <span class="assistant-icon" aria-hidden="true"><i data-lucide="message-circle-question"></i></span>
-          <div><h2 id="assistant-title">AI 도움말</h2><p id="assistant-status">내장 사용 설명서</p></div>
+          <div><h2 id="assistant-title">AI 도움말</h2><p id="assistant-status">내장 사용법·세무 안내</p></div>
         </div>
         <button id="assistant-close" class="icon-button" type="button" title="도움말 닫기" aria-label="도움말 닫기"><i data-lucide="x"></i></button>
       </header>
       <div id="assistant-messages" class="assistant-messages" aria-live="polite"></div>
-      <div class="assistant-privacy"><i data-lucide="shield-check" aria-hidden="true"></i><span>이름, 이메일, 전화번호, 계좌번호, 주민번호와 급여액을 입력하지 마세요.</span></div>
+      <div class="assistant-privacy"><i data-lucide="shield-check" aria-hidden="true"></i><span>실제 개인정보는 입력하지 마세요. 금액은 익명·가상 사례로 질문하세요.</span></div>
       <form id="assistant-form" class="assistant-form">
-        <label class="sr-only" for="assistant-input">프로그램 사용법 질문</label>
-        <textarea id="assistant-input" rows="2" maxlength="500" placeholder="예: 명세서를 이메일로 보내려면?"></textarea>
+        <label class="sr-only" for="assistant-input">프로그램 사용법 또는 세무 질문</label>
+        <textarea id="assistant-input" rows="2" maxlength="500" placeholder="예: 근로·사업소득이 함께 있으면 무엇을 확인해야 하나요?"></textarea>
         <button class="icon-button assistant-send" type="submit" title="질문 보내기" aria-label="질문 보내기"><i data-lucide="send"></i></button>
       </form>
     </aside>
 
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
-    <script type="module" src="./src/app.js?v=20260826-delete-policy-r28"></script>
+    <script type="module" src="./src/app.js?v=20260827-tax-guidance-r29"></script>
   </body>
 </html>
 

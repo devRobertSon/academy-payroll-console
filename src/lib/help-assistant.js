@@ -35,7 +35,7 @@ export function buildLocalHelpAnswer(question, articles, currentPage = "현재 �
 
   const matches = searchHelpArticles(question, articles, 2);
   if (!matches.length) {
-    return `${currentPage}에 대한 답을 찾지 못했습니다. 질문을 "선생님 등록", "수업 입력", "명세서 이메일"처럼 기능 이름으로 다시 입력해 주세요.`;
+    return `${currentPage}에 대한 답을 찾지 못했습니다. 질문을 "선생님 등록", "명세서 이메일", "근로·사업소득 합산 신고"처럼 기능이나 세무 주제로 다시 입력해 주세요.`;
   }
 
   return matches.map((article, articleIndex) => {
@@ -59,7 +59,7 @@ export function buildGeminiPrompt(question, articles, currentPage = "현재 화�
 }
 
 export function privacyRefusal(labels) {
-  return `${labels.join(", ")}처럼 보이는 정보가 포함되어 AI 도움말로 보내지 않았습니다. 실제 개인정보와 급여액을 지우고 사용 방법만 질문해 주세요.`;
+  return `${labels.join(", ")}처럼 보이는 정보가 포함되어 AI 도움말로 보내지 않았습니다. 실제 개인정보를 지우고, 금액이 필요하면 개인을 식별할 수 없는 반올림한 가상 금액으로 질문해 주세요.`;
 }
 
 function scoreArticle(article, normalizedQuery, terms) {

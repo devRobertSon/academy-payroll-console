@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-delete-policy-r28";
-import { helpArticles } from "./data/help-content.js?v=20260826-delete-policy-r28";
+import { appConfig } from "./config.js?v=20260827-tax-guidance-r29";
+import { helpArticles } from "./data/help-content.js?v=20260827-tax-guidance-r29";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-delete-policy-r28";
+} from "./data/demo-data.js?v=20260827-tax-guidance-r29";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-delete-policy-r28";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-delete-policy-r28";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
+} from "./data/nts-tax-policy.js?v=20260827-tax-guidance-r29";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260827-tax-guidance-r29";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260827-tax-guidance-r29";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-delete-policy-r28";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260827-tax-guidance-r29";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260826-delete-policy-r28";
+} from "./lib/payroll-lifecycle.js?v=20260827-tax-guidance-r29";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,18 +47,18 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-delete-policy-r28";
+} from "./lib/payroll.js?v=20260827-tax-guidance-r29";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-delete-policy-r28";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260826-delete-policy-r28";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260826-delete-policy-r28";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-delete-policy-r28";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260827-tax-guidance-r29";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260827-tax-guidance-r29";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260827-tax-guidance-r29";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260827-tax-guidance-r29";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-delete-policy-r28";
+} from "./lib/teacher-self-service.js?v=20260827-tax-guidance-r29";
 
 const state = {
   user: null,
@@ -785,13 +785,13 @@ function initializeAssistant() {
   if (!state.assistantMessages.length) {
     state.assistantMessages.push({
       role: "assistant",
-      text: "프로그램 사용법을 질문해 주세요. 실제 이름, 이메일, 휴대전화 번호, 계좌번호, 주민번호와 급여액은 입력하지 마세요.",
-      source: "사용 설명서"
+      text: "프로그램 사용법과 회계·세무 검토 항목을 질문해 주세요. 실제 개인정보는 입력하지 말고, 금액이 필요하면 익명 사례의 반올림한 가상 금액만 사용하세요. 답변은 참고 자료이므로 신고 전 회계사·세무사 또는 국세청 126에 확인해야 합니다.",
+      source: "내장 안내"
     });
   }
   elements.assistantStatus.textContent = appConfig.assistant?.enabled
-    ? "Gemini · 사용 설명서 전용"
-    : "내장 설명서 · Gemini 연결 전";
+    ? "Gemini · 사용법·세무 안내"
+    : "내장 안내 · Gemini 연결 전";
   renderAssistantMessages();
 }
 
@@ -821,7 +821,7 @@ async function submitAssistantQuestion(event) {
 
   const localAnswer = buildLocalHelpAnswer(question, helpArticles, currentViewLabel());
   let answer = localAnswer;
-  let source = "사용 설명서";
+  let source = "내장 안내";
   const canUseGemini = appConfig.assistant?.enabled
     && appConfig.assistant?.provider === "gemini"
     && !appConfig.demoMode
@@ -832,11 +832,11 @@ async function submitAssistantQuestion(event) {
     try {
       const prompt = buildGeminiPrompt(question, helpArticles, currentViewLabel());
       answer = await state.store.askHelpAssistant(prompt, appConfig.assistant.model);
-      source = "Gemini · 사용 설명서";
-      elements.assistantStatus.textContent = "Gemini · 사용 설명서 전용";
+      source = "Gemini · 사용법·세무 안내";
+      elements.assistantStatus.textContent = "Gemini · 사용법·세무 안내";
     } catch (error) {
       console.warn("Gemini 도움말을 사용할 수 없어 내장 설명서로 답합니다.", error);
-      elements.assistantStatus.textContent = "내장 설명서 · Gemini 응답 불가";
+      elements.assistantStatus.textContent = "내장 안내 · Gemini 응답 불가";
     }
   }
 
@@ -848,7 +848,7 @@ async function submitAssistantQuestion(event) {
 function renderAssistantMessages(showPending = false) {
   const suggestions = state.assistantMessages.length === 1 ? `
     <div class="assistant-suggestions" aria-label="추천 질문">
-      ${["근로소득과 사업소득을 함께 입력하려면?", "이번 달 급여는 어디서 입력해?", "명세서를 이메일로 보내려면?"].map((question) => `<button type="button" data-assistant-question="${e(question)}">${e(question)}</button>`).join("")}
+      ${["근로·사업소득을 함께 받으면 세무상 무엇을 확인해야 하나요?", "사업소득에서 합법적으로 인정받을 수 있는 필요경비와 증빙은?", "명세서를 이메일로 보내려면?"].map((question) => `<button type="button" data-assistant-question="${e(question)}">${e(question)}</button>`).join("")}
     </div>
   ` : "";
   elements.assistantMessages.innerHTML = state.assistantMessages.map((message) => `

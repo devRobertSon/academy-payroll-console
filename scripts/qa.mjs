@@ -111,6 +111,9 @@ async function checkHtmlAssets() {
   if (!app.includes("function bindInsuranceEditorAutomation") || !app.includes("data-insurance-preview")) {
     failures.push("Teacher insurance settings must provide automatic bases and deduction previews.");
   }
+  if (!app.includes("base.value = String(monthlyPay)") || !app.includes("update(true);")) {
+    failures.push("Checked teacher insurance rows must immediately show the monthly pay as their reporting base.");
+  }
   if (!app.includes("data-insurance-row-estimate") || !app.includes("적용 기간") || !app.includes("예상 보험료")) {
     failures.push("Each insurance setting row must label its period and show the calculated premium.");
   }

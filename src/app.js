@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-income-composition-r15";
-import { helpArticles } from "./data/help-content.js?v=20260826-income-composition-r15";
+import { appConfig } from "./config.js?v=20260826-insurance-base-r16";
+import { helpArticles } from "./data/help-content.js?v=20260826-insurance-base-r16";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-income-composition-r15";
+} from "./data/demo-data.js?v=20260826-insurance-base-r16";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-income-composition-r15";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-income-composition-r15";
+} from "./data/nts-tax-policy.js?v=20260826-insurance-base-r16";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-base-r16";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -43,16 +43,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-income-composition-r15";
+} from "./lib/payroll.js?v=20260826-insurance-base-r16";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-income-composition-r15";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-income-composition-r15";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-base-r16";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-base-r16";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-income-composition-r15";
+} from "./lib/teacher-self-service.js?v=20260826-insurance-base-r16";
 
 const state = {
   user: null,
@@ -1225,7 +1225,7 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
     if (syncBases) {
       fields.forEach(({ enrolled, base }) => {
         if (enrolled.checked && (base.value === "" || base.dataset.autoBase === "true")) {
-          base.value = monthlyPay > 0 ? String(monthlyPay) : "";
+          base.value = String(monthlyPay);
           base.dataset.autoBase = "true";
         }
       });
@@ -1276,7 +1276,7 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
   [form.elements.dependentCount, form.elements.children8To20, form.elements.withholdingRatio]
     .filter(Boolean)
     .forEach((field) => field.addEventListener("input", () => update()));
-  update();
+  update(true);
 }
 
 function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {

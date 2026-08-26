@@ -126,7 +126,7 @@
   "uid": "Firebase Authentication UID",
   "email": "Google 로그인 토큰의 이메일",
   "displayName": "Google 표시 이름",
-  "status": "pending | approved",
+  "status": "pending | approved | rejected",
   "requestedAt": "server timestamp",
   "teacherId": "승인 후 연결된 teachers 문서 ID",
   "reviewedAt": "server timestamp",
@@ -134,7 +134,7 @@
 }
 ```
 
-미등록 사용자는 본인 UID로 `pending` 요청만 만들 수 있습니다. 이메일은 로그인 토큰과 같아야 하며, 관리자는 같은 이메일의 활성·미연결 선생님과만 연결합니다.
+미등록 사용자는 본인 UID로 `pending` 요청만 만들 수 있습니다. 이메일은 로그인 토큰과 같아야 하며, 관리자는 같은 이메일의 활성·미연결 선생님과만 연결합니다. 관리자가 반려하면 `rejected`와 검토 시간이 저장되고 대기 목록에서는 제외됩니다. 반려 문서는 삭제하지 않으며, 같은 UID의 재로그인은 새 요청을 만들지 않고 반려 안내를 표시합니다.
 
 ### `rateRules/{ruleId}`
 

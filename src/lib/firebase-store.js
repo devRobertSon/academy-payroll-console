@@ -37,8 +37,11 @@ export async function createFirebaseStore(config) {
     if (!firebaseUser) return null;
     const userSnap = await firestoreSdk.getDoc(firestoreSdk.doc(db, "users", firebaseUser.uid));
     if (!userSnap.exists()) {
-      await createAccessRequest(firebaseUser);
+      const accessRequest = await createAccessRequest(firebaseUser);
       await authSdk.signOut(auth);
+      if (accessRequest?.status === "rejected") {
+        throw new Error("계정 승인 요청이 반려되었습니다. 관리자에게 문의해 주세요.");
+      }
       throw new Error("계정 승인 요청을 보냈습니다. 관리자가 연결한 뒤 다시 로그인해 주세요.");
     }
     if (userSnap.data().status !== "active") {
@@ -55,7 +58,8 @@ export async function createFirebaseStore(config) {
 
   async function createAccessRequest(firebaseUser) {
     const reference = firestoreSdk.doc(db, "accessRequests", firebaseUser.uid);
-    if ((await firestoreSdk.getDoc(reference)).exists()) return;
+    const snapshot = await firestoreSdk.getDoc(reference);
+    if (snapshot.exists()) return snapshot.data();
     await firestoreSdk.setDoc(reference, {
       uid: firebaseUser.uid,
       email: firebaseUser.email || "",
@@ -63,6 +67,7 @@ export async function createFirebaseStore(config) {
       status: "pending",
       requestedAt: firestoreSdk.serverTimestamp()
     });
+    return { status: "pending" };
   }
 
   async function signIn() {
@@ -211,6 +216,23 @@ export async function createFirebaseStore(config) {
       action: "TEACHER_ACCESS_APPROVED",
       teacherId: teacher.id,
       subjectUid: request.uid,
+      actorUid: auth.currentUser.uid,
+      createdAt: reviewedAt
+    });
+    await batch.commit();
+  }
+
+  async function rejectTeacherAccess(request) {
+    const batch = firestoreSdk.writeBatch(db);
+    const reviewedAt = firestoreSdk.serverTimestamp();
+    batch.update(firestoreSdk.doc(db, "accessRequests", request.uid || request.id), {
+      status: "rejected",
+      reviewedAt,
+      reviewedBy: auth.currentUser.uid
+    });
+    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+      action: "TEACHER_ACCESS_REJECTED",
+      subjectUid: request.uid || request.id,
       actorUid: auth.currentUser.uid,
       createdAt: reviewedAt
     });
@@ -463,6 +485,7 @@ export async function createFirebaseStore(config) {
     loadWorkspace,
     saveDocument,
     approveTeacherAccess,
+    rejectTeacherAccess,
     updateTeacher,
     saveTeacherProfile,
     saveTeacherMonthlyInput,

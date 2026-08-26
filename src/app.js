@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-split-payslips-r17";
-import { helpArticles } from "./data/help-content.js?v=20260826-split-payslips-r17";
+import { appConfig } from "./config.js?v=20260826-access-rejection-r18";
+import { helpArticles } from "./data/help-content.js?v=20260826-access-rejection-r18";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,17 +10,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-split-payslips-r17";
+} from "./data/demo-data.js?v=20260826-access-rejection-r18";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-split-payslips-r17";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-split-payslips-r17";
+} from "./data/nts-tax-policy.js?v=20260826-access-rejection-r18";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-access-rejection-r18";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-split-payslips-r17";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260826-access-rejection-r18";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -30,7 +30,7 @@ import {
   payslipId,
   payslipVersionId,
   validateTeacherAccessApproval
-} from "./lib/payroll-lifecycle.js?v=20260826-split-payslips-r17";
+} from "./lib/payroll-lifecycle.js?v=20260826-access-rejection-r18";
 import {
   calculatePayroll,
   createMonthlyEarningLines,
@@ -44,16 +44,16 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-split-payslips-r17";
+} from "./lib/payroll.js?v=20260826-access-rejection-r18";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-split-payslips-r17";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-split-payslips-r17";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-access-rejection-r18";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-access-rejection-r18";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-split-payslips-r17";
+} from "./lib/teacher-self-service.js?v=20260826-access-rejection-r18";
 
 const state = {
   user: null,
@@ -509,7 +509,7 @@ function renderTeachers() {
       <div class="data-surface table-scroll"><table><thead><tr><th>요청자</th><th>Google 이메일</th><th>요청 시각</th><th>연결 가능</th><th aria-label="작업"></th></tr></thead><tbody>
         ${pendingRequests.map((request) => {
           const matches = matchingTeachersForAccessRequest(request, state.data.teachers);
-          return `<tr><td><strong>${e(request.displayName || "이름 미확인")}</strong></td><td>${e(request.email)}</td><td>${e(formatDateTime(request.requestedAt))}</td><td>${matches.length === 1 ? `<span class="status-chip ready">${e(matches[0].name)}</span>` : `<span class="status-chip pending">이메일 확인 필요</span>`}</td><td><div class="row-actions"><button class="button button-secondary button-compact" type="button" data-approve-access="${e(request.uid || request.id)}"><i data-lucide="user-check"></i><span>계정 연결</span></button></div></td></tr>`;
+          return `<tr><td><strong>${e(request.displayName || "이름 미확인")}</strong></td><td>${e(request.email)}</td><td>${e(formatDateTime(request.requestedAt))}</td><td>${matches.length === 1 ? `<span class="status-chip ready">${e(matches[0].name)}</span>` : `<span class="status-chip pending">이메일 확인 필요</span>`}</td><td><div class="row-actions"><button class="button button-secondary button-compact" type="button" data-approve-access="${e(request.uid || request.id)}"><i data-lucide="user-check"></i><span>계정 연결</span></button><button class="button button-danger button-compact" type="button" data-reject-access="${e(request.uid || request.id)}"><i data-lucide="user-x"></i><span>반려</span></button></div></td></tr>`;
         }).join("") || emptyRow(5)}
       </tbody></table></div>
     </section>
@@ -537,6 +537,10 @@ function renderTeachers() {
   elements.content.querySelectorAll("[data-approve-access]").forEach((button) => button.addEventListener("click", () => {
     const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.approveAccess);
     if (request) openAccessApprovalModal(request);
+  }));
+  elements.content.querySelectorAll("[data-reject-access]").forEach((button) => button.addEventListener("click", () => {
+    const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.rejectAccess);
+    if (request) openAccessRejectionModal(request);
   }));
   elements.content.querySelectorAll("[data-select-teacher]").forEach((row) => row.addEventListener("click", () => {
     state.selectedTeacherId = row.dataset.selectTeacher;
@@ -1733,6 +1737,25 @@ function openAccessApprovalModal(request) {
     request.teacherId = teacher.id;
     request.reviewedAt = new Date().toISOString();
     showToast(`${teacher.name} 선생님의 Google 계정을 연결했습니다.`);
+    renderTeachers();
+  });
+}
+
+function openAccessRejectionModal(request) {
+  openModal("Google 계정 승인 요청 반려", `
+    <div class="notice warning"><i data-lucide="user-x"></i><span>이 요청을 반려하면 대기 목록에서 사라지고, 해당 Google 계정은 다시 승인 요청을 만들 수 없습니다.</span></div>
+    <dl class="definition-list approval-summary"><div><dt>요청자</dt><dd>${e(request.displayName || "이름 미확인")}</dd></div><div><dt>Google 이메일</dt><dd>${e(request.email)}</dd></div></dl>
+    <label class="checkbox-row" style="margin-top:18px"><input id="reject-access-confirm" type="checkbox" /> 이 계정을 연결하지 않고 반려합니다.</label>
+  `, "요청 반려", async () => {
+    if (!document.querySelector("#reject-access-confirm").checked) {
+      showToast("반려 확인을 선택해 주세요.");
+      return false;
+    }
+    if (state.store) await state.store.rejectTeacherAccess(request);
+    request.status = "rejected";
+    request.reviewedAt = new Date().toISOString();
+    request.reviewedBy = state.user.uid;
+    showToast(`${request.displayName || request.email} 계정의 승인 요청을 반려했습니다.`);
     renderTeachers();
   });
 }

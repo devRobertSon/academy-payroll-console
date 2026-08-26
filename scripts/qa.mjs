@@ -207,6 +207,7 @@ async function checkLifecycleSecurity() {
   const requiredRules = [
     "match /accessRequests/{uid}",
     "request.resource.data.email == request.auth.token.email",
+    "request.resource.data.status == 'rejected'",
     "match /payslipVersions/{versionId}",
     "match /payrollCancellations/{cancellationId}",
     "request.resource.data.status == 'cancelled'",
@@ -217,8 +218,15 @@ async function checkLifecycleSecurity() {
   }
 
   const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
-  for (const operation of ["approveTeacherAccess", "updateTeacher", "cancelPayrollRun"]) {
+  for (const operation of ["approveTeacherAccess", "rejectTeacherAccess", "updateTeacher", "cancelPayrollRun"]) {
     if (!store.includes(`async function ${operation}`)) failures.push(`Firebase store operation is missing: ${operation}`);
+  }
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
+  for (const rejectionSurface of ["data-reject-access", "openAccessRejectionModal", 'request.status = "rejected"']) {
+    if (!app.includes(rejectionSurface)) failures.push(`Access-request rejection surface is missing: ${rejectionSurface}`);
+  }
+  if (!store.includes("계정 승인 요청이 반려되었습니다")) {
+    failures.push("Rejected Google accounts must receive a clear login message.");
   }
 }
 

@@ -78,6 +78,12 @@ async function checkHtmlAssets() {
   if (!css.includes("--brand: #2563a6") || !css.includes("--brand-pale: #e4effb")) {
     failures.push("Admin workspace must use the blue color treatment.");
   }
+  if (!app.includes('split-layout ${selected ? "" : "single-column"}')) {
+    failures.push("Teacher table must switch to a single-column layout when no detail panel is shown.");
+  }
+  if (!css.includes(".split-layout.single-column { grid-template-columns: minmax(0, 1fr); }")) {
+    failures.push("Single-column teacher table layout must fill the available width.");
+  }
   for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
     if (css.includes(legacyGreen)) failures.push(`Legacy green workspace color remains: ${legacyGreen}`);
   }

@@ -63,6 +63,16 @@ service cloud.firestore {
         && !data.keys().hasAny(['birthDateCode', 'genderCode']);
     }
 
+    function hasValidIncomeComposition(data) {
+      return data.incomeComposition is string
+        && data.incomeComposition in ['employee', 'business', 'mixed'];
+    }
+
+    function preservesLegacyIncomeComposition(data) {
+      return !resource.data.keys().hasAny(['incomeComposition'])
+        && !data.keys().hasAny(['incomeComposition']);
+    }
+
     function doesNotAddAccountingReference(data) {
       return !data.keys().hasAny(['accountingReference'])
         || (resource.data.keys().hasAny(['accountingReference'])
@@ -142,12 +152,15 @@ service cloud.firestore {
       allow create: if isAdmin()
         && request.resource.data.name is string
         && request.resource.data.status in ['active', 'inactive']
+        && hasValidIncomeComposition(request.resource.data)
         && hasValidOrMissingTeacherIdentity(request.resource.data)
         && !request.resource.data.keys().hasAny(['accountingReference'])
         && excludesResidentRegistrationNumber(request.resource.data);
       allow update: if (isAdmin()
           && request.resource.data.name is string
           && request.resource.data.status in ['active', 'inactive']
+          && (hasValidIncomeComposition(request.resource.data)
+            || preservesLegacyIncomeComposition(request.resource.data))
           && (hasValidTeacherIdentity(request.resource.data)
             || preservesLegacyTeacherIdentity(request.resource.data))
           && doesNotAddAccountingReference(request.resource.data)

@@ -49,6 +49,7 @@
   "birthDateCode": "주민등록번호 앞 생년월일 6자리, 최초 등록 때 생략 가능",
   "genderCode": "주민등록번호 뒷자리 첫 숫자 1자리, 최초 등록 때 생략 가능",
   "status": "active",
+  "incomeComposition": "employee | business | mixed",
   "insuranceEnrolled": true,
   "insuranceSettings": {
     "nationalPension": { "enrolled": true, "defaultBaseAmount": 3000000, "effectiveFrom": "2026-01-01", "effectiveTo": null },
@@ -66,7 +67,7 @@
   },
   "subjects": ["고등 수학", "논술"],
   "paymentDay": 10,
-  "contractSummary": "화면 표시용 요약",
+  "contractSummary": "근로소득 | 사업소득 | 근로소득 + 사업소득",
   "taxProfile": {
     "dependentCount": 4,
     "children8To20": 2,
@@ -77,7 +78,7 @@
 
 계좌, 전체 주민등록번호, 주소는 현재 앱에 저장하지 않습니다. 회계 확인에는 `birthDateCode` 6자리와 `genderCode` 1자리만 사용합니다. 이 두 필드도 개인정보이므로 관리자와 본인 외에는 읽을 수 없도록 Firestore 규칙을 유지하고, CSV는 안전한 채널로 전달합니다. Firestore 규칙은 신규 선생님 문서에서 두 필드의 형식을 검사하며 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 같은 전체 번호 필드의 저장을 거부합니다.
 
-`insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험을 각각 가입 여부, 기본 신고 기준액과 적용 기간으로 관리합니다. `insuranceEnrolled`는 과거 데이터 호환용 요약값입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 같은 선생님에게 두 소득을 함께 둘 수 있습니다. 기존 `employmentType`, `baseMonthlyPay`, 단일 `insuranceEnrolled` 문서는 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
+`incomeComposition`은 계약 요약에서 고른 소득 구성을 저장합니다. `employee`는 근로소득 설정만, `business`는 사업소득 설정만, `mixed`는 두 설정을 모두 급여 계산에 사용합니다. `contractSummary`는 기존 화면과 데이터 호환을 위한 표준 한글 표시값이며 자유 입력으로 받지 않습니다. `insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험을 각각 가입 여부, 기본 신고 기준액과 적용 기간으로 관리합니다. `insuranceEnrolled`는 과거 데이터 호환용 요약값입니다. `defaultEmployeePay`는 근로소득 기본 월급이고 `businessRates`는 과목별 사업소득 시급입니다. 기존 `incomeComposition`이 없는 문서는 월급·보험·사업소득 시급 유무로 근로소득·사업소득·혼합형을 자동 판별하며, 기존 `employmentType`, `baseMonthlyPay`, 단일 `insuranceEnrolled` 문서도 새 필드가 저장되기 전까지 자동 호환해 읽습니다.
 
 선생님 본인은 `name`, `phone`, `birthDateCode`, `genderCode`, `subjects`만 수정할 수 있습니다. `email`, `authUid`, `status`, 보험 가입·신고 기준액, 월급, 시급, 교통비 기준, 계약·지급일과 원천징수 정보는 관리자만 수정할 수 있습니다.
 

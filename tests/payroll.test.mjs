@@ -7,6 +7,7 @@ import {
   getMonthlyPayAmounts,
   getTeacherPaySettings,
   parseEmploymentTaxTableRows,
+  resolveIncomeComposition,
   resolveEffectivePolicy,
   resolveRateRule,
   summarizePayroll
@@ -19,6 +20,40 @@ import {
   officialInsurancePolicies
 } from "../src/data/nts-tax-policy.js";
 import { csvRowsToObjects, parseCsv } from "../src/lib/csv.js";
+
+test("계약 요약은 근로소득·사업소득·혼합형을 명시적으로 구분한다", () => {
+  const employee = getTeacherPaySettings({
+    incomeComposition: "employee",
+    defaultEmployeePay: 3000000,
+    businessRates: [{ subjectName: "특강", hourlyRate: 70000 }]
+  });
+  const business = getTeacherPaySettings({
+    incomeComposition: "business",
+    defaultEmployeePay: 3000000,
+    insuranceEnrolled: true,
+    businessRates: [{ subjectName: "영어", hourlyRate: 45000 }]
+  });
+  const mixed = getTeacherPaySettings({
+    incomeComposition: "mixed",
+    defaultEmployeePay: 3000000,
+    businessRates: [{ subjectName: "논술", hourlyRate: 70000 }]
+  });
+
+  assert.equal(employee.incomeComposition, "employee");
+  assert.deepEqual(employee.businessRates, []);
+  assert.equal(business.incomeComposition, "business");
+  assert.equal(business.defaultEmployeePay, 0);
+  assert.equal(business.insuranceEnrolled, false);
+  assert.equal(mixed.defaultEmployeePay, 3000000);
+  assert.equal(mixed.businessRates.length, 1);
+});
+
+test("기존 선생님 문서는 저장된 급여 조건으로 계약 유형을 자동 판별한다", () => {
+  assert.equal(resolveIncomeComposition({ defaultEmployeePay: 3000000 }), "employee");
+  assert.equal(resolveIncomeComposition({ businessRates: [{ subjectName: "영어", hourlyRate: 45000 }] }), "business");
+  assert.equal(resolveIncomeComposition({ defaultEmployeePay: 3000000, businessRates: [{ subjectName: "특강", hourlyRate: 70000 }] }), "mixed");
+  assert.equal(resolveIncomeComposition({ employmentType: "freelancer", baseMonthlyPay: 2500000 }), "business");
+});
 
 test("간이세액표 공식 근거는 파일이 아닌 웹 열람 페이지로 연결한다", () => {
   const url = new URL(NTS_SOURCE_URLS.employmentTable);

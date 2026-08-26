@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-payment-columns-r14";
-import { helpArticles } from "./data/help-content.js?v=20260826-payment-columns-r14";
+import { appConfig } from "./config.js?v=20260826-income-composition-r15";
+import { helpArticles } from "./data/help-content.js?v=20260826-income-composition-r15";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-payment-columns-r14";
+} from "./data/demo-data.js?v=20260826-income-composition-r15";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-payment-columns-r14";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-payment-columns-r14";
+} from "./data/nts-tax-policy.js?v=20260826-income-composition-r15";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-income-composition-r15";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -36,21 +36,23 @@ import {
   createMonthlyEarningLines,
   getMonthlyPayAmounts,
   getTeacherPaySettings,
+  INCOME_COMPOSITION_LABELS,
   INSURANCE_LABELS,
   parseEmploymentTaxTableRows,
+  resolveIncomeComposition,
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-payment-columns-r14";
+} from "./lib/payroll.js?v=20260826-income-composition-r15";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-payment-columns-r14";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-payment-columns-r14";
+import { formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-income-composition-r15";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-income-composition-r15";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-payment-columns-r14";
+} from "./lib/teacher-self-service.js?v=20260826-income-composition-r15";
 
 const state = {
   user: null,
@@ -512,7 +514,7 @@ function renderTeachers() {
     <div class="split-layout ${selected ? "" : "single-column"}">
       <section class="data-surface table-scroll">
         <table><thead><tr><th>선생님</th><th>가입 보험</th><th>급여 구성</th><th class="numeric">기본 근로소득</th><th>사업 시급</th><th>상태</th></tr></thead><tbody>
-          ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const hasBusiness = settings.businessRates.length > 0 || settings.defaultBusinessPay > 0; const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</td><td>${e(payCompositionLabel(settings.defaultEmployeePay, hasBusiness ? 1 : 0))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${settings.businessRates.length ? `${settings.businessRates.length}개 과목` : settings.defaultBusinessPay > 0 ? "기존 월액" : "미등록"}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`; }).join("") || emptyRow(6)}
+          ${filtered.map((teacher) => { const settings = teacherPaySettings(teacher); const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length; return `<tr data-select-teacher="${e(teacher.id)}" tabindex="0"><td>${personCell(teacher)}</td><td>${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</td><td>${e(teacherContractLabel(teacher))}</td><td class="numeric">${formatWon(settings.defaultEmployeePay)}</td><td>${settings.businessRates.length ? `${settings.businessRates.length}개 과목` : settings.defaultBusinessPay > 0 ? "기존 월액" : "미등록"}</td><td><span class="status-chip ${teacher.status === "active" ? "paid" : "cancelled"}">${teacher.status === "active" ? "활성" : "비활성"}</span></td></tr>`; }).join("") || emptyRow(6)}
         </tbody></table>
       </section>
       ${selected ? `<aside class="detail-panel">
@@ -962,7 +964,7 @@ function teacherPayDetails(teacher) {
       : "기간 미설정";
     return `<div><dt>${e(label)}</dt><dd>${item.enrolled ? `가입 · ${item.defaultBaseAmount == null ? "기준액 미입력" : formatWon(item.defaultBaseAmount)}<span class="definition-subtext">${e(period)}</span>` : "미가입"}</dd></div>`;
   }).join("");
-  return `<div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>기본 근로소득</dt><dd>${formatWon(settings.defaultEmployeePay)}</dd></div>${rates}<div><dt>교통비 기본값</dt><dd>${settings.transportPolicy.unitAmount ? `${formatWon(settings.transportPolicy.unitAmount)}/회 · ${e(TREATMENT_LABELS[settings.transportPolicy.treatment])}` : "미등록"}</dd></div><div><dt>계약 요약</dt><dd>${e(teacher.contractSummary)}</dd></div><div><dt>지급 예정일</dt><dd>매월 ${e(teacher.paymentDay)}일</dd></div></dl></div><div class="detail-block"><h3>보험별 가입·신고 기준</h3><dl class="definition-list">${insuranceRows}</dl></div>`;
+  return `<div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>기본 근로소득</dt><dd>${formatWon(settings.defaultEmployeePay)}</dd></div>${rates}<div><dt>교통비 기본값</dt><dd>${settings.transportPolicy.unitAmount ? `${formatWon(settings.transportPolicy.unitAmount)}/회 · ${e(TREATMENT_LABELS[settings.transportPolicy.treatment])}` : "미등록"}</dd></div><div><dt>계약 요약</dt><dd>${e(teacherContractLabel(teacher))}</dd></div><div><dt>지급 예정일</dt><dd>매월 ${e(teacher.paymentDay)}일</dd></div></dl></div><div class="detail-block"><h3>보험별 가입·신고 기준</h3><dl class="definition-list">${insuranceRows}</dl></div>`;
 }
 function runForMonth(month) { return state.data.payrollRuns.find((run) => run.month === month) || { month, status: "draft", publishedAt: null }; }
 function cancellationsForMonth(month) {
@@ -1099,6 +1101,49 @@ function bindTeacherIdentityInput(form) {
     const digits = input.value.replace(/\D/g, "").slice(0, 7);
     input.value = digits.length > 6 ? `${digits.slice(0, 6)}-${digits.slice(6)}` : digits;
   });
+}
+
+function hasEmployeeIncome(composition) {
+  return composition === "employee" || composition === "mixed";
+}
+
+function hasBusinessIncome(composition) {
+  return composition === "business" || composition === "mixed";
+}
+
+function teacherContractLabel(teacher) {
+  return INCOME_COMPOSITION_LABELS[resolveIncomeComposition(teacher)] || "조건 미설정";
+}
+
+function incomeCompositionOptions(selected = "") {
+  return [
+    ["employee", "근로소득", "월 지급액·4대보험·근로소득세"],
+    ["business", "사업소득", "과목별 시급·수업 시수·3.3%"],
+    ["mixed", "근로소득 + 사업소득", "월 지급액과 과목별 시급을 함께 관리"]
+  ].map(([value, label, description]) => `<label class="income-composition-option">
+    <input type="radio" name="incomeComposition" value="${value}" ${selected === value ? "checked" : ""} required />
+    <span><strong>${label}</strong><small>${description}</small></span>
+  </label>`).join("");
+}
+
+function bindIncomeCompositionForm(form) {
+  if (!form) return;
+  const update = () => {
+    const composition = form.elements.incomeComposition?.value || "";
+    form.querySelectorAll("[data-income-section]").forEach((section) => {
+      const visible = section.dataset.incomeSection === "employee"
+        ? hasEmployeeIncome(composition)
+        : hasBusinessIncome(composition);
+      section.hidden = !visible;
+      section.querySelectorAll("input, select, textarea, button").forEach((control) => {
+        control.disabled = !visible;
+      });
+    });
+    const emptyState = form.querySelector("[data-income-empty]");
+    if (emptyState) emptyState.hidden = Boolean(composition);
+  };
+  form.querySelectorAll('input[name="incomeComposition"]').forEach((input) => input.addEventListener("change", update));
+  update();
 }
 
 function treatmentOptions(selected = "pending") {
@@ -1488,22 +1533,37 @@ function openTeacherSelfProfileModal(teacher) {
 function openTeacherModal() {
   openModal("선생님 등록", `
     <form id="teacher-form" class="form-grid">
+      <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong><span class="form-help">선생님 식별과 Google 계정 연결에 필요한 기본 정보입니다.</span></div>
       <div class="form-field"><label for="teacher-name">이름</label><input id="teacher-name" name="name" required /></div>
       <div class="form-field"><label for="teacher-email">Google 이메일</label><input id="teacher-email" name="email" type="email" required /></div>
-      <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 신고 기준액과 예상 근로자 부담액이 자동 계산됩니다.</span></div>
-      ${insuranceEditorHtml(getTeacherPaySettings({}).insuranceSettings, "teacher")}
       <div class="form-field"><label for="teacher-phone">연락처</label><input id="teacher-phone" name="phone" type="tel" autocomplete="tel" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-identity">생년월일·성별번호</label><input id="teacher-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" placeholder="예: 900101-1" /><span class="form-help">비워 두면 선생님이 로그인 후 직접 입력할 수 있습니다.</span></div>
+      <div class="form-field full"><label for="teacher-subjects">담당 과목</label><input id="teacher-subjects" name="subjects" placeholder="쉼표로 구분" /></div>
+      <fieldset class="form-field full income-composition-field">
+        <legend>계약 요약</legend>
+        <div class="income-composition-options">${incomeCompositionOptions()}</div>
+        <span class="form-help">개인정보를 입력한 뒤 주된 지급 구조를 선택하세요. 선택에 따라 아래 등록 항목이 달라집니다.</span>
+      </fieldset>
+      <div class="form-field full income-composition-empty" data-income-empty>계약 요약을 선택하면 필요한 급여·보험 입력란이 표시됩니다.</div>
+      <section class="conditional-form-section full" data-income-section="employee" hidden>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입·신고 기준과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="form-grid">
+          <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 신고 기준액과 예상 근로자 부담액이 자동 계산됩니다.</span></div>
+          ${insuranceEditorHtml(getTeacherPaySettings({ incomeComposition: "employee" }).insuranceSettings, "teacher")}
+          <div class="form-field"><label for="teacher-dependents">공제대상가족 수</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
+          <div class="form-field"><label for="teacher-children">8~20세 자녀 수</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
+          <div class="form-field full"><label for="teacher-tax-ratio">원천징수 비율</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
+        </div>
+      </section>
+      <section class="conditional-form-section full" data-income-section="business" hidden>
+        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>과목별 시급과 월별 수업 시수로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
+        <div class="form-grid">${businessRateEditorHtml([], "teacher-business-rates")}</div>
+      </section>
+      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준과 지급일은 모든 계약 유형에 적용됩니다.</span></div>
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="0" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-transport-treatment">교통비 기본 처리</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
-      ${businessRateEditorHtml([], "teacher-business-rates")}
-      <div class="form-field full"><label for="teacher-subjects">담당 과목</label><input id="teacher-subjects" name="subjects" placeholder="쉼표로 구분" /></div>
-      <div class="form-field"><label for="teacher-contract">계약 요약</label><input id="teacher-contract" name="contractSummary" placeholder="예: 정규 월급제" /></div>
-      <div class="form-field"><label for="teacher-payday">지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" /></div>
-      <div class="form-field"><label for="teacher-dependents">공제대상가족 수</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
-      <div class="form-field"><label for="teacher-children">8~20세 자녀 수</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
-      <div class="form-field"><label for="teacher-tax-ratio">원천징수 비율</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
+      <div class="form-field"><label for="teacher-payday">지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" required /></div>
       <p class="form-help full">실제 계정 연결은 사용자가 처음 로그인한 뒤 관리자 승인 절차에서 UID를 확인하도록 운영하세요.</p>
     </form>`, "등록", async () => {
     const form = document.querySelector("#teacher-form");
@@ -1511,7 +1571,12 @@ function openTeacherModal() {
     const data = Object.fromEntries(new FormData(form));
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((teacher) => normalizeEmail(teacher.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
-    const insuranceSettings = readInsuranceSettings(form, "teacher");
+    const incomeComposition = data.incomeComposition;
+    const employeeIncome = hasEmployeeIncome(incomeComposition);
+    const businessIncome = hasBusinessIncome(incomeComposition);
+    const insuranceSettings = employeeIncome
+      ? readInsuranceSettings(form, "teacher")
+      : getTeacherPaySettings({ incomeComposition: "business" }).insuranceSettings;
     const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const teacher = {
       id: crypto.randomUUID(),
@@ -1519,22 +1584,25 @@ function openTeacherModal() {
       email,
       phone: data.phone.trim(),
       ...identity,
+      incomeComposition,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
-      defaultEmployeePay: Number(data.defaultEmployeePay),
+      defaultEmployeePay: employeeIncome ? Number(data.defaultEmployeePay) : 0,
       defaultBusinessPay: 0,
-      businessRates: readBusinessRates("#teacher-business-rates"),
+      businessRates: businessIncome ? readBusinessRates("#teacher-business-rates") : [],
       transportPolicy: {
         regionLabel: data.transportRegionLabel.trim(),
         unitAmount: Number(data.transportUnitAmount || 0),
         treatment: data.transportTreatment
       },
       subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
-      contractSummary: data.contractSummary.trim() || "월 지급 조건",
+      contractSummary: INCOME_COMPOSITION_LABELS[incomeComposition],
       paymentDay: Number(data.paymentDay),
       status: "active",
       authUid: null,
-      taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
+      taxProfile: employeeIncome
+        ? { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
+        : { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
     };
       state.data.teachers.push(teacher);
       if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
@@ -1542,8 +1610,10 @@ function openTeacherModal() {
       showToast("선생님을 등록했습니다.");
       renderTeachers();
     });
-  bindInsuranceEditorAutomation(document.querySelector("#teacher-form"), "teacher", "#teacher-employee-pay");
-  bindTeacherIdentityInput(document.querySelector("#teacher-form"));
+  const form = document.querySelector("#teacher-form");
+  bindIncomeCompositionForm(form);
+  bindInsuranceEditorAutomation(form, "teacher", "#teacher-employee-pay");
+  bindTeacherIdentityInput(form);
   bindBusinessRateEditor("#teacher-business-rates");
 }
 
@@ -1626,26 +1696,41 @@ function openAccessApprovalModal(request) {
 function openTeacherEditModal(teacher) {
   const profile = taxProfileForTeacher(teacher);
   const paySettings = teacherPaySettings(teacher);
+  const incomeComposition = resolveIncomeComposition(teacher);
   openModal("선생님 정보 수정", `
     <div class="notice"><i data-lucide="user-cog"></i><span>비활성화하면 다음 로그인부터 접근이 차단되며 과거 급여 자료는 삭제되지 않습니다.</span></div>
     <form id="teacher-edit-form" class="form-grid">
+      <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong><span class="form-help">선생님 식별과 Google 계정 연결에 필요한 기본 정보입니다.</span></div>
       <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" value="${e(teacher.name)}" required /></div>
       <div class="form-field"><label for="teacher-edit-email">Google 이메일</label><input id="teacher-edit-email" name="email" type="email" value="${e(teacher.email)}" ${teacher.authUid ? "readonly" : ""} required /><span class="form-help">${teacher.authUid ? "연결된 계정의 이메일은 변경할 수 없습니다." : "승인 요청의 Google 이메일과 정확히 일치해야 합니다."}</span></div>
-      <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 자동 입력된 신고 기준액은 필요하면 보험별로 수정할 수 있습니다.</span></div>
-      ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-phone">연락처</label><input id="teacher-edit-phone" name="phone" type="tel" autocomplete="tel" value="${e(teacher.phone || "")}" placeholder="010-0000-0000" /></div>
       <div class="form-field"><label for="teacher-edit-identity">생년월일·성별번호</label><input id="teacher-edit-identity" name="teacherIdentity" type="text" inputmode="numeric" autocomplete="off" minlength="8" maxlength="8" pattern="[0-9]{6}-[1-8]" value="${e(formatTeacherIdentity(teacher))}" placeholder="예: 900101-1" /><span class="form-help">생년월일 6자리와 성별번호 1자리만 저장합니다.</span></div>
+      <div class="form-field full"><label for="teacher-edit-subjects">담당 과목</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="쉼표로 구분" /></div>
+      <fieldset class="form-field full income-composition-field">
+        <legend>계약 요약</legend>
+        <div class="income-composition-options">${incomeCompositionOptions(incomeComposition)}</div>
+        <span class="form-help">계약 유형을 바꾸면 선택한 유형에 필요한 항목만 저장되고 급여 계산에 사용됩니다.</span>
+      </fieldset>
+      <section class="conditional-form-section full" data-income-section="employee" hidden>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입·신고 기준과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="form-grid">
+          <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 자동 입력된 신고 기준액은 필요하면 보험별로 수정할 수 있습니다.</span></div>
+          ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
+          <div class="form-field"><label for="teacher-edit-dependents">공제대상가족 수</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
+          <div class="form-field"><label for="teacher-edit-children">8~20세 자녀 수</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
+          <div class="form-field full"><label for="teacher-edit-ratio">원천징수 비율</label><select id="teacher-edit-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select></div>
+        </div>
+      </section>
+      <section class="conditional-form-section full" data-income-section="business" hidden>
+        <div class="conditional-section-heading"><strong>사업소득 설정</strong><span>과목별 시급과 월별 수업 시수로 사업소득 및 3.3% 원천징수를 계산합니다.</span></div>
+        <div class="form-grid">${businessRateEditorHtml(paySettings.businessRates, "teacher-business-rates")}</div>
+      </section>
+      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준, 지급일과 계정 상태는 모든 계약 유형에 적용됩니다.</span></div>
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
-      ${businessRateEditorHtml(paySettings.businessRates, "teacher-business-rates")}
-      <div class="form-field full"><label for="teacher-edit-subjects">담당 과목</label><input id="teacher-edit-subjects" name="subjects" value="${e(teacher.subjects.join(", "))}" placeholder="쉼표로 구분" /></div>
-      <div class="form-field"><label for="teacher-edit-contract">계약 요약</label><input id="teacher-edit-contract" name="contractSummary" value="${e(teacher.contractSummary)}" /></div>
       <div class="form-field"><label for="teacher-edit-payday">지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
       <div class="form-field"><label for="teacher-edit-status">계정 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select></div>
-      <div class="form-field"><label for="teacher-edit-dependents">공제대상가족 수</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-children">8~20세 자녀 수</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
-      <div class="form-field full"><label for="teacher-edit-ratio">원천징수 비율</label><select id="teacher-edit-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select></div>
     </form>
   `, "저장", async () => {
     const form = document.querySelector("#teacher-edit-form");
@@ -1653,7 +1738,12 @@ function openTeacherEditModal(teacher) {
     const data = Object.fromEntries(new FormData(form));
     const email = normalizeEmail(data.email);
     if (state.data.teachers.some((item) => item.id !== teacher.id && normalizeEmail(item.email) === email)) throw new Error("같은 Google 이메일로 등록된 선생님이 있습니다.");
-    const insuranceSettings = readInsuranceSettings(form, "teacher-edit");
+    const updatedIncomeComposition = data.incomeComposition;
+    const employeeIncome = hasEmployeeIncome(updatedIncomeComposition);
+    const businessIncome = hasBusinessIncome(updatedIncomeComposition);
+    const insuranceSettings = employeeIncome
+      ? readInsuranceSettings(form, "teacher-edit")
+      : getTeacherPaySettings({ incomeComposition: "business" }).insuranceSettings;
     const identity = parseOptionalTeacherIdentity(data.teacherIdentity);
     const { accountingReference: _legacyAccountingReference, ...teacherWithoutLegacyReference } = teacher;
     const updated = {
@@ -1662,21 +1752,24 @@ function openTeacherEditModal(teacher) {
       email,
       phone: data.phone.trim(),
       ...identity,
+      incomeComposition: updatedIncomeComposition,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
-      defaultEmployeePay: Number(data.defaultEmployeePay),
+      defaultEmployeePay: employeeIncome ? Number(data.defaultEmployeePay) : 0,
       defaultBusinessPay: 0,
-      businessRates: readBusinessRates("#teacher-business-rates"),
+      businessRates: businessIncome ? readBusinessRates("#teacher-business-rates") : [],
       transportPolicy: {
         regionLabel: data.transportRegionLabel.trim(),
         unitAmount: Number(data.transportUnitAmount || 0),
         treatment: data.transportTreatment
       },
       subjects: data.subjects.split(",").map((item) => item.trim()).filter(Boolean),
-      contractSummary: data.contractSummary.trim() || "조건 미설정",
+      contractSummary: INCOME_COMPOSITION_LABELS[updatedIncomeComposition],
       paymentDay: Number(data.paymentDay),
       status: data.status,
-      taxProfile: { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
+      taxProfile: employeeIncome
+        ? { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
+        : { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
     };
     if (state.store) await state.store.updateTeacher(updated);
     delete teacher.accountingReference;
@@ -1684,8 +1777,10 @@ function openTeacherEditModal(teacher) {
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
     renderTeachers();
   });
-  bindInsuranceEditorAutomation(document.querySelector("#teacher-edit-form"), "teacher-edit", "#teacher-edit-employee-pay");
-  bindTeacherIdentityInput(document.querySelector("#teacher-edit-form"));
+  const form = document.querySelector("#teacher-edit-form");
+  bindIncomeCompositionForm(form);
+  bindInsuranceEditorAutomation(form, "teacher-edit", "#teacher-edit-employee-pay");
+  bindTeacherIdentityInput(form);
   bindBusinessRateEditor("#teacher-business-rates");
 }
 

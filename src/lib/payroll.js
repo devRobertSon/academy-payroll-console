@@ -12,6 +12,14 @@ export const INSURANCE_LABELS = {
   employmentInsurance: "고용보험"
 };
 
+export const INCOME_COMPOSITION_LABELS = {
+  employee: "근로소득",
+  business: "사업소득",
+  mixed: "근로소득 + 사업소득"
+};
+
+const INCOME_COMPOSITIONS = new Set(Object.keys(INCOME_COMPOSITION_LABELS));
+
 const won = (value) => Math.round(Number(value) || 0);
 const floorWon = (value) => Math.floor(Math.max(0, Number(value) || 0));
 const floorTenWon = (value) => Math.floor(Math.max(0, Number(value) || 0) / 10) * 10;
@@ -26,23 +34,43 @@ export function calculateEarning(entry) {
   return won(quantity * rate + Number(entry.adjustment || 0));
 }
 
+export function resolveIncomeComposition(teacher = {}) {
+  if (INCOME_COMPOSITIONS.has(teacher.incomeComposition)) return teacher.incomeComposition;
+
+  const hasEmployeeIncome = Number(teacher.defaultEmployeePay) > 0
+    || teacher.insuranceEnrolled === true
+    || teacher.employmentType === "insured"
+    || Object.values(teacher.insuranceSettings || {}).some((item) => item?.enrolled === true);
+  const hasBusinessIncome = Number(teacher.defaultBusinessPay) > 0
+    || teacher.employmentType === "freelancer"
+    || (Array.isArray(teacher.businessRates) && teacher.businessRates.length > 0);
+
+  if (hasEmployeeIncome && hasBusinessIncome) return "mixed";
+  if (hasBusinessIncome) return "business";
+  return "employee";
+}
+
 export function getTeacherPaySettings(teacher = {}) {
-  const hasCurrentFields = teacher.insuranceEnrolled != null
+  const incomeComposition = resolveIncomeComposition(teacher);
+  const hasEmployeeIncome = incomeComposition === "employee" || incomeComposition === "mixed";
+  const hasBusinessIncome = incomeComposition === "business" || incomeComposition === "mixed";
+  const hasCurrentFields = teacher.incomeComposition != null
+    || teacher.insuranceEnrolled != null
     || teacher.insuranceSettings != null
     || teacher.defaultEmployeePay != null
     || teacher.defaultBusinessPay != null
     || Array.isArray(teacher.businessRates);
   if (hasCurrentFields) {
-    const insuranceSettings = normalizeInsuranceSettings(
-      teacher.insuranceSettings,
-      teacher.insuranceEnrolled === true
-    );
+    const insuranceSettings = hasEmployeeIncome
+      ? normalizeInsuranceSettings(teacher.insuranceSettings, teacher.insuranceEnrolled === true)
+      : normalizeInsuranceSettings();
     return {
+      incomeComposition,
       insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
       insuranceSettings,
-      defaultEmployeePay: Math.max(0, won(teacher.defaultEmployeePay)),
-      defaultBusinessPay: Math.max(0, won(teacher.defaultBusinessPay)),
-      businessRates: normalizeBusinessRates(teacher.businessRates),
+      defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
+      defaultBusinessPay: hasBusinessIncome ? Math.max(0, won(teacher.defaultBusinessPay)) : 0,
+      businessRates: hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [],
       transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
       source: "current"
     };
@@ -51,6 +79,7 @@ export function getTeacherPaySettings(teacher = {}) {
   const legacyPay = Math.max(0, won(teacher.baseMonthlyPay));
   if (teacher.employmentType === "insured") {
     return {
+      incomeComposition: "employee",
       insuranceEnrolled: true,
       insuranceSettings: normalizeInsuranceSettings(null, true),
       defaultEmployeePay: legacyPay,
@@ -62,6 +91,7 @@ export function getTeacherPaySettings(teacher = {}) {
   }
   if (teacher.employmentType === "freelancer") {
     return {
+      incomeComposition: "business",
       insuranceEnrolled: false,
       insuranceSettings: normalizeInsuranceSettings(),
       defaultEmployeePay: 0,
@@ -72,6 +102,7 @@ export function getTeacherPaySettings(teacher = {}) {
     };
   }
   return {
+    incomeComposition,
     insuranceEnrolled: false,
     insuranceSettings: normalizeInsuranceSettings(),
     defaultEmployeePay: 0,

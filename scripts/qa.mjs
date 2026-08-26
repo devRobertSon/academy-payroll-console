@@ -85,6 +85,23 @@ async function checkHtmlAssets() {
     failures.push("Single-column teacher table layout must fill the available width.");
   }
   const teacherModal = app.slice(app.indexOf("function openTeacherModal"), app.indexOf("function openRateModal"));
+  if (!teacherModal.includes("incomeCompositionOptions()")) {
+    failures.push("Teacher registration must render the controlled income-composition choices.");
+  }
+  for (const composition of ["employee", "business", "mixed"]) {
+    if (!app.includes(`["${composition}",`)) failures.push(`Teacher income composition is missing: ${composition}`);
+  }
+  if (teacherModal.indexOf("teacher-identity") > teacherModal.indexOf("income-composition-field")) {
+    failures.push("Teacher personal information must appear before the contract summary choice.");
+  }
+  if (!teacherModal.includes('data-income-section="employee"')
+    || !teacherModal.includes('data-income-section="business"')
+    || !app.includes("function bindIncomeCompositionForm")) {
+    failures.push("Teacher registration must conditionally show employee and business settings.");
+  }
+  if (teacherModal.includes('name="contractSummary"')) {
+    failures.push("Teacher contract summary must be a controlled income-composition choice, not free text.");
+  }
   if (teacherModal.indexOf("teacher-employee-pay") > teacherModal.indexOf("insuranceEditorHtml")) {
     failures.push("Teacher registration must show monthly employee pay before insurance settings.");
   }
@@ -251,6 +268,9 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (!rules.includes("hasValidTeacherIdentity") || !app.includes("parseTeacherIdentity")) {
     failures.push("Teacher birth-date and gender-code validation must be enforced in UI and Firestore rules.");
+  }
+  if (!rules.includes("hasValidIncomeComposition") || !rules.includes("preservesLegacyIncomeComposition")) {
+    failures.push("Firestore rules must validate the teacher income-composition field and preserve legacy documents.");
   }
   if ((app.match(/name="teacherIdentity"/g) || []).length !== 3
     || app.includes('name="birthDateCode"')

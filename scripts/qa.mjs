@@ -94,6 +94,9 @@ async function checkHtmlAssets() {
   if (!app.includes("function bindInsuranceEditorAutomation") || !app.includes("data-insurance-preview")) {
     failures.push("Teacher insurance settings must provide automatic bases and deduction previews.");
   }
+  if (!app.includes("보험료의 10원 미만을 절사") || !app.includes('name="insuranceRoundingUnit"')) {
+    failures.push("Insurance preview and policy editor must expose the official rounding rule.");
+  }
   if (!css.includes(".insurance-auto-preview") || !css.includes(".insurance-preview-grid")) {
     failures.push("Automatic insurance preview styles are missing.");
   }
@@ -191,6 +194,7 @@ async function checkLifecycleSecurity() {
 async function checkTeacherMonthlyPayroll() {
   const app = await readFile(join(root, "src", "app.js"), "utf8");
   const payroll = await readFile(join(root, "src", "lib", "payroll.js"), "utf8");
+  const policies = await readFile(join(root, "src", "data", "nts-tax-policy.js"), "utf8");
   const tests = await readFile(join(root, "tests", "payroll.test.mjs"), "utf8");
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
@@ -207,6 +211,12 @@ async function checkTeacherMonthlyPayroll() {
   }
   if (!payroll.includes("createMonthlyEarningLines") || !tests.includes("수업이 없어도") || !tests.includes("시급과 수업 시수를 곱해")) {
     failures.push("Monthly salary calculation must cover insured teachers without classes.");
+  }
+  if (!payroll.includes("floorToUnit") || !payroll.includes("rule.baseUnit") || !payroll.includes("rule.roundingUnit")) {
+    failures.push("Automatic insurance calculation must apply configurable base and premium truncation units.");
+  }
+  if (!policies.includes("baseUnit: 1000") || !policies.includes("roundingUnit: 10") || !tests.includes("자동 사회보험료의 10원 미만을 절사")) {
+    failures.push("Built-in insurance policies and regression tests must preserve official truncation behavior.");
   }
   for (const reportField of ["lectureWithholding", "additionalPaymentWithholding", "healthAndLongTermCare", "insuranceBases", "unconfirmedEarningLines"]) {
     if (!payroll.includes(reportField)) failures.push(`Accounting payroll report field is missing: ${reportField}`);

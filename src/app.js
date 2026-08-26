@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260826-insurance-preview-r9";
-import { helpArticles } from "./data/help-content.js?v=20260826-insurance-preview-r9";
+import { appConfig } from "./config.js?v=20260826-insurance-rounding-r10";
+import { helpArticles } from "./data/help-content.js?v=20260826-insurance-rounding-r10";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -10,13 +10,13 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260826-insurance-preview-r9";
+} from "./data/demo-data.js?v=20260826-insurance-rounding-r10";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260826-insurance-preview-r9";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-preview-r9";
+} from "./data/nts-tax-policy.js?v=20260826-insurance-rounding-r10";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260826-insurance-rounding-r10";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -41,16 +41,16 @@ import {
   resolveEffectivePolicy,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260826-insurance-preview-r9";
+} from "./lib/payroll.js?v=20260826-insurance-rounding-r10";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-preview-r9";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-preview-r9";
+import { formatTeacherIdentity, validateOptionalTeacherIdentity, validateTeacherIdentity } from "./lib/teacher-identity.js?v=20260826-insurance-rounding-r10";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260826-insurance-rounding-r10";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260826-insurance-preview-r9";
+} from "./lib/teacher-self-service.js?v=20260826-insurance-rounding-r10";
 
 const state = {
   user: null,
@@ -1122,7 +1122,7 @@ function insuranceEditorHtml(settings, prefix) {
         <div><span>고용보험</span><strong data-insurance-estimate="employmentInsurance">0원</strong></div>
         <div><span>산재보험</span><strong>근로자 공제 없음</strong></div>
       </div>
-      <span class="form-help">현재 적용 중인 요율의 예상값입니다. 산재보험은 사업주 부담이며, 실제 공단 고지액과 신고 기준액을 최종 확인하세요.</span>
+      <span class="form-help">신고 기준액은 1원 단위로 입력할 수 있습니다. 자동 보험료는 공단 기준에 따라 국민연금 기준액의 천원 미만과 보험료의 10원 미만을 절사합니다. 산재보험은 사업주 부담이며 실제 공단 고지액을 최종 확인하세요.</span>
     </div>
     <span class="form-help">건강보험 항목은 건강보험과 장기요양을 함께 관리합니다. 종료일이 없으면 계속 적용됩니다.</span>
   </div>`;
@@ -1916,17 +1916,20 @@ function openInsurancePolicyModal() {
       <div class="form-field"><label for="pension-rate">국민연금 근로자 부담률 (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.nationalPension.rate))}" required /></div>
       <div class="form-field"><label for="pension-minimum">국민연금 기준소득월액 하한</label><input id="pension-minimum" name="pensionMinimumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
       <div class="form-field"><label for="pension-maximum">국민연금 기준소득월액 상한</label><input id="pension-maximum" name="pensionMaximumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
+      <div class="form-field"><label for="pension-base-unit">국민연금 기준액 절사 단위 (원)</label><input id="pension-base-unit" name="pensionBaseUnit" type="number" min="1" step="1" value="${e(current.employee.nationalPension.baseUnit || 1000)}" required /><span class="form-help">현재 기준은 천원 미만 절사</span></div>
+      <div class="form-field"><label for="insurance-rounding-unit">자동 보험료 절사 단위 (원)</label><input id="insurance-rounding-unit" name="insuranceRoundingUnit" type="number" min="1" step="1" value="${e(current.employee.nationalPension.roundingUnit || current.employee.healthInsurance.roundingUnit || 10)}" required /><span class="form-help">현재 기준은 10원 미만 절사</span></div>
       <div class="form-field"><label for="health-rate">건강보험 근로자 부담률 (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.healthInsurance.rate))}" required /></div>
       <div class="form-field"><label for="health-minimum">건강보험 근로자 부담 하한액</label><input id="health-minimum" name="healthMinimumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
       <div class="form-field"><label for="health-maximum">건강보험 근로자 부담 상한액</label><input id="health-maximum" name="healthMaximumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
-      <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.longTermCareRate))}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
+      <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.000001" value="${e(policyPercentInput(current.employee.longTermCareRate, 6))}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
       <div class="form-field"><label for="employment-rate">고용보험 근로자 부담률 (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.employmentInsurance.rate))}" required /></div>
       <div class="form-field full"><label for="pension-source">국민연금 공식 근거 URL</label><input id="pension-source" name="pensionSourceUrl" type="url" value="${e(sourceUrl("nationalPension"))}" required /></div>
       <div class="form-field full"><label for="pension-bounds-source">국민연금 상·하한 공식 근거 URL</label><input id="pension-bounds-source" name="pensionBoundsSourceUrl" type="url" value="${e(sourceUrl("nationalPensionBounds"))}" required /></div>
       <div class="form-field full"><label for="health-source">건강보험 공식 근거 URL</label><input id="health-source" name="healthSourceUrl" type="url" value="${e(sourceUrl("healthInsurance"))}" required /></div>
       <div class="form-field full"><label for="health-bounds-source">건강보험 상·하한 공식 근거 URL</label><input id="health-bounds-source" name="healthBoundsSourceUrl" type="url" value="${e(sourceUrl("healthInsuranceBounds"))}" required /></div>
       <div class="form-field full"><label for="long-term-source">장기요양 공식 근거 URL</label><input id="long-term-source" name="longTermCareSourceUrl" type="url" value="${e(sourceUrl("longTermCare"))}" required /></div>
-      <div class="form-field full"><label for="employment-source">고용보험 공식 근거 URL</label><input id="employment-source" name="employmentSourceUrl" type="url" value="${e(sourceUrl("employmentInsurance"))}" required /><span class="form-help">국민연금공단·건강보험공단·고용노동부·보건복지부·국가법령정보센터 주소만 허용합니다.</span></div>
+      <div class="form-field full"><label for="employment-source">고용보험 공식 근거 URL</label><input id="employment-source" name="employmentSourceUrl" type="url" value="${e(sourceUrl("employmentInsurance"))}" required /></div>
+      <div class="form-field full"><label for="rounding-source">보험료 단수 처리 공식 확인 URL</label><input id="rounding-source" name="roundingSourceUrl" type="url" value="${e(sourceUrl("calculationRounding"))}" required /><span class="form-help">국민연금공단·건강보험공단·4대사회보험정보연계센터·정부·국가법령정보센터 주소만 허용합니다.</span></div>
     </form>
   `, "등록", async () => {
     const form = document.querySelector("#insurance-policy-form");
@@ -1941,7 +1944,8 @@ function openInsurancePolicyModal() {
       data.healthSourceUrl,
       data.healthBoundsSourceUrl,
       data.longTermCareSourceUrl,
-      data.employmentSourceUrl
+      data.employmentSourceUrl,
+      data.roundingSourceUrl
     ];
     if (sourceUrls.some((url) => !isOfficialPublicSourceUrl(url))) {
       throw new Error("공단·정부·국가법령정보센터의 공식 자료 주소를 입력해 주세요.");
@@ -1950,8 +1954,13 @@ function openInsurancePolicyModal() {
     const pensionMaximumBase = Number(data.pensionMaximumBase);
     const healthMinimumAmount = Number(data.healthMinimumAmount);
     const healthMaximumAmount = Number(data.healthMaximumAmount);
+    const pensionBaseUnit = Number(data.pensionBaseUnit);
+    const insuranceRoundingUnit = Number(data.insuranceRoundingUnit);
     if (pensionMinimumBase > pensionMaximumBase || healthMinimumAmount > healthMaximumAmount) {
       throw new Error("사회보험 상한액은 하한액보다 크거나 같아야 합니다.");
+    }
+    if (!Number.isInteger(pensionBaseUnit) || pensionBaseUnit < 1 || !Number.isInteger(insuranceRoundingUnit) || insuranceRoundingUnit < 1) {
+      throw new Error("절사 단위는 1원 이상의 정수로 입력해 주세요.");
     }
     const policy = {
       id: data.version,
@@ -1966,20 +1975,25 @@ function openInsurancePolicyModal() {
         nationalPension: {
           rate: Number(data.pensionRate) / 100,
           minimumBase: pensionMinimumBase,
-          maximumBase: pensionMaximumBase
+          maximumBase: pensionMaximumBase,
+          baseUnit: pensionBaseUnit,
+          roundingUnit: insuranceRoundingUnit
         },
         healthInsurance: {
           rate: Number(data.healthRate) / 100,
           minimumBase: 0,
           maximumBase: Number.MAX_SAFE_INTEGER,
           minimumAmount: healthMinimumAmount,
-          maximumAmount: healthMaximumAmount
+          maximumAmount: healthMaximumAmount,
+          roundingUnit: insuranceRoundingUnit
         },
         longTermCareRate: Number(data.longTermCareRate) / 100,
+        longTermCareRoundingUnit: insuranceRoundingUnit,
         employmentInsurance: {
           rate: Number(data.employmentRate) / 100,
           minimumBase: 0,
-          maximumBase: Number.MAX_SAFE_INTEGER
+          maximumBase: Number.MAX_SAFE_INTEGER,
+          roundingUnit: insuranceRoundingUnit
         }
       },
       sources: [
@@ -1988,7 +2002,8 @@ function openInsurancePolicyModal() {
         { kind: "healthInsurance", title: "건강보험 보험료율", url: data.healthSourceUrl },
         { kind: "healthInsuranceBounds", title: "건강보험료 상·하한", url: data.healthBoundsSourceUrl },
         { kind: "longTermCare", title: "장기요양보험료율", url: data.longTermCareSourceUrl },
-        { kind: "employmentInsurance", title: "고용보험 보험료율", url: data.employmentSourceUrl }
+        { kind: "employmentInsurance", title: "고용보험 보험료율", url: data.employmentSourceUrl },
+        { kind: "calculationRounding", title: "보험료 단수 처리", url: data.roundingSourceUrl }
       ]
     };
     state.data.insurancePolicies.push(policy);
@@ -2370,7 +2385,7 @@ function currentCalendarMonth() {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
-function policyPercentInput(rate) { return Number(((Number(rate) || 0) * 100).toFixed(3)); }
+function policyPercentInput(rate, digits = 3) { return Number(((Number(rate) || 0) * 100).toFixed(digits)); }
 function taxProfileForTeacher(teacher) { return { dependentCount: 1, children8To20: 0, withholdingRatio: 1, ...(teacher.taxProfile || {}) }; }
 function slug(value) { return String(value).trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9가-힣-]/g, ""); }
 function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", custom: "기타 공제" }; }
@@ -2381,6 +2396,7 @@ function isOfficialPublicSourceUrl(value) {
     const host = new URL(value).hostname.toLowerCase();
     return host === "nps.or.kr" || host.endsWith(".nps.or.kr")
       || host === "nhis.or.kr" || host.endsWith(".nhis.or.kr")
+      || host === "4insure.or.kr" || host.endsWith(".4insure.or.kr")
       || host === "law.go.kr" || host.endsWith(".law.go.kr")
       || host === "go.kr" || host.endsWith(".go.kr");
   } catch {

@@ -69,10 +69,11 @@ export const demoInsurancePolicy = {
   effectiveTo: null,
   status: "draft",
   employee: {
-    nationalPension: { rate: 0.045, minimumBase: 0, maximumBase: 6370000 },
-    healthInsurance: { rate: 0.03545, minimumBase: 0, maximumBase: 127056982 },
+    nationalPension: { rate: 0.045, minimumBase: 0, maximumBase: 6370000, baseUnit: 1000, roundingUnit: 10 },
+    healthInsurance: { rate: 0.03545, minimumBase: 0, maximumBase: 127056982, roundingUnit: 10 },
     longTermCareRate: 0.1295,
-    employmentInsurance: { rate: 0.009, minimumBase: 0, maximumBase: 999999999 }
+    longTermCareRoundingUnit: 10,
+    employmentInsurance: { rate: 0.009, minimumBase: 0, maximumBase: 999999999, roundingUnit: 10 }
   }
 };
 
@@ -82,7 +83,8 @@ const INSURANCE_SOURCE_URLS = {
   healthRate: "https://edi.nhis.or.kr/portal/images/popup/20251204_pop01longdesc.html",
   healthBounds: "https://law.go.kr/LSW/admRulLsInfoP.do?admRulSeq=2100000270472",
   longTermCare: "https://www.mohw.go.kr/menu.es?mid=a10712030100",
-  employment: "https://www.moel.go.kr/info/astmgmt/employ/employList.do"
+  employment: "https://www.moel.go.kr/info/astmgmt/employ/employList.do",
+  calculator: "https://www.4insure.or.kr/pbiz/ntcn/inscSmlCalcView.do"
 };
 
 function insurancePolicy2026({ version, effectiveFrom, effectiveTo, pensionMinimumBase, pensionMaximumBase }) {
@@ -92,27 +94,32 @@ function insurancePolicy2026({ version, effectiveFrom, effectiveTo, pensionMinim
     name: "2026년 사회보험 근로자 부담 기준",
     effectiveFrom,
     effectiveTo,
-    verifiedAt: "2026-08-25",
+    verifiedAt: "2026-08-26",
     status: "published",
     builtIn: true,
     employee: {
       nationalPension: {
         rate: 0.0475,
         minimumBase: pensionMinimumBase,
-        maximumBase: pensionMaximumBase
+        maximumBase: pensionMaximumBase,
+        baseUnit: 1000,
+        roundingUnit: 10
       },
       healthInsurance: {
         rate: 0.03595,
         minimumBase: 0,
         maximumBase: Number.MAX_SAFE_INTEGER,
         minimumAmount: 10080,
-        maximumAmount: 4591740
+        maximumAmount: 4591740,
+        roundingUnit: 10
       },
-      longTermCareRate: 0.1314,
+      longTermCareRate: 0.009448 / 0.0719,
+      longTermCareRoundingUnit: 10,
       employmentInsurance: {
         rate: 0.009,
         minimumBase: 0,
-        maximumBase: Number.MAX_SAFE_INTEGER
+        maximumBase: Number.MAX_SAFE_INTEGER,
+        roundingUnit: 10
       }
     },
     sources: [
@@ -121,7 +128,8 @@ function insurancePolicy2026({ version, effectiveFrom, effectiveTo, pensionMinim
       { kind: "healthInsurance", title: "국민건강보험공단 2026년 보험료율", url: INSURANCE_SOURCE_URLS.healthRate },
       { kind: "healthInsuranceBounds", title: "건강보험료 상·하한 고시", url: INSURANCE_SOURCE_URLS.healthBounds },
       { kind: "longTermCare", title: "보건복지부 2026년 장기요양보험료율", url: INSURANCE_SOURCE_URLS.longTermCare },
-      { kind: "employmentInsurance", title: "고용노동부 고용보험 안내", url: INSURANCE_SOURCE_URLS.employment }
+      { kind: "employmentInsurance", title: "고용노동부 고용보험 안내", url: INSURANCE_SOURCE_URLS.employment },
+      { kind: "calculationRounding", title: "4대사회보험정보연계센터 보험료 모의계산", url: INSURANCE_SOURCE_URLS.calculator }
     ]
   };
 }
@@ -150,4 +158,3 @@ export function createCombinedPolicy(taxPolicy = ntsTaxPolicy2024, insurancePoli
     insurancePolicy
   };
 }
-

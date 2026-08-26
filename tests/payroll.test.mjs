@@ -228,8 +228,37 @@ test("2026년 공식 사회보험 근로자 부담률을 적용한다", () => {
   assert.equal(insurancePolicy.version, "INSURANCE-2026-07");
   assert.equal(payroll.deductions.nationalPension, 95000);
   assert.equal(payroll.deductions.healthInsurance, 71900);
-  assert.equal(payroll.deductions.longTermCare, 9448);
+  assert.equal(payroll.deductions.longTermCare, 9440);
   assert.equal(payroll.deductions.employmentInsurance, 18000);
+});
+
+test("공식 모의계산과 같이 자동 사회보험료의 10원 미만을 절사한다", () => {
+  const insurancePolicy = resolveEffectivePolicy(officialInsurancePolicies, "2026-08");
+  const payroll = calculatePayroll([
+    { hours: 1, hourlyRate: 3200001, treatment: "employee", insuranceCovered: true }
+  ], createCombinedPolicy(ntsTaxPolicy2024, insurancePolicy));
+
+  assert.equal(payroll.deductions.nationalPension, 152000);
+  assert.equal(payroll.deductions.healthInsurance, 115040);
+  assert.equal(payroll.deductions.longTermCare, 15110);
+  assert.equal(payroll.deductions.employmentInsurance, 28800);
+  assert.equal(payroll.reporting.insuranceTotal, 310950);
+  assert.ok([
+    payroll.deductions.nationalPension,
+    payroll.deductions.healthInsurance,
+    payroll.deductions.longTermCare,
+    payroll.deductions.employmentInsurance
+  ].every((amount) => amount % 10 === 0));
+});
+
+test("국민연금은 기준소득월액의 천원 미만도 버린 뒤 계산한다", () => {
+  const insurancePolicy = resolveEffectivePolicy(officialInsurancePolicies, "2026-08");
+  const payroll = calculatePayroll([
+    { hours: 1, hourlyRate: 2001999, treatment: "employee", insuranceCovered: true }
+  ], createCombinedPolicy(ntsTaxPolicy2024, insurancePolicy));
+
+  assert.equal(payroll.insuranceBases.nationalPension, 2001999);
+  assert.equal(payroll.deductions.nationalPension, 95040);
 });
 
 test("2026년 7월 국민연금 상한과 건강보험료 상한을 적용한다", () => {
@@ -241,7 +270,7 @@ test("2026년 7월 국민연금 상한과 건강보험료 상한을 적용한다
 
   assert.equal(january.version, "INSURANCE-2026-01");
   assert.equal(july.version, "INSURANCE-2026-07");
-  assert.equal(payroll.deductions.nationalPension, 313025);
+  assert.equal(payroll.deductions.nationalPension, 313020);
   assert.equal(payroll.deductions.healthInsurance, 4591740);
 });
 
@@ -377,4 +406,3 @@ test("간이세액표 CSV는 연속 구간과 1천만원 기준 행을 검증한
   assert.equal(parsed.tableRows.length, 1);
   assert.equal(parsed.taxAtTenMillion[10], 10);
 });
-

@@ -15,6 +15,10 @@ export const INSURANCE_LABELS = {
 const won = (value) => Math.round(Number(value) || 0);
 const floorWon = (value) => Math.floor(Math.max(0, Number(value) || 0));
 const floorTenWon = (value) => Math.floor(Math.max(0, Number(value) || 0) / 10) * 10;
+const floorToUnit = (value, unit = 1) => {
+  const normalizedUnit = Math.max(1, Math.floor(Number(unit) || 1));
+  return Math.floor(Math.max(0, Number(value) || 0) / normalizedUnit) * normalizedUnit;
+};
 
 export function calculateEarning(entry) {
   const quantity = Number(entry.hours ?? entry.quantity ?? 0);
@@ -425,7 +429,10 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
   deductions.longTermCare = combinedHealthOverride != null
     ? 0
     : overrides.longTermCare == null
-    ? won(deductions.healthInsurance * Number(insurance.longTermCareRate || 0))
+    ? floorToUnit(
+      deductions.healthInsurance * Number(insurance.longTermCareRate || 0),
+      insurance.longTermCareRoundingUnit || insurance.healthInsurance?.roundingUnit || 1
+    )
     : won(overrides.longTermCare);
 
   const gross = Object.values(grossByTreatment).reduce((sum, amount) => sum + amount, 0);
@@ -613,7 +620,11 @@ function applyRateWithBounds(base, rule) {
     Number(rule.minimumBase || 0),
     Math.min(base, Number(rule.maximumBase || Number.MAX_SAFE_INTEGER))
   );
-  const amount = won(boundedBase * Number(rule.rate));
+  const calculationBase = floorToUnit(boundedBase, rule.baseUnit || 1);
+  const amount = floorToUnit(
+    calculationBase * Number(rule.rate),
+    rule.roundingUnit || 1
+  );
   return Math.max(
     Number(rule.minimumAmount || 0),
     Math.min(amount, Number(rule.maximumAmount || Number.MAX_SAFE_INTEGER))
@@ -690,4 +701,3 @@ export function resolveRateRule(rules, entry) {
 function specificity(rule) {
   return Number(Boolean(rule.teacherId)) + Number(Boolean(rule.subjectId)) + Number(Boolean(rule.classId));
 }
-

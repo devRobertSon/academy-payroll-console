@@ -33,7 +33,8 @@ const TEACHER_DELETION_REFERENCE_SOURCES = [
   ["현재 급여명세서", "payslips"],
   ["급여명세서 발행 이력", "payslipVersions"],
   ["명세서 열람 기록", "payslipReceipts"],
-  ["명세서 발송 기록", "payslipDeliveries"]
+  ["명세서 발송 기록", "payslipDeliveries"],
+  ["영수증 제출 기록", "expenseReceipts"]
 ];
 
 const TEACHER_DELETION_CLEANUP_SOURCES = [

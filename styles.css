@@ -316,6 +316,20 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .teacher-work-hour-row > div:first-child span { color: var(--muted); font-size: 10px; }
 .teacher-work-hour-row .input-suffix { width: 180px; }
 .teacher-work-hour-row input { width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px; border: 0; background: transparent; }
+.receipt-submit-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; padding: 18px; }
+.receipt-submit-form .full, .receipt-submit-actions { grid-column: 1 / -1; }
+.receipt-submit-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 4px; }
+.compact-metrics { margin-top: 20px; }
+.receipt-review-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 16px; border: 1px solid var(--line); }
+.receipt-review-summary > div { min-width: 0; padding: 13px 14px; }
+.receipt-review-summary > div + div { border-left: 1px solid var(--line); }
+.receipt-review-summary span, .receipt-review-summary strong { display: block; }
+.receipt-review-summary span { margin-bottom: 4px; color: var(--muted); font-size: 9px; }
+.receipt-review-summary strong { overflow-wrap: anywhere; font-size: 12px; }
+.receipt-review-file { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.receipt-review-file > span { min-width: 0; color: var(--muted); overflow-wrap: anywhere; font-size: 10px; }
+.receipt-review-reject { display: flex; justify-content: flex-start; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.selected-row { background: var(--brand-pale); }
 .form-field { display: grid; gap: 6px; }
 .form-field.full { grid-column: 1 / -1; }
 .form-field label { font-size: 11px; font-weight: 600; }
@@ -458,6 +472,7 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .help-toc { position: static; grid-template-columns: 1fr 1fr; }
   .help-toc > strong { grid-column: 1 / -1; }
   .assistant-panel { right: 12px; bottom: 12px; width: calc(100vw - 24px); height: min(680px, calc(100vh - 24px)); }
+  .receipt-submit-form { grid-template-columns: 1fr 1fr; }
   .insurance-setting-head { display: none; }
   .insurance-setting-row { grid-template-columns: 1fr 1fr; }
   .insurance-period { grid-column: 1 / -1; }
@@ -476,6 +491,11 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .income-composition-option span { min-height: 66px; }
   .teacher-work-hour-row { grid-template-columns: 1fr; gap: 10px; }
   .teacher-work-hour-row .input-suffix { width: 100%; }
+  .receipt-submit-form { grid-template-columns: 1fr; padding: 14px; }
+  .receipt-submit-form .full, .receipt-submit-actions { grid-column: auto; }
+  .receipt-submit-actions { align-items: stretch; flex-direction: column; }
+  .receipt-review-summary { grid-template-columns: 1fr; }
+  .receipt-review-summary > div + div { border-top: 1px solid var(--line); border-left: 0; }
   .form-field.full { grid-column: auto; }
   .business-line-row.rate-row, .business-line-row.work-row { grid-template-columns: 1fr 36px; }
   .business-line-row > input, .business-line-row .input-suffix, .business-line-row .business-line-amount { grid-column: 1; }
@@ -515,5 +535,4 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .payslip-layout { display: block; }
   .payslip-sheet { min-height: 0; border: 0; box-shadow: none; }
 }
-
 

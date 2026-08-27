@@ -122,19 +122,29 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
   const transportUnitAmount = override.transportUnitAmount == null
     ? settings.transportPolicy.unitAmount
     : Math.max(0, won(override.transportUnitAmount));
-  const transportAmount = won(transportTrips * transportUnitAmount);
+  const manualTransportAmount = won(transportTrips * transportUnitAmount);
   const transportTreatment = normalizeTreatment(
     override.transportTreatment || settings.transportPolicy.treatment
   );
-  const parkingAmount = Math.max(0, won(override.parkingAmount));
+  const manualParkingAmount = Math.max(0, won(override.parkingAmount));
   const parkingTreatment = normalizeTreatment(override.parkingTreatment);
+  const approvedReceiptEarnings = normalizeApprovedReceiptEarnings(override.approvedReceiptEarnings);
+  const receiptTransportAmount = approvedReceiptEarnings
+    .filter((line) => line.category === "transport")
+    .reduce((sum, line) => sum + line.amount, 0);
+  const receiptParkingAmount = approvedReceiptEarnings
+    .filter((line) => line.category === "parking")
+    .reduce((sum, line) => sum + line.amount, 0);
+  const transportAmount = manualTransportAmount + receiptTransportAmount;
+  const parkingAmount = manualParkingAmount + receiptParkingAmount;
   const additionalEarnings = normalizeAdditionalEarnings(override.additionalEarnings);
   const otherPaymentAmount = additionalEarnings.reduce((sum, line) => sum + line.amount, 0);
   const additionalGrossPay = transportAmount
     + parkingAmount
     + otherPaymentAmount;
-  const unconfirmedCount = Number(transportAmount > 0 && transportTreatment === "pending")
-    + Number(parkingAmount > 0 && parkingTreatment === "pending")
+  const unconfirmedCount = Number(manualTransportAmount > 0 && transportTreatment === "pending")
+    + Number(manualParkingAmount > 0 && parkingTreatment === "pending")
+    + approvedReceiptEarnings.filter((line) => line.treatment === "pending").length
     + additionalEarnings.filter((line) => line.amount > 0 && line.treatment === "pending").length;
 
   return {
@@ -145,12 +155,17 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     businessWorkLines,
     transportTrips,
     transportUnitAmount,
+    manualTransportAmount,
+    receiptTransportAmount,
     transportAmount,
     transportTreatment,
     transportInsuranceCovered: override.transportInsuranceCovered === true,
+    manualParkingAmount,
+    receiptParkingAmount,
     parkingAmount,
     parkingTreatment,
     parkingInsuranceCovered: override.parkingInsuranceCovered === true,
+    approvedReceiptEarnings,
     additionalEarnings,
     otherPaymentAmount,
     additionalGrossPay,
@@ -199,7 +214,7 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
     }));
   }
 
-  if (amounts.transportAmount > 0) {
+  if (amounts.manualTransportAmount > 0) {
     lines.push({
       id: `${month}_${teacher.id}_transport`,
       month,
@@ -216,7 +231,7 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       source: amounts.source
     });
   }
-  if (amounts.parkingAmount > 0) {
+  if (amounts.manualParkingAmount > 0) {
     lines.push({
       id: `${month}_${teacher.id}_parking`,
       month,
@@ -225,12 +240,30 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       subjectName: "주차료",
       earningCategory: "parking",
       hours: 1,
-      hourlyRate: amounts.parkingAmount,
+      hourlyRate: amounts.manualParkingAmount,
       treatment: amounts.parkingTreatment,
       insuranceCovered: amounts.parkingInsuranceCovered,
       source: amounts.source
     });
   }
+  amounts.approvedReceiptEarnings.forEach((receipt) => {
+    lines.push({
+      id: `${month}_${teacher.id}_receipt-${receipt.id}`,
+      month,
+      teacherId: teacher.id,
+      kind: "monthly",
+      subjectName: `${receipt.category === "transport" ? "교통비" : "주차료"} 영수증 정산`,
+      earningCategory: receipt.category,
+      hours: 1,
+      quantity: 0,
+      hourlyRate: receipt.amount,
+      treatment: receipt.treatment,
+      insuranceCovered: receipt.insuranceCovered,
+      expenseReceiptId: receipt.id,
+      note: receipt.expenseDate,
+      source: "approved-expense-receipt"
+    });
+  });
   amounts.additionalEarnings.forEach((line, index) => {
     if (line.amount <= 0) return;
     lines.push({
@@ -276,6 +309,17 @@ function normalizeTreatment(treatment) {
   return ["employee", "business", "other", "exempt", "pending"].includes(treatment)
     ? treatment
     : "pending";
+}
+
+function normalizeApprovedReceiptEarnings(lines) {
+  return (Array.isArray(lines) ? lines : []).map((line, index) => ({
+    id: String(line.id || `receipt-${index + 1}`),
+    category: line.category === "parking" ? "parking" : "transport",
+    amount: Math.max(0, won(line.amount)),
+    treatment: normalizeTreatment(line.treatment),
+    insuranceCovered: line.insuranceCovered === true,
+    expenseDate: line.expenseDate || null
+  })).filter((line) => line.amount > 0);
 }
 
 function normalizeAdditionalEarnings(lines) {

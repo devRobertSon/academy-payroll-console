@@ -8,7 +8,8 @@
 | `accessRequests` | 승인 요청 조회·처리·삭제 | 미등록 본인 요청 생성·조회 |
 | `teachers` | 관리·기록 없는 오등록 문서 삭제 | 연결된 본인 조회, 기본 정보·보험 가입 여부·시급 수정 |
 | `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간 조회·수정 |
-| `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간 제출 알림 생성·갱신 |
+| `expenseReceipts` | 전체 조회, 미확정 월 승인·반려 | 본인의 제출 내역 조회, 미확정 월 대기 건 생성·삭제 |
+| `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간·영수증 제출 알림 생성 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
 | `insurancePolicies` | 조회·새 버전 생성 | 차단 |
 | `payrollPolicies` | 이전 버전 호환 | 차단 |
@@ -23,6 +24,39 @@
 | `auditLogs` | 생성/조회 | 차단 |
 
 ## 핵심 문서
+
+### `expenseReceipts/{receiptId}`
+
+영수증 원본은 Firestore에 넣지 않고 관리자 Google Drive에 비공개로 저장합니다. Firestore에는 급여 합산과 접근 확인에 필요한 메타데이터만 둡니다.
+
+```json
+{
+  "id": "UUID",
+  "teacherId": "teacher-1",
+  "teacherUid": "Firebase Authentication UID",
+  "month": "2026-08",
+  "expenseDate": "2026-08-27",
+  "category": "transport | parking",
+  "amount": 12500,
+  "note": "개인정보 없는 간단한 메모",
+  "status": "pending | approved | rejected",
+  "treatment": "pending | employee | business | other | exempt",
+  "insuranceCovered": false,
+  "fileId": "Google Drive file ID",
+  "fileName": "원본 표시용 파일명",
+  "mimeType": "image/jpeg | image/png | image/webp | application/pdf",
+  "sizeBytes": 245000,
+  "sha256": "중복 제출 확인용 64자리 해시",
+  "submittedAt": "server timestamp",
+  "reviewedAt": null,
+  "reviewedBy": null,
+  "reviewNote": "",
+  "updatedAt": "server timestamp",
+  "updatedBy": "UID"
+}
+```
+
+대기 중에는 선생님이 본인 문서를 삭제할 수 있습니다. 관리자가 승인할 때 `treatment`를 확정해야 하며, 승인 금액은 급여 계산 시 Google Drive 파일을 읽지 않고 이 메타데이터로 합산합니다. 승인 후 선생님의 메타데이터 조회는 허용하지만 Worker가 파일 본문 제공을 거부합니다. 확정된 급여월은 제출·승인·삭제가 모두 잠깁니다.
 
 ### `users/{uid}`
 

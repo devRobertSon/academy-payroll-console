@@ -1,5 +1,6 @@
 import { GMAIL_SEND_SCOPE } from "./gmail.js";
 import { WORK_HOURS_NOTIFICATION_TYPE, workHoursNotificationId } from "./admin-notifications.js";
+import { EXPENSE_RECEIPT_NOTIFICATION_TYPE, expenseReceiptNotificationId } from "./expense-receipts.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -132,7 +133,7 @@ export async function createFirebaseStore(config) {
 
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
+      const [teachers, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, expenseReceipts, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("payrollRuns"),
         loadCollection("taxPolicies"),
@@ -140,6 +141,7 @@ export async function createFirebaseStore(config) {
         loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
         loadOptionalCollection("teacherMonthlyInputs"),
+        loadOptionalCollection("expenseReceipts"),
         loadOptionalCollection("adminNotifications"),
         loadCollection("payslips"),
         loadOptionalCollection("payslipVersions"),
@@ -155,6 +157,7 @@ export async function createFirebaseStore(config) {
         insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
         payrollOverrides,
         teacherMonthlyInputs,
+        expenseReceipts,
         adminNotifications,
         payslips,
         payslipVersions,
@@ -165,12 +168,15 @@ export async function createFirebaseStore(config) {
       };
     }
 
-    const [payslips, teacherMonthlyInputs, payrollRuns] = await Promise.all([
+    const [payslips, teacherMonthlyInputs, expenseReceipts, payrollRuns] = await Promise.all([
       loadCollection("payslips", [
         firestoreSdk.where("teacherUid", "==", user.uid),
         firestoreSdk.where("status", "==", "published")
       ]),
       loadOptionalCollection("teacherMonthlyInputs", [
+        firestoreSdk.where("teacherUid", "==", user.uid)
+      ]),
+      loadOptionalCollection("expenseReceipts", [
         firestoreSdk.where("teacherUid", "==", user.uid)
       ]),
       loadOptionalCollection("payrollRuns")
@@ -181,6 +187,7 @@ export async function createFirebaseStore(config) {
     return {
       payslips,
       teacherMonthlyInputs,
+      expenseReceipts,
       payrollRuns,
       teachers: teacherSnap?.exists() ? [{ id: teacherSnap.id, ...teacherSnap.data() }] : []
     };
@@ -354,6 +361,80 @@ export async function createFirebaseStore(config) {
     await batch.commit();
   }
 
+  async function saveExpenseReceipt(receipt) {
+    const batch = firestoreSdk.writeBatch(db);
+    const submittedAt = firestoreSdk.serverTimestamp();
+    batch.set(firestoreSdk.doc(db, "expenseReceipts", receipt.id), {
+      id: receipt.id,
+      teacherId: receipt.teacherId,
+      teacherUid: receipt.teacherUid,
+      month: receipt.month,
+      expenseDate: receipt.expenseDate,
+      category: receipt.category,
+      amount: receipt.amount,
+      note: receipt.note || "",
+      status: "pending",
+      treatment: "pending",
+      insuranceCovered: false,
+      fileId: receipt.fileId,
+      fileName: receipt.fileName,
+      mimeType: receipt.mimeType,
+      sizeBytes: receipt.sizeBytes,
+      sha256: receipt.sha256,
+      submittedAt,
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewNote: "",
+      updatedAt: submittedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    batch.set(firestoreSdk.doc(db, "adminNotifications", expenseReceiptNotificationId(receipt.id)), {
+      type: EXPENSE_RECEIPT_NOTIFICATION_TYPE,
+      receiptId: receipt.id,
+      teacherId: receipt.teacherId,
+      teacherUid: receipt.teacherUid,
+      month: receipt.month,
+      category: receipt.category,
+      amount: receipt.amount,
+      status: "unread",
+      submittedAt,
+      readAt: null,
+      readBy: null
+    });
+    await batch.commit();
+  }
+
+  async function reviewExpenseReceipt(receipt, review) {
+    const batch = firestoreSdk.writeBatch(db);
+    const reviewedAt = firestoreSdk.serverTimestamp();
+    batch.update(firestoreSdk.doc(db, "expenseReceipts", receipt.id), {
+      status: review.status,
+      treatment: review.status === "approved" ? review.treatment : "pending",
+      insuranceCovered: review.status === "approved" && review.insuranceCovered === true,
+      reviewNote: review.reviewNote || "",
+      reviewedAt,
+      reviewedBy: auth.currentUser.uid,
+      updatedAt: reviewedAt,
+      updatedBy: auth.currentUser.uid
+    });
+    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+      action: review.status === "approved" ? "EXPENSE_RECEIPT_APPROVED" : "EXPENSE_RECEIPT_REJECTED",
+      receiptId: receipt.id,
+      teacherId: receipt.teacherId,
+      month: receipt.month,
+      actorUid: auth.currentUser.uid,
+      createdAt: reviewedAt
+    });
+    await batch.commit();
+  }
+
+  async function deleteExpenseReceipt(receipt) {
+    const batch = firestoreSdk.writeBatch(db);
+    batch.delete(firestoreSdk.doc(db, "expenseReceipts", receipt.id));
+    batch.delete(firestoreSdk.doc(db, "adminNotifications", expenseReceiptNotificationId(receipt.id)));
+    await batch.commit();
+  }
+
   async function markAdminNotificationRead(notificationId) {
     await firestoreSdk.updateDoc(firestoreSdk.doc(db, "adminNotifications", notificationId), {
       status: "read",
@@ -520,6 +601,11 @@ export async function createFirebaseStore(config) {
     await authSdk.signOut(auth);
   }
 
+  async function getIdToken() {
+    if (!auth.currentUser) throw new Error("Google 계정으로 다시 로그인해 주세요.");
+    return auth.currentUser.getIdToken();
+  }
+
   return {
     signIn,
     restoreSession,
@@ -532,6 +618,9 @@ export async function createFirebaseStore(config) {
     deleteTeacher,
     saveTeacherProfile,
     saveTeacherMonthlyInput,
+    saveExpenseReceipt,
+    reviewExpenseReceipt,
+    deleteExpenseReceipt,
     markAdminNotificationRead,
     saveAdminMonthlyPayroll,
     publishPayrollRun,
@@ -540,6 +629,7 @@ export async function createFirebaseStore(config) {
     authorizeGmailSend,
     sendGmailMessage,
     recordPayslipDelivery,
-    askHelpAssistant
+    askHelpAssistant,
+    getIdToken
   };
 }

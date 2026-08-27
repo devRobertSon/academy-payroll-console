@@ -10,6 +10,8 @@
 - 미등록 Google 승인 요청에서 선생님 계정을 바로 만들고 본인 정보 입력
 - 선생님의 이름·연락처·`900101-1` 형식 생년월일·성별번호·보험 가입 여부·시급 자기관리와 월별 수업시간 직접 입력
 - 선생님 수업시간 제출 시 관리자 알림과 해당 선생님 월 지급액 입력 바로가기
+- 선생님의 교통비·주차비 영수증 제출, 관리자 알림·승인·반려와 승인액 월 급여 자동 합산
+- 관리자 유료 Google Drive 비공개 보관과 Firebase 역할 검증 Cloudflare Worker
 - Google 로그인 및 Firestore 사용자 권한 확인
 - 미등록 Google 계정의 승인·반려 처리, 반려 후 재로그인 요청과 관리자 UID 연결
 - 선생님별 연락처와 한 칸으로 입력하는 생년월일 6자리·성별번호 1자리 관리(전체 주민등록번호 미수집)
@@ -129,7 +131,7 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 
 설계 상세는 [`docs/architecture.md`](./docs/architecture.md), 컬렉션 구조는 [`docs/firestore-schema.md`](./docs/firestore-schema.md), 운영 점검은 [`docs/security-checklist.md`](./docs/security-checklist.md), 변경 QA는 [`docs/qa.md`](./docs/qa.md)를 참고하세요.
 
-실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md), 화면 사용법은 [`docs/user-guide.md`](./docs/user-guide.md), Gemini 연결은 [`docs/ai-assistant-setup.md`](./docs/ai-assistant-setup.md)를 따르세요.
+실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md), 화면 사용법은 [`docs/user-guide.md`](./docs/user-guide.md), Google Drive 영수증 설정은 [`docs/google-drive-receipts-setup.md`](./docs/google-drive-receipts-setup.md), Gemini 연결은 [`docs/ai-assistant-setup.md`](./docs/ai-assistant-setup.md)를 따르세요.
 
 ## 법적 유의사항
 

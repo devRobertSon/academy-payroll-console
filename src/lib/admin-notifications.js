@@ -10,3 +10,11 @@ export function unreadWorkHoursNotifications(notifications = []) {
     && notification?.status === "unread"
   ));
 }
+
+export function unreadAdminNotifications(notifications = [], supportedTypes = []) {
+  const types = new Set(supportedTypes);
+  return notifications.filter((notification) => (
+    notification?.status === "unread"
+    && types.has(notification?.type)
+  ));
+}

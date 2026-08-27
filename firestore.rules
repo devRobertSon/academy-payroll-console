@@ -276,6 +276,72 @@ service cloud.firestore {
         && monthIsEditable(request.resource.data.month);
     }
 
+    function hasValidExpenseReceipt(data, receiptId) {
+      return data.keys().hasOnly([
+          'id', 'teacherId', 'teacherUid', 'month', 'expenseDate', 'category', 'amount', 'note',
+          'status', 'treatment', 'insuranceCovered', 'fileId', 'fileName', 'mimeType', 'sizeBytes',
+          'sha256', 'submittedAt', 'reviewedAt', 'reviewedBy', 'reviewNote', 'updatedAt', 'updatedBy'
+        ])
+        && data.keys().hasAll([
+          'id', 'teacherId', 'teacherUid', 'month', 'expenseDate', 'category', 'amount', 'note',
+          'status', 'treatment', 'insuranceCovered', 'fileId', 'fileName', 'mimeType', 'sizeBytes',
+          'sha256', 'submittedAt', 'reviewedAt', 'reviewedBy', 'reviewNote', 'updatedAt', 'updatedBy'
+        ])
+        && data.id == receiptId
+        && data.teacherId is string
+        && data.teacherUid is string
+        && data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.expenseDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.expenseDate.matches('^' + data.month + '-[0-9]{2}$')
+        && data.category in ['transport', 'parking']
+        && data.amount is int
+        && data.amount > 0
+        && data.amount <= 10000000
+        && data.note is string
+        && data.note.size() <= 200
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
+        && data.insuranceCovered is bool
+        && data.fileId is string
+        && data.fileId.size() > 0
+        && data.fileId.size() <= 200
+        && data.fileName is string
+        && data.fileName.size() > 0
+        && data.fileName.size() <= 240
+        && data.mimeType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+        && data.sizeBytes is int
+        && data.sizeBytes > 0
+        && data.sizeBytes <= 5242880
+        && data.sha256 is string
+        && data.sha256.matches('^[0-9a-f]{64}$')
+        && data.reviewNote is string
+        && data.reviewNote.size() <= 200;
+    }
+
+    function validTeacherExpenseReceiptNotification(notificationId) {
+      return activeAccount()
+        && account().role == 'teacher'
+        && notificationId == 'expense-receipt_' + request.resource.data.receiptId
+        && request.resource.data.keys().hasOnly([
+          'type', 'receiptId', 'teacherId', 'teacherUid', 'month', 'category', 'amount',
+          'status', 'submittedAt', 'readAt', 'readBy'
+        ])
+        && request.resource.data.type == 'expense_receipt_submitted'
+        && request.resource.data.teacherId == account().teacherId
+        && request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && request.resource.data.category in ['transport', 'parking']
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0
+        && request.resource.data.status == 'unread'
+        && request.resource.data.submittedAt == request.time
+        && request.resource.data.readAt == null
+        && request.resource.data.readBy == null
+        && existsAfter(/databases/$(database)/documents/expenseReceipts/$(request.resource.data.receiptId))
+        && getAfter(/databases/$(database)/documents/expenseReceipts/$(request.resource.data.receiptId)).data.updatedAt == request.time
+        && monthIsEditable(request.resource.data.month);
+    }
+
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
@@ -390,12 +456,66 @@ service cloud.firestore {
       allow delete: if isAdmin() && monthHasNoApprovedPayroll(resource.data.month);
     }
 
+    match /expenseReceipts/{receiptId} {
+      allow get, list: if isAdmin()
+        || (activeAccount()
+          && account().role == 'teacher'
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.teacherId == account().teacherId);
+      allow create: if activeAccount()
+        && account().role == 'teacher'
+        && hasValidExpenseReceipt(request.resource.data, receiptId)
+        && request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.teacherId == account().teacherId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.treatment == 'pending'
+        && request.resource.data.insuranceCovered == false
+        && request.resource.data.submittedAt == request.time
+        && request.resource.data.reviewedAt == null
+        && request.resource.data.reviewedBy == null
+        && request.resource.data.reviewNote == ''
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && monthIsEditable(request.resource.data.month);
+      allow update: if isAdmin()
+        && resource.data.status == 'pending'
+        && hasValidExpenseReceipt(request.resource.data, receiptId)
+        && request.resource.data.teacherId == resource.data.teacherId
+        && request.resource.data.teacherUid == resource.data.teacherUid
+        && request.resource.data.month == resource.data.month
+        && request.resource.data.status in ['approved', 'rejected']
+        && ((request.resource.data.status == 'approved'
+            && request.resource.data.treatment in ['employee', 'business', 'other', 'exempt'])
+          || (request.resource.data.status == 'rejected'
+            && request.resource.data.treatment == 'pending'
+            && request.resource.data.insuranceCovered == false))
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'treatment', 'insuranceCovered', 'reviewNote',
+          'reviewedAt', 'reviewedBy', 'updatedAt', 'updatedBy'
+        ])
+        && monthIsEditable(resource.data.month);
+      allow delete: if (activeAccount()
+          && account().role == 'teacher'
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.teacherId == account().teacherId
+          && resource.data.status == 'pending'
+          && monthIsEditable(resource.data.month))
+        || (isAdmin()
+          && resource.data.status in ['pending', 'rejected']
+          && monthHasNoApprovedPayroll(resource.data.month));
+    }
+
     match /adminNotifications/{notificationId} {
       allow read: if isAdmin();
-      allow create: if validTeacherWorkHoursNotification(notificationId);
+      allow create: if validTeacherWorkHoursNotification(notificationId)
+        || validTeacherExpenseReceiptNotification(notificationId);
       allow update: if validTeacherWorkHoursNotification(notificationId)
         || (isAdmin()
-          && resource.data.type == 'teacher_monthly_input_submitted'
+          && resource.data.type in ['teacher_monthly_input_submitted', 'expense_receipt_submitted']
           && resource.data.status == 'unread'
           && request.resource.data.status == 'read'
           && request.resource.data.readAt == request.time
@@ -403,7 +523,14 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'readAt', 'readBy'
           ]));
-      allow delete: if isAdmin() && monthHasNoApprovedPayroll(resource.data.month);
+      allow delete: if (isAdmin() && monthHasNoApprovedPayroll(resource.data.month))
+        || (activeAccount()
+          && account().role == 'teacher'
+          && resource.data.type == 'expense_receipt_submitted'
+          && notificationId == 'expense-receipt_' + resource.data.receiptId
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.teacherId == account().teacherId
+          && !existsAfter(/databases/$(database)/documents/expenseReceipts/$(resource.data.receiptId)));
     }
 
     match /payrollPolicies/{policyId} {

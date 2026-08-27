@@ -1,0 +1,12 @@
+name = "academy-payroll-receipts"
+main = "src/index.js"
+compatibility_date = "2026-08-27"
+
+[vars]
+FIREBASE_PROJECT_ID = "academy-payroll-console"
+APP_ORIGIN = "https://payroll.robertson.kr"
+API_ORIGIN = "https://payroll-api.robertson.kr"
+DRIVE_ROOT_FOLDER_NAME = "Academy Payroll Receipts"
+
+# Cloudflare Dashboard에서 RECEIPT_KV라는 KV binding을 추가합니다.
+# GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY는 Worker Secret으로만 등록합니다.

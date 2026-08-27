@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260827-tax-guidance-r29";
-import { helpArticles } from "./data/help-content.js?v=20260827-tax-guidance-r29";
+import { appConfig } from "./config.js?v=20260827-receipts-r30";
+import { helpArticles } from "./data/help-content.js?v=20260827-receipts-r30";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260827-tax-guidance-r29";
+} from "./data/demo-data.js?v=20260827-receipts-r30";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260827-tax-guidance-r29";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260827-tax-guidance-r29";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260827-tax-guidance-r29";
+} from "./data/nts-tax-policy.js?v=20260827-receipts-r30";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260827-receipts-r30";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260827-receipts-r30";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260827-tax-guidance-r29";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260827-receipts-r30";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260827-tax-guidance-r29";
+} from "./lib/payroll-lifecycle.js?v=20260827-receipts-r30";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,18 +47,30 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260827-tax-guidance-r29";
+} from "./lib/payroll.js?v=20260827-receipts-r30";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260827-tax-guidance-r29";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260827-tax-guidance-r29";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260827-tax-guidance-r29";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadWorkHoursNotifications } from "./lib/admin-notifications.js?v=20260827-tax-guidance-r29";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260827-receipts-r30";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260827-receipts-r30";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260827-receipts-r30";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260827-receipts-r30";
+import {
+  approvedReceiptEarnings,
+  approvedReceiptTotals,
+  EXPENSE_CATEGORY_LABELS,
+  EXPENSE_RECEIPT_NOTIFICATION_TYPE,
+  EXPENSE_RECEIPT_STATUS_LABELS,
+  RECEIPT_ALLOWED_MIME_TYPES,
+  RECEIPT_MAX_FILE_BYTES,
+  validateExpenseReceiptDraft,
+  validateReceiptFile
+} from "./lib/expense-receipts.js?v=20260827-receipts-r30";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260827-receipts-r30";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260827-tax-guidance-r29";
+} from "./lib/teacher-self-service.js?v=20260827-receipts-r30";
 
 const state = {
   user: null,
@@ -68,10 +80,12 @@ const state = {
   selectedTeacherId: null,
   selectedPayslipMonth: currentCalendarMonth(),
   selectedPayslipType: null,
+  selectedReceiptId: null,
   helpSearch: "",
   assistantMessages: [],
   assistantBusy: false,
   store: null,
+  receiptApi: null,
   data: {
     teachers: [],
     payrollRuns: [],
@@ -85,7 +99,8 @@ const state = {
     payslipDeliveries: [],
     payrollCancellations: [],
     accessRequests: [],
-    adminNotifications: []
+    adminNotifications: [],
+    expenseReceipts: []
   }
 };
 
@@ -115,6 +130,7 @@ const elements = {
 const adminNav = [
   ["업무", "dashboard", "layout-dashboard", "급여 대시보드"],
   ["업무", "payrollInputs", "wallet-cards", "월 급여 입력"],
+  ["업무", "receipts", "receipt-text", "영수증 관리"],
   ["관리", "teachers", "users-round", "선생님 관리"],
   ["보고", "ledger", "notebook-tabs", "월별 급여내역서"],
   ["시스템", "settings", "settings", "계산 · 보안 설정"]
@@ -122,6 +138,7 @@ const adminNav = [
 
 const teacherNav = [
   ["내 업무", "workHours", "calendar-clock", "수업시간 입력"],
+  ["내 업무", "receipts", "receipt-text", "영수증 제출"],
   ["내 급여", "payslips", "file-text", "급여명세서"],
   ["내 정보", "profile", "circle-user-round", "등록 정보"]
 ];
@@ -140,6 +157,7 @@ async function bootstrap() {
   } else {
     try {
       state.store = await createFirebaseStore(appConfig.firebase);
+      state.receiptApi = createReceiptApi(appConfig.receiptApiUrl, () => state.store.getIdToken());
       const restored = await state.store.restoreSession();
       if (restored) await openWorkspace(restored);
     } catch (error) {
@@ -212,7 +230,8 @@ function loadDemoData() {
     payslipDeliveries: [],
     payrollCancellations: [],
     accessRequests: structuredClone(demoAccessRequests),
-    adminNotifications: structuredClone(demoAdminNotifications)
+    adminNotifications: structuredClone(demoAdminNotifications),
+    expenseReceipts: []
   };
 }
 
@@ -239,7 +258,13 @@ async function openWorkspace(user) {
   render();
   const unreadCount = unreadAdminNotificationItems().length;
   if (user.role === "admin" && unreadCount) {
-    showToast(`새 수업시간 제출 알림이 ${unreadCount}건 있습니다.`);
+    showToast(`확인할 새 업무 알림이 ${unreadCount}건 있습니다.`);
+  }
+  const pageUrl = new URL(window.location.href);
+  if (user.role === "admin" && pageUrl.searchParams.get("drive") === "connected") {
+    showToast("Google Drive 영수증 보관 연결을 완료했습니다.");
+    pageUrl.searchParams.delete("drive");
+    window.history.replaceState({}, "", pageUrl);
   }
 }
 
@@ -255,6 +280,7 @@ function hydrateFirebaseData(loaded) {
   state.data.payrollCancellations = loaded.payrollCancellations || [];
   state.data.accessRequests = loaded.accessRequests || [];
   state.data.adminNotifications = loaded.adminNotifications || [];
+  state.data.expenseReceipts = loaded.expenseReceipts || [];
   state.data.overrides = Object.fromEntries((loaded.payrollOverrides || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
   state.data.monthlyWorkInputs = Object.fromEntries((loaded.teacherMonthlyInputs || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
   const latestRunMonth = state.data.payrollRuns.map((run) => run.month).sort().at(-1);
@@ -285,6 +311,7 @@ function render() {
     teachers: renderTeachers,
     ledger: renderLedger,
     settings: renderSettings,
+    receipts: renderReceipts,
     help: renderHelp,
     workHours: renderWorkHours,
     payslips: renderPayslips,
@@ -311,7 +338,7 @@ function setPage(title, eyebrow, actions = "") {
   elements.pageEyebrow.textContent = eyebrow;
   const unreadCount = unreadAdminNotificationItems().length;
   const notificationAction = state.user?.role === "admin"
-    ? `<button class="icon-button notification-button" type="button" title="수업시간 제출 알림" aria-label="수업시간 제출 알림${unreadCount ? ` ${unreadCount}건` : ""}" data-action="open-notifications"><i data-lucide="bell"></i>${unreadCount ? `<span class="notification-badge">${unreadCount > 99 ? "99+" : unreadCount}</span>` : ""}</button>`
+    ? `<button class="icon-button notification-button" type="button" title="업무 알림" aria-label="업무 알림${unreadCount ? ` ${unreadCount}건` : ""}" data-action="open-notifications"><i data-lucide="bell"></i>${unreadCount ? `<span class="notification-badge">${unreadCount > 99 ? "99+" : unreadCount}</span>` : ""}</button>`
     : "";
   elements.topbarActions.innerHTML = `${actions}${notificationAction}`;
   elements.topbarActions.querySelector("[data-action='open-notifications']")?.addEventListener("click", openAdminNotifications);
@@ -319,26 +346,34 @@ function setPage(title, eyebrow, actions = "") {
 
 function unreadAdminNotificationItems() {
   if (state.user?.role !== "admin") return [];
-  return unreadWorkHoursNotifications(state.data.adminNotifications);
+  return unreadAdminNotifications(state.data.adminNotifications, [
+    WORK_HOURS_NOTIFICATION_TYPE,
+    EXPENSE_RECEIPT_NOTIFICATION_TYPE
+  ]);
 }
 
 function openAdminNotifications() {
   const notifications = [...state.data.adminNotifications]
-    .filter((notification) => notification.type === WORK_HOURS_NOTIFICATION_TYPE)
+    .filter((notification) => [WORK_HOURS_NOTIFICATION_TYPE, EXPENSE_RECEIPT_NOTIFICATION_TYPE].includes(notification.type))
     .sort((a, b) => deliveryTime(b.submittedAt) - deliveryTime(a.submittedAt));
-  openModal("수업시간 제출 알림", notifications.length ? `
+  openModal("업무 알림", notifications.length ? `
     <div class="notification-list">
       ${notifications.map((notification) => {
         const teacher = teacherById(notification.teacherId);
         const unread = notification.status === "unread";
+        const isReceipt = notification.type === EXPENSE_RECEIPT_NOTIFICATION_TYPE;
+        const receipt = isReceipt ? state.data.expenseReceipts.find((item) => item.id === notification.receiptId) : null;
+        const message = isReceipt
+          ? `${teacher?.name || "선생님"} 선생님이 ${formatMonth(notification.month)} ${EXPENSE_CATEGORY_LABELS[receipt?.category || notification.category] || "영수증"} ${formatWon(receipt?.amount || notification.amount)}을 제출했습니다.`
+          : `${teacher?.name || "선생님"} 선생님이 ${formatMonth(notification.month)} 수업시간을 제출했습니다.`;
         return `<button class="notification-item ${unread ? "unread" : ""}" type="button" data-open-notification="${e(notification.id)}">
-          <span class="notification-item-icon" aria-hidden="true"><i data-lucide="${unread ? "bell-ring" : "check"}"></i></span>
-          <span class="notification-item-copy"><strong>${e(teacher?.name || "선생님")} 선생님이 ${formatMonth(notification.month)} 수업시간을 제출했습니다.</strong><small>${e(formatDateTime(notification.submittedAt))} · ${unread ? "확인 필요" : "확인함"}</small></span>
+          <span class="notification-item-icon" aria-hidden="true"><i data-lucide="${isReceipt ? "receipt-text" : unread ? "bell-ring" : "check"}"></i></span>
+          <span class="notification-item-copy"><strong>${e(message)}</strong><small>${e(formatDateTime(notification.submittedAt))} · ${unread ? "확인 필요" : "확인함"}</small></span>
           <i data-lucide="chevron-right" aria-hidden="true"></i>
         </button>`;
       }).join("")}
     </div>
-  ` : `<div class="empty-state">새로운 수업시간 제출 알림이 없습니다.</div>`);
+  ` : `<div class="empty-state">새로운 업무 알림이 없습니다.</div>`);
   elements.modalRoot.querySelectorAll("[data-open-notification]").forEach((button) => button.addEventListener("click", async () => {
     const notification = state.data.adminNotifications.find((item) => item.id === button.dataset.openNotification);
     if (notification) await openAdminNotification(notification);
@@ -360,6 +395,22 @@ async function openAdminNotification(notification) {
     } catch (error) {
       showToast(error.message || "알림을 읽음 처리하지 못했습니다.");
     }
+  }
+  if (notification.type === EXPENSE_RECEIPT_NOTIFICATION_TYPE) {
+    const receipt = state.data.expenseReceipts.find((item) => item.id === notification.receiptId);
+    if (!receipt) {
+      closeModal();
+      showToast("연결된 영수증을 찾을 수 없습니다.");
+      return;
+    }
+    state.month = receipt.month;
+    state.search = "";
+    state.selectedReceiptId = receipt.id;
+    state.view = "receipts";
+    closeModal();
+    render();
+    if (receipt.status === "pending") requestAnimationFrame(() => openReceiptReviewModal(receipt));
+    return;
   }
   state.month = notification.month;
   state.search = "";
@@ -704,6 +755,288 @@ function renderWorkHours() {
   });
 }
 
+function renderReceipts() {
+  if (state.user.role === "teacher") renderTeacherReceipts();
+  else renderAdminReceipts();
+}
+
+function receiptsForMonth(month = state.month, teacherId = null) {
+  return state.data.expenseReceipts
+    .filter((receipt) => receipt.month === month && (!teacherId || receipt.teacherId === teacherId))
+    .sort((a, b) => deliveryTime(b.submittedAt) - deliveryTime(a.submittedAt));
+}
+
+function renderTeacherReceipts() {
+  const teacher = teacherById(state.user.teacherId);
+  const run = runForMonth(state.month);
+  const locked = run.status === "published";
+  const receipts = teacher ? receiptsForMonth(state.month, teacher.id) : [];
+  const totals = approvedReceiptTotals(receipts, teacher?.id, state.month);
+  const defaultDate = state.month === currentCalendarMonth()
+    ? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" })
+    : `${state.month}-01`;
+  setPage("영수증 제출", formatMonth(state.month));
+  elements.content.innerHTML = teacher ? `
+    <div class="toolbar">
+      <input class="month-control" type="month" value="${e(state.month)}" aria-label="영수증 귀속 월" data-control="month" />
+      <span class="status-chip ${e(run.status)}">${locked ? "제출 마감" : "제출 가능"}</span>
+    </div>
+    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "file-check-2"}"></i><span>${locked ? `${formatMonth(state.month)} 급여가 확정되어 영수증을 추가하거나 삭제할 수 없습니다.` : "교통비와 주차비 영수증을 제출하면 관리자가 확인합니다. 승인된 금액은 해당 월 급여에 자동 합산됩니다."}</span></div>
+    <section class="content-section">
+      <div class="section-heading"><div><h2>새 영수증</h2><p>JPG, PNG, WebP 또는 PDF · 파일당 최대 5MB</p></div></div>
+      <form id="receipt-submit-form" class="data-surface receipt-submit-form">
+        <div class="form-field"><label for="receipt-date">사용 날짜</label><input id="receipt-date" name="expenseDate" type="date" value="${e(defaultDate)}" min="${e(state.month)}-01" max="${e(lastDayOfMonth(state.month))}" required ${locked ? "disabled" : ""} /></div>
+        <div class="form-field"><label for="receipt-category">구분</label><select id="receipt-category" name="category" required ${locked ? "disabled" : ""}><option value="transport">교통비</option><option value="parking">주차비</option></select></div>
+        <div class="form-field"><label for="receipt-amount">금액</label><div class="input-suffix"><input id="receipt-amount" name="amount" type="number" min="1" max="10000000" step="1" inputmode="numeric" required ${locked ? "disabled" : ""} /><span>원</span></div></div>
+        <div class="form-field"><label for="receipt-file">영수증 파일</label><input id="receipt-file" name="file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required ${locked ? "disabled" : ""} /></div>
+        <div class="form-field full"><label for="receipt-note">메모</label><input id="receipt-note" name="note" maxlength="200" placeholder="예: 8월 12일 수업 이동" ${locked ? "disabled" : ""} /></div>
+        <div class="receipt-submit-actions"><span class="form-help">이미지는 전송 전에 자동으로 축소됩니다.</span><button class="button button-primary" type="submit" ${locked ? "disabled" : ""}><i data-lucide="upload"></i><span>영수증 제출</span></button></div>
+      </form>
+    </section>
+    <section class="metrics compact-metrics" aria-label="영수증 요약">
+      ${metric("hourglass", "검토 대기", `${receipts.filter((item) => item.status === "pending").length}건`, "관리자 확인 전")}
+      ${metric("train-front", "승인 교통비", formatWon(totals.transport), "급여 자동 합산")}
+      ${metric("square-parking", "승인 주차비", formatWon(totals.parking), "급여 자동 합산")}
+      ${metric("wallet-cards", "승인 합계", formatWon(totals.total), "이번 달 합계")}
+    </section>
+    <section class="content-section">
+      <div class="section-heading"><div><h2>제출 내역</h2><p>승인된 영수증은 상태와 금액만 확인할 수 있습니다.</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>사용일</th><th>구분</th><th class="numeric">금액</th><th>상태</th><th>관리자 메모</th><th aria-label="작업"></th></tr></thead><tbody>${receipts.map((receipt) => `<tr><td>${e(receipt.expenseDate)}</td><td>${e(EXPENSE_CATEGORY_LABELS[receipt.category] || receipt.category)}</td><td class="numeric"><strong>${formatWon(receipt.amount)}</strong></td><td><span class="status-chip ${receiptStatusClass(receipt.status)}">${e(EXPENSE_RECEIPT_STATUS_LABELS[receipt.status] || receipt.status)}</span></td><td>${e(receipt.reviewNote || "-")}</td><td><div class="row-actions">${receipt.status !== "approved" ? `<button class="icon-button" type="button" title="영수증 보기" aria-label="영수증 보기" data-view-receipt="${e(receipt.id)}"><i data-lucide="file-search"></i></button>` : ""}${receipt.status === "pending" && !locked ? `<button class="icon-button icon-button-danger" type="button" title="제출 취소" aria-label="영수증 제출 취소" data-delete-receipt="${e(receipt.id)}"><i data-lucide="trash-2"></i></button>` : ""}</div></td></tr>`).join("") || emptyRow(6)}</tbody></table></div>
+    </section>
+  ` : `<div class="empty-state">연결된 선생님 정보가 없습니다.</div>`;
+  bindCommonControls();
+  document.querySelector("#receipt-submit-form")?.addEventListener("submit", submitExpenseReceipt);
+  bindReceiptFileActions();
+}
+
+function renderAdminReceipts() {
+  const run = runForMonth(state.month);
+  const locked = run.status === "published";
+  const receipts = receiptsForMonth(state.month).filter((receipt) => {
+    const teacher = teacherById(receipt.teacherId);
+    return !state.search || teacher?.name?.includes(state.search);
+  });
+  const pending = receipts.filter((receipt) => receipt.status === "pending");
+  const approved = receipts.filter((receipt) => receipt.status === "approved");
+  const transportTotal = approved.filter((item) => item.category === "transport").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const parkingTotal = approved.filter((item) => item.category === "parking").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  setPage("영수증 관리", formatMonth(state.month), `<button class="button button-secondary" type="button" data-action="connect-drive"><i data-lucide="hard-drive"></i><span>Google Drive 연결</span></button>`);
+  elements.content.innerHTML = `
+    <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="영수증 월" data-control="month" /><span class="status-chip ${e(run.status)}">${statusLabel(run.status)}</span><span class="toolbar-spacer"></span><div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="선생님 검색" aria-label="선생님 검색" data-control="search" /></div></div>
+    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? "확정된 급여월의 영수증 상태는 변경할 수 없습니다. 수정하려면 먼저 급여 확정을 취소해 주세요." : "영수증 파일은 비공개 Google Drive에 저장됩니다. 처리 방식을 선택해 승인하면 교통비 또는 주차비에 자동 합산됩니다."}</span></div>
+    <section class="metrics compact-metrics" aria-label="영수증 검토 요약">
+      ${metric("hourglass", "검토 대기", `${pending.length}건`, "승인 또는 반려 필요")}
+      ${metric("train-front", "승인 교통비", formatWon(transportTotal), `${approved.filter((item) => item.category === "transport").length}건`)}
+      ${metric("square-parking", "승인 주차비", formatWon(parkingTotal), `${approved.filter((item) => item.category === "parking").length}건`)}
+      ${metric("receipt-text", "전체 제출", `${receipts.length}건`, formatMonth(state.month))}
+    </section>
+    <section class="content-section">
+      <div class="section-heading"><div><h2>제출 영수증</h2><p>증빙과 금액을 확인한 뒤 회계 처리 방식을 지정합니다.</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>사용일</th><th>구분</th><th class="numeric">금액</th><th>제출 시각</th><th>처리 방식</th><th>상태</th><th aria-label="작업"></th></tr></thead><tbody>${receipts.map((receipt) => { const teacher = teacherById(receipt.teacherId); return `<tr class="${state.selectedReceiptId === receipt.id ? "selected-row" : ""}"><td>${teacher ? personCell(teacher) : "선생님 미확인"}</td><td>${e(receipt.expenseDate)}</td><td>${e(EXPENSE_CATEGORY_LABELS[receipt.category] || receipt.category)}</td><td class="numeric"><strong>${formatWon(receipt.amount)}</strong></td><td>${e(formatDateTime(receipt.submittedAt))}</td><td>${receipt.status === "approved" ? e(TREATMENT_LABELS[receipt.treatment] || receipt.treatment) : "-"}</td><td><span class="status-chip ${receiptStatusClass(receipt.status)}">${e(EXPENSE_RECEIPT_STATUS_LABELS[receipt.status] || receipt.status)}</span></td><td><div class="row-actions"><button class="icon-button" type="button" title="영수증 보기" aria-label="영수증 보기" data-view-receipt="${e(receipt.id)}"><i data-lucide="file-search"></i></button>${receipt.status === "pending" ? `<button class="icon-button" type="button" title="검토" aria-label="영수증 검토" data-review-receipt="${e(receipt.id)}" ${locked ? "disabled" : ""}><i data-lucide="clipboard-check"></i></button>` : ""}</div></td></tr>`; }).join("") || emptyRow(8)}</tbody></table></div>
+    </section>
+  `;
+  bindCommonControls();
+  const driveButton = elements.topbarActions.querySelector("[data-action='connect-drive']");
+  driveButton?.addEventListener("click", connectReceiptDrive);
+  refreshReceiptDriveStatus(driveButton);
+  elements.content.querySelectorAll("[data-review-receipt]").forEach((button) => button.addEventListener("click", () => {
+    const receipt = state.data.expenseReceipts.find((item) => item.id === button.dataset.reviewReceipt);
+    if (receipt) openReceiptReviewModal(receipt);
+  }));
+  bindReceiptFileActions();
+}
+
+async function submitExpenseReceipt(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(form));
+  const file = form.elements.file.files[0];
+  const draft = { month: state.month, expenseDate: data.expenseDate, category: data.category, amount: Number(data.amount), note: data.note.trim() };
+  const draftError = validateExpenseReceiptDraft(draft);
+  const fileError = file && file.type.startsWith("image/") && file.size > RECEIPT_MAX_FILE_BYTES
+    ? (RECEIPT_ALLOWED_MIME_TYPES.has(file.type) ? null : validateReceiptFile(file))
+    : validateReceiptFile(file);
+  if (draftError || fileError) {
+    showToast(draftError || fileError);
+    return;
+  }
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    const prepared = await prepareReceiptFile(file);
+    const duplicate = state.data.expenseReceipts.find((receipt) => receipt.teacherUid === state.user.uid && receipt.month === state.month && receipt.sha256 === prepared.sha256 && receipt.status !== "rejected");
+    if (duplicate) throw new Error("같은 파일이 이 달에 이미 제출되어 있습니다.");
+    const receiptId = crypto.randomUUID();
+    const teacher = teacherById(state.user.teacherId);
+    const upload = appConfig.demoMode
+      ? { fileId: `demo-${receiptId}`, fileName: prepared.file.name }
+      : await state.receiptApi.upload(prepared.file, { receiptId, teacherId: teacher.id, month: state.month, category: draft.category });
+    const receipt = {
+      id: receiptId,
+      teacherId: teacher.id,
+      teacherUid: state.user.uid,
+      ...draft,
+      status: "pending",
+      treatment: "pending",
+      insuranceCovered: false,
+      fileId: upload.fileId,
+      fileName: upload.fileName || prepared.file.name,
+      mimeType: prepared.file.type,
+      sizeBytes: prepared.file.size,
+      sha256: prepared.sha256,
+      submittedAt: new Date().toISOString(),
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewNote: ""
+    };
+    if (state.store) await state.store.saveExpenseReceipt(receipt);
+    state.data.expenseReceipts.push(receipt);
+    showToast(`${EXPENSE_CATEGORY_LABELS[receipt.category]} 영수증을 제출했습니다.`);
+    renderTeacherReceipts();
+  } catch (error) {
+    showToast(error.message || "영수증을 제출하지 못했습니다.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function bindReceiptFileActions() {
+  elements.content.querySelectorAll("[data-view-receipt]").forEach((button) => button.addEventListener("click", () => {
+    const receipt = state.data.expenseReceipts.find((item) => item.id === button.dataset.viewReceipt);
+    if (receipt) openReceiptFile(receipt);
+  }));
+  elements.content.querySelectorAll("[data-delete-receipt]").forEach((button) => button.addEventListener("click", () => {
+    const receipt = state.data.expenseReceipts.find((item) => item.id === button.dataset.deleteReceipt);
+    if (receipt) deleteExpenseReceipt(receipt);
+  }));
+}
+
+async function openReceiptFile(receipt) {
+  if (state.user.role === "teacher" && receipt.status === "approved") {
+    showToast("승인된 영수증 파일은 관리자만 보관·열람합니다.");
+    return;
+  }
+  const preview = window.open("", "_blank");
+  try {
+    if (appConfig.demoMode) throw new Error("데모 파일은 열 수 없습니다.");
+    const blob = await state.receiptApi.fetchFile(receipt.id);
+    const url = URL.createObjectURL(blob);
+    if (preview) preview.location.href = url;
+    else {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    preview?.close();
+    showToast(error.message || "영수증 파일을 열지 못했습니다.");
+  }
+}
+
+async function deleteExpenseReceipt(receipt) {
+  if (!window.confirm(`${EXPENSE_CATEGORY_LABELS[receipt.category]} ${formatWon(receipt.amount)} 제출을 취소하시겠습니까?`)) return;
+  try {
+    if (!appConfig.demoMode) await state.receiptApi.deleteFile(receipt.id);
+    if (state.store) await state.store.deleteExpenseReceipt(receipt);
+    state.data.expenseReceipts = state.data.expenseReceipts.filter((item) => item.id !== receipt.id);
+    showToast("영수증 제출을 취소했습니다.");
+    renderTeacherReceipts();
+  } catch (error) {
+    showToast(error.message || "영수증 제출을 취소하지 못했습니다.");
+  }
+}
+
+function openReceiptReviewModal(receipt) {
+  const teacher = teacherById(receipt.teacherId);
+  openModal(`${teacher?.name || "선생님"} 영수증 검토`, `
+    <div class="receipt-review-summary"><div><span>사용일</span><strong>${e(receipt.expenseDate)}</strong></div><div><span>구분</span><strong>${e(EXPENSE_CATEGORY_LABELS[receipt.category])}</strong></div><div><span>금액</span><strong>${formatWon(receipt.amount)}</strong></div></div>
+    <div class="receipt-review-file"><button class="button button-secondary" type="button" data-view-review-file><i data-lucide="file-search"></i><span>영수증 파일 확인</span></button><span>${e(receipt.fileName || "영수증 파일")}</span></div>
+    <form id="receipt-review-form" class="form-grid">
+      <div class="form-field full"><label for="receipt-treatment">회계 처리 방식</label><select id="receipt-treatment" name="treatment" required><option value="">선택해 주세요</option>${Object.entries(TREATMENT_LABELS).filter(([value]) => value !== "pending").map(([value, label]) => `<option value="${e(value)}">${e(label)}</option>`).join("")}</select><span class="form-help">확실하지 않으면 승인하지 말고 세무사 확인 후 처리하세요.</span></div>
+      <label class="checkbox-row form-field full"><input name="insuranceCovered" type="checkbox" /> 보험료 산정 기준에 포함</label>
+      <div class="form-field full"><label for="receipt-review-note">관리자 메모</label><input id="receipt-review-note" name="reviewNote" maxlength="200" placeholder="반려 사유 또는 확인 메모" /></div>
+    </form>
+    <div class="receipt-review-reject"><button class="button button-danger" type="button" data-reject-receipt><i data-lucide="x-circle"></i><span>반려</span></button></div>
+  `, "승인", async () => {
+    const form = document.querySelector("#receipt-review-form");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    await reviewExpenseReceipt(receipt, { status: "approved", treatment: data.treatment, insuranceCovered: form.elements.insuranceCovered.checked, reviewNote: data.reviewNote.trim() });
+  });
+  elements.modalRoot.querySelector("[data-view-review-file]")?.addEventListener("click", () => openReceiptFile(receipt));
+  elements.modalRoot.querySelector("[data-reject-receipt]")?.addEventListener("click", async (event) => {
+    const form = document.querySelector("#receipt-review-form");
+    const note = form.elements.reviewNote.value.trim();
+    if (!note) {
+      showToast("선생님이 확인할 반려 사유를 입력해 주세요.");
+      form.elements.reviewNote.focus();
+      return;
+    }
+    event.currentTarget.disabled = true;
+    try {
+      await reviewExpenseReceipt(receipt, { status: "rejected", treatment: "pending", insuranceCovered: false, reviewNote: note });
+      closeModal();
+    } catch (error) {
+      showToast(error.message || "영수증을 반려하지 못했습니다.");
+      event.currentTarget.disabled = false;
+    }
+  });
+}
+
+async function reviewExpenseReceipt(receipt, review) {
+  if (runForMonth(receipt.month).status === "published") throw new Error("확정된 급여월의 영수증은 처리할 수 없습니다.");
+  const notification = state.data.adminNotifications.find((item) => item.receiptId === receipt.id);
+  if (notification?.status === "unread" && state.store) {
+    await state.store.markAdminNotificationRead(notification.id);
+    Object.assign(notification, { status: "read", readAt: new Date().toISOString(), readBy: state.user.uid });
+  }
+  if (state.store) await state.store.reviewExpenseReceipt(receipt, review);
+  Object.assign(receipt, review, {
+    treatment: review.status === "approved" ? review.treatment : "pending",
+    insuranceCovered: review.status === "approved" && review.insuranceCovered === true,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: state.user.uid
+  });
+  showToast(review.status === "approved" ? "영수증을 승인해 월 급여에 합산했습니다." : "영수증을 반려했습니다.");
+  renderAdminReceipts();
+}
+
+async function connectReceiptDrive() {
+  try {
+    if (appConfig.demoMode) throw new Error("실제 Firebase 모드에서 연결할 수 있습니다.");
+    const { authorizationUrl } = await state.receiptApi.connectUrl();
+    window.location.href = authorizationUrl;
+  } catch (error) {
+    showToast(error.message || "Google Drive 연결을 시작하지 못했습니다.");
+  }
+}
+
+async function refreshReceiptDriveStatus(button) {
+  if (!button || appConfig.demoMode || !state.receiptApi?.configured) return;
+  try {
+    const status = await state.receiptApi.status();
+    if (!status.connected || !button.isConnected) return;
+    button.querySelector("span").textContent = "Google Drive 연결됨";
+    button.querySelector("i")?.setAttribute("data-lucide", "hard-drive-download");
+    button.title = "다른 관리자 Drive 계정으로 다시 연결";
+    refreshIcons();
+  } catch (error) {
+    button.title = error.message || "Google Drive 연결 상태를 확인하지 못했습니다.";
+  }
+}
+
+function receiptStatusClass(status) {
+  return status === "approved" ? "published" : status === "rejected" ? "cancelled" : "pending";
+}
+
+function lastDayOfMonth(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+}
+
 function renderPayslips() {
   const teacherId = state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId;
   const teacher = teacherById(teacherId);
@@ -893,11 +1226,14 @@ function payrollForTeacher(teacherId, month) {
   if (!teacher) return null;
   const settings = teacherPaySettings(teacher);
   const key = `${month}:${teacherId}`;
-  const override = mergeMonthlyWorkInput(
+  const override = {
+    ...mergeMonthlyWorkInput(
     settings.businessRates,
     state.data.overrides[key],
     state.data.monthlyWorkInputs[key]
-  );
+    ),
+    approvedReceiptEarnings: approvedReceiptEarnings(state.data.expenseReceipts, teacher.id, month)
+  };
   const earningLines = createMonthlyEarningLines({ ...teacher, businessRates: settings.businessRates }, month, override);
   if (!earningLines.length) return null;
   return {
@@ -944,7 +1280,10 @@ function monthlyPayAmounts(teacher, month) {
     state.data.overrides[key],
     state.data.monthlyWorkInputs[key]
   );
-  return getMonthlyPayAmounts({ ...teacher, businessRates: settings.businessRates }, override);
+  return getMonthlyPayAmounts({ ...teacher, businessRates: settings.businessRates }, {
+    ...override,
+    approvedReceiptEarnings: approvedReceiptEarnings(state.data.expenseReceipts, teacher.id, month)
+  });
 }
 
 function monthlyWorkInput(teacherId, month = state.month) {
@@ -2112,10 +2451,12 @@ function openMonthlyPayModal(teacher) {
       <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="monthly-transport-treatment">교통비 처리</label><select id="monthly-transport-treatment" name="transportTreatment">${treatmentOptions(amounts.transportTreatment)}</select></div>
       <label class="checkbox-row form-field"><input name="transportInsuranceCovered" type="checkbox" ${amounts.transportInsuranceCovered ? "checked" : ""} /> 교통비를 보험 기준에 포함</label>
+      ${amounts.receiptTransportAmount > 0 ? `<div class="form-field"><label>승인 영수증 교통비</label><input type="text" value="${e(formatWon(amounts.receiptTransportAmount))}" readonly /><span class="form-help">영수증 관리에서 승인된 금액이며 자동 합산됩니다.</span></div><div class="form-field"><label>교통비 합계</label><input type="text" value="${e(formatWon(amounts.transportAmount))}" readonly /></div>` : ""}
       <div class="form-field full form-section-heading"><strong>주차비</strong><span class="form-help">해당 월에 지급할 주차비를 교통비와 별도로 입력합니다.</span></div>
-      <div class="form-field"><label for="monthly-parking">주차비</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1000" value="${e(amounts.parkingAmount)}" /><span>원</span></div></div>
+      <div class="form-field"><label for="monthly-parking">직접 입력 주차비</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1" value="${e(amounts.manualParkingAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="monthly-parking-treatment">주차비 처리</label><select id="monthly-parking-treatment" name="parkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></div>
       <label class="checkbox-row form-field"><input name="parkingInsuranceCovered" type="checkbox" ${amounts.parkingInsuranceCovered ? "checked" : ""} /> 주차비를 보험 기준에 포함</label>
+      ${amounts.receiptParkingAmount > 0 ? `<div class="form-field"><label>승인 영수증 주차비</label><input type="text" value="${e(formatWon(amounts.receiptParkingAmount))}" readonly /><span class="form-help">영수증 관리에서 승인된 금액이며 자동 합산됩니다.</span></div><div class="form-field"><label>주차비 합계</label><input type="text" value="${e(formatWon(amounts.parkingAmount))}" readonly /></div>` : ""}
       ${additionalEarningsEditorHtml(amounts.additionalEarnings, "monthly-additional-earnings")}
       <div class="form-field full"><label for="monthly-pay-note">변경 메모</label><input id="monthly-pay-note" name="grossPayNote" maxlength="200" value="${e(current.grossPayNote || "")}" placeholder="예: 보강 수업 2시간 포함" /><span class="form-help">개인정보나 상세 급여 내역을 적지 말고 변경 이유만 간단히 기록합니다.</span></div>
     </form>
@@ -2844,5 +3185,4 @@ function isOfficialPublicSourceUrl(value) {
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
-
 

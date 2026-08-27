@@ -1,6 +1,8 @@
 export const appConfig = {
   academyName: "학원 급여 포털",
   portalUrl: "https://payroll.robertson.kr/",
+  receiptApiUrl: "https://payroll-api.robertson.kr",
+  receiptRetentionYears: null,
   demoMode: false,
   assistant: {
     provider: "gemini",

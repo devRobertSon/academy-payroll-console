@@ -48,6 +48,10 @@ async function checkRequiredFiles() {
     "src/lib/phone-number.js",
     "src/lib/teacher-self-service.js",
     "src/lib/admin-notifications.js",
+    "src/lib/expense-receipts.js",
+    "src/lib/receipt-api.js",
+    "cloudflare/receipt-worker/src/index.js",
+    "docs/google-drive-receipts-setup.md",
     ".nojekyll"
   ];
   for (const path of required) {
@@ -155,6 +159,8 @@ async function checkHtmlAssets() {
       "./data/demo-data.js",
       "./data/nts-tax-policy.js",
       "./lib/admin-notifications.js",
+      "./lib/expense-receipts.js",
+      "./lib/receipt-api.js",
       "./lib/firebase-store.js",
       "./lib/payroll.js",
       "./lib/payroll-lifecycle.js",
@@ -167,6 +173,9 @@ async function checkHtmlAssets() {
         failures.push(`Changed application module is missing the release version: ${modulePath}`);
       }
     }
+  }
+  for (const receiptSurface of ["영수증 관리", "영수증 제출", "approvedReceiptEarnings", "openReceiptReviewModal", "receiptApi.upload"]) {
+    if (!app.includes(receiptSurface)) failures.push(`Expense receipt surface is missing: ${receiptSurface}`);
   }
 }
 
@@ -258,7 +267,10 @@ async function checkLifecycleSecurity() {
     "match /payslipVersions/{versionId}",
     "match /payrollCancellations/{cancellationId}",
     "request.resource.data.status == 'cancelled'",
-    "request.resource.data.revision == resource.data.revision + 1"
+    "request.resource.data.revision == resource.data.revision + 1",
+    "match /expenseReceipts/{receiptId}",
+    "validTeacherExpenseReceiptNotification",
+    "request.resource.data.status in ['approved', 'rejected']"
   ];
   for (const rule of requiredRules) {
     if (!rules.includes(rule)) failures.push(`Payroll lifecycle security rule is missing: ${rule}`);
@@ -286,8 +298,10 @@ async function checkLifecycleSecurity() {
     if (!lifecycle.includes(safeguard)) failures.push(`Teacher deletion safeguard is missing: ${safeguard}`);
   }
   if ((rules.match(/allow delete: if isAdmin\(\);/g) || []).length < 2
-    || (rules.match(/allow delete: if isAdmin\(\) && monthHasNoApprovedPayroll/g) || []).length !== 3
+    || (rules.match(/monthHasNoApprovedPayroll\(resource\.data\.month\)/g) || []).length < 3
     || !rules.includes("function monthHasNoApprovedPayroll")
+    || !rules.includes("match /expenseReceipts/{receiptId}")
+    || !rules.includes("resource.data.status == 'pending'")
     || !store.includes('action: "TEACHER_DELETED"')
     || !store.includes('new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"])')
     || !store.includes('batch.delete(firestoreSdk.doc(db, "users", teacher.authUid))')) {
@@ -580,5 +594,4 @@ async function exists(path) {
     return false;
   }
 }
-
 

@@ -519,6 +519,7 @@ function renderTeachers() {
     state.selectedTeacherId = row.dataset.selectTeacher;
     renderTeachers();
   }));
+  refreshIcons();
 }
 
 function renderLedger() {

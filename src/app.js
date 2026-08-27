@@ -1324,16 +1324,16 @@ function treatmentOptions(selected = "pending") {
 
 function insuranceEditorHtml(settings, prefix) {
   return `<div class="form-field full insurance-editor-field">
-    <div class="editor-heading"><label>4대보험 가입·신고 기준</label><span class="form-help">가입 항목을 선택하면 월 지급액이 신고 기준액으로 자동 입력됩니다.</span></div>
+    <div class="editor-heading"><label>4대보험 가입 설정</label><span class="form-help">가입 항목을 선택하면 월 지급액을 기준으로 예상 보험료가 자동 계산됩니다.</span></div>
     <div class="insurance-editor">
-      <div class="insurance-setting-head" aria-hidden="true"><span>보험</span><span>신고 기준액</span><span>적용 기간</span><span>예상 보험료</span></div>
+      <div class="insurance-setting-head" aria-hidden="true"><span>보험</span><span>예상 보험료</span><span>적용 기간</span></div>
       ${Object.entries(INSURANCE_LABELS).map(([key, label]) => {
       const item = settings?.[key] || {};
       return `<div class="insurance-setting-row">
         <label class="checkbox-row"><input name="${prefix}-${key}-enrolled" type="checkbox" ${item.enrolled ? "checked" : ""} /> ${e(label)} 가입</label>
-        <div class="input-suffix"><input name="${prefix}-${key}-base" type="number" min="0" step="1" value="${item.defaultBaseAmount ?? ""}" placeholder="신고 기준액" aria-label="${e(label)} 기본 신고 기준액" /><span>원</span></div>
-        <div class="insurance-period"><input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} 적용 시작일" /><span aria-hidden="true">~</span><input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} 적용 종료일" /></div>
         <div class="insurance-row-premium"><span>예상 보험료</span><strong data-insurance-row-estimate="${key}">0원</strong></div>
+        <div class="insurance-period"><input name="${prefix}-${key}-from" type="date" value="${e(item.effectiveFrom || "")}" aria-label="${e(label)} 적용 시작일" /><span aria-hidden="true">~</span><input name="${prefix}-${key}-to" type="date" value="${e(item.effectiveTo || "")}" aria-label="${e(label)} 적용 종료일" /></div>
+        <input name="${prefix}-${key}-base" type="hidden" value="${item.defaultBaseAmount ?? ""}" />
       </div>`;
     }).join("")}</div>
     <div class="insurance-auto-preview" data-insurance-preview="${e(prefix)}" aria-live="polite">
@@ -1348,7 +1348,7 @@ function insuranceEditorHtml(settings, prefix) {
         <div><span>소득세</span><strong data-tax-estimate="incomeTax">0원</strong></div>
         <div><span>지방소득세</span><strong data-tax-estimate="localIncomeTax">0원</strong></div>
       </div>
-      <span class="form-help">신고 기준액은 1원 단위로 입력할 수 있습니다. 자동 보험료는 공단 기준에 따라 국민연금 기준액의 천원 미만과 보험료의 10원 미만을 절사합니다. 산재보험은 사업주 부담이며 실제 공단 고지액을 최종 확인하세요.</span>
+      <span class="form-help">자동 보험료는 공단 기준에 따라 국민연금 계산 기준의 천원 미만과 보험료의 10원 미만을 절사합니다. 산재보험은 사업주 부담이며 실제 공단 고지액을 최종 확인하세요.</span>
     </div>
     <span class="form-help">건강보험 항목은 건강보험과 장기요양을 함께 관리합니다. 종료일이 없으면 계속 적용됩니다.</span>
   </div>`;
@@ -1384,13 +1384,13 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
     effectiveFrom: form.elements[`${prefix}-${key}-from`],
     effectiveTo: form.elements[`${prefix}-${key}-to`]
   }));
-  fields.forEach(({ base }) => { base.dataset.autoBase = base.value === "" ? "true" : "false"; });
+  fields.forEach(({ base }) => { base.dataset.autoBase = "true"; });
 
   const update = (syncBases = false) => {
     const monthlyPay = Math.max(0, Math.round(Number(payInput.value) || 0));
     if (syncBases) {
       fields.forEach(({ enrolled, base }) => {
-        if (enrolled.checked && (base.value === "" || base.dataset.autoBase === "true")) {
+        if (enrolled.checked) {
           base.value = String(monthlyPay);
           base.dataset.autoBase = "true";
         }
@@ -1433,9 +1433,8 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
   };
 
   payInput.addEventListener("input", () => update(true));
-  fields.forEach(({ enrolled, base, effectiveFrom, effectiveTo }) => {
+  fields.forEach(({ enrolled, effectiveFrom, effectiveTo }) => {
     enrolled.addEventListener("change", () => update(true));
-    base.addEventListener("input", () => { base.dataset.autoBase = "false"; update(); });
     effectiveFrom.addEventListener("change", () => update());
     effectiveTo.addEventListener("change", () => update());
   });
@@ -1793,9 +1792,9 @@ function openTeacherModal() {
       </fieldset>
       <div class="form-field full income-composition-empty" data-income-empty>계약 요약을 선택하면 필요한 급여·보험 입력란이 표시됩니다.</div>
       <section class="conditional-form-section full" data-income-section="employee" hidden>
-        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입·신고 기준과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입 기간과 근로소득 원천징수 정보를 입력합니다.</span></div>
         <div class="form-grid">
-          <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 신고 기준액과 예상 근로자 부담액이 자동 계산됩니다.</span></div>
+          <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(getTeacherPaySettings({ incomeComposition: "employee" }).insuranceSettings, "teacher")}
           <div class="form-field"><label for="teacher-dependents">공제대상가족 수</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
           <div class="form-field"><label for="teacher-children">8~20세 자녀 수</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
@@ -1996,9 +1995,9 @@ function openTeacherEditModal(teacher) {
         <span class="form-help">계약 유형을 바꾸면 선택한 유형에 필요한 항목만 저장되고 급여 계산에 사용됩니다.</span>
       </fieldset>
       <section class="conditional-form-section full" data-income-section="employee" hidden>
-        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입·신고 기준과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입 기간과 근로소득 원천징수 정보를 입력합니다.</span></div>
         <div class="form-grid">
-          <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 자동 입력된 신고 기준액은 필요하면 보험별로 수정할 수 있습니다.</span></div>
+          <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험의 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
           <div class="form-field"><label for="teacher-edit-dependents">공제대상가족 수</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
           <div class="form-field"><label for="teacher-edit-children">8~20세 자녀 수</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
@@ -2845,4 +2844,5 @@ function isOfficialPublicSourceUrl(value) {
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
+
 

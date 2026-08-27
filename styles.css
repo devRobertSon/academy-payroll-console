@@ -368,9 +368,9 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .conditional-section-heading strong { color: var(--brand-dark); font-size: 12px; }
 .conditional-section-heading span { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .insurance-editor { display: grid; gap: 8px; }
-.insurance-setting-head, .insurance-setting-row { display: grid; grid-template-columns: minmax(140px, .9fr) minmax(150px, 1fr) minmax(270px, 1.8fr) minmax(112px, .75fr); align-items: center; gap: 8px; }
+.insurance-setting-head, .insurance-setting-row { display: grid; grid-template-columns: minmax(140px, .9fr) minmax(112px, .75fr) minmax(270px, 1.8fr); align-items: center; gap: 8px; }
 .insurance-setting-head { padding: 0 9px; color: var(--muted); font-size: 10px; font-weight: 700; }
-.insurance-setting-head span:last-child { text-align: right; }
+.insurance-setting-head span:nth-child(2) { text-align: right; }
 .insurance-setting-row { padding: 9px; border: 1px solid var(--line); background: var(--surface-subtle); }
 .insurance-setting-row input { min-width: 0; }
 .insurance-period { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; }
@@ -515,4 +515,5 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .payslip-layout { display: block; }
   .payslip-sheet { min-height: 0; border: 0; box-shadow: none; }
 }
+
 

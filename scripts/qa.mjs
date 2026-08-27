@@ -115,10 +115,17 @@ async function checkHtmlAssets() {
     failures.push("Teacher monthly pay must accept one-won increments.");
   }
   if (!app.includes("function bindInsuranceEditorAutomation") || !app.includes("data-insurance-preview")) {
-    failures.push("Teacher insurance settings must provide automatic bases and deduction previews.");
+    failures.push("Teacher insurance settings must provide automatic deduction previews.");
   }
   if (!app.includes("base.value = String(monthlyPay)") || !app.includes("update(true);")) {
-    failures.push("Checked teacher insurance rows must immediately show the monthly pay as their reporting base.");
+    failures.push("Checked teacher insurance rows must use the monthly pay as their automatic calculation base.");
+  }
+  const insuranceEditor = app.slice(app.indexOf("function insuranceEditorHtml"), app.indexOf("function readInsuranceSettings"));
+  if (!insuranceEditor.includes("<span>보험</span><span>예상 보험료</span><span>적용 기간</span>")) {
+    failures.push("Insurance setting columns must be ordered as insurance, estimated premium, and period.");
+  }
+  if (!insuranceEditor.includes('name="${prefix}-${key}-base" type="hidden"') || insuranceEditor.includes("신고 기준액")) {
+    failures.push("Teacher registration must not expose a reporting-base field.");
   }
   if (!app.includes("data-insurance-row-estimate") || !app.includes("적용 기간") || !app.includes("예상 보험료")) {
     failures.push("Each insurance setting row must label its period and show the calculated premium.");
@@ -573,4 +580,5 @@ async function exists(path) {
     return false;
   }
 }
+
 

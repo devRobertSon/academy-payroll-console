@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260827-receipts-r30";
-import { helpArticles } from "./data/help-content.js?v=20260827-receipts-r30";
+import { appConfig } from "./config.js?v=20260828-auto-mail-r31";
+import { helpArticles } from "./data/help-content.js?v=20260828-auto-mail-r31";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260827-receipts-r30";
+} from "./data/demo-data.js?v=20260828-auto-mail-r31";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260827-receipts-r30";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260827-receipts-r30";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260827-receipts-r30";
+} from "./data/nts-tax-policy.js?v=20260828-auto-mail-r31";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-auto-mail-r31";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-auto-mail-r31";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260827-receipts-r30";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-auto-mail-r31";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260827-receipts-r30";
+} from "./lib/payroll-lifecycle.js?v=20260828-auto-mail-r31";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260827-receipts-r30";
+} from "./lib/payroll.js?v=20260828-auto-mail-r31";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260827-receipts-r30";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260827-receipts-r30";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260827-receipts-r30";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260827-receipts-r30";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-auto-mail-r31";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-auto-mail-r31";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-auto-mail-r31";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-auto-mail-r31";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,14 +63,19 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260827-receipts-r30";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260827-receipts-r30";
+} from "./lib/expense-receipts.js?v=20260828-auto-mail-r31";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-auto-mail-r31";
+import {
+  pendingPortalNoticeTeachers,
+  PORTAL_NOTICE_CHANNEL,
+  portalNoticeDeliveryId
+} from "./lib/payslip-notifications.js?v=20260828-auto-mail-r31";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260827-receipts-r30";
+} from "./lib/teacher-self-service.js?v=20260828-auto-mail-r31";
 
 const state = {
   user: null,
@@ -266,6 +271,11 @@ async function openWorkspace(user) {
     pageUrl.searchParams.delete("drive");
     window.history.replaceState({}, "", pageUrl);
   }
+  if (user.role === "admin" && pageUrl.searchParams.get("gmail") === "connected") {
+    showToast("급여 안내 Gmail 발송 계정을 연결했습니다.");
+    pageUrl.searchParams.delete("gmail");
+    window.history.replaceState({}, "", pageUrl);
+  }
 }
 
 function hydrateFirebaseData(loaded) {
@@ -429,10 +439,14 @@ function renderDashboard() {
   const payrolls = payrollsForMonth(state.month);
   const summary = summarizePayroll(payrolls.map((item) => item.payroll));
   const run = runForMonth(state.month);
+  const pendingNotices = run.status === "published"
+    ? pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, state.month, artifactRevision(run))
+    : [];
   const cancellations = cancellationsForMonth(state.month);
   const unconfirmedItems = payrolls.flatMap(({ teacher, payroll }) => (payroll.unconfirmedEarningLines || []).map((line) => `${teacher.name} ${line.subjectName}`));
   setPage("급여 대시보드", formatMonth(state.month), `
-    <button class="button button-secondary" type="button" data-action="copy-notice" ${run.status !== "published" ? "disabled" : ""}><i data-lucide="send"></i><span>안내문 복사</span></button>
+    <button class="button button-secondary" type="button" data-action="connect-gmail"><i data-lucide="mail-check"></i><span>발송 계정 연결</span></button>
+    ${run.status === "published" ? `<button class="button button-secondary" type="button" data-action="send-pending-notices" ${pendingNotices.length ? "" : "disabled"}><i data-lucide="send"></i><span>미발송 ${pendingNotices.length}명 발송</span></button>` : ""}
     <button class="button button-secondary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>내역서 저장</span></button>
     ${run.status === "published"
       ? `<button class="button button-danger" type="button" data-action="cancel-run"><i data-lucide="rotate-ccw"></i><span>확정 취소</span></button>`
@@ -472,9 +486,12 @@ function renderDashboard() {
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
+  const gmailButton = elements.topbarActions.querySelector("[data-action='connect-gmail']");
+  gmailButton?.addEventListener("click", connectGmailSender);
+  refreshGmailSenderStatus(gmailButton);
+  elements.topbarActions.querySelector("[data-action='send-pending-notices']")?.addEventListener("click", sendPendingPayslipNotices);
   elements.topbarActions.querySelector("[data-action='publish-run']")?.addEventListener("click", openPublishModal);
   elements.topbarActions.querySelector("[data-action='cancel-run']")?.addEventListener("click", openCancelPayrollModal);
-  if (run.status === "published") elements.topbarActions.querySelector("[data-action='copy-notice']").addEventListener("click", copyPayslipNotice);
   bindPayrollRows();
 }
 
@@ -1026,6 +1043,102 @@ async function refreshReceiptDriveStatus(button) {
   } catch (error) {
     button.title = error.message || "Google Drive 연결 상태를 확인하지 못했습니다.";
   }
+}
+
+async function connectGmailSender() {
+  try {
+    if (appConfig.demoMode) throw new Error("실제 Firebase 모드에서 연결할 수 있습니다.");
+    const { authorizationUrl } = await state.receiptApi.connectGmailUrl();
+    window.location.href = authorizationUrl;
+  } catch (error) {
+    showToast(error.message || "Gmail 발송 계정 연결을 시작하지 못했습니다.");
+  }
+}
+
+async function refreshGmailSenderStatus(button) {
+  if (!button || appConfig.demoMode || !state.receiptApi?.configured) return;
+  try {
+    const status = await state.receiptApi.status();
+    if (!status.gmailConnected || !button.isConnected) return;
+    button.querySelector("span").textContent = status.gmailSenderEmail
+      ? `발송: ${status.gmailSenderEmail}`
+      : "Gmail 발송 연결됨";
+    button.title = "다른 관리자 Gmail 계정으로 다시 연결";
+  } catch (error) {
+    button.title = error.message || "Gmail 발송 계정 상태를 확인하지 못했습니다.";
+  }
+}
+
+async function sendPendingPayslipNotices(event) {
+  const button = event.currentTarget;
+  const run = runForMonth(state.month);
+  const payrolls = payrollsForMonth(state.month);
+  const pending = pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, state.month, artifactRevision(run));
+  if (!pending.length) {
+    showToast("현재 확정 차수의 미발송 선생님이 없습니다.");
+    return;
+  }
+  if (!window.confirm(`${formatMonth(state.month)} 급여명세서 확인 안내를 미발송 ${pending.length}명에게 보내시겠습니까?`)) return;
+  button.disabled = true;
+  try {
+    const summary = await dispatchPortalNotices(payrolls, run);
+    showPortalNoticeSummary(summary);
+    renderDashboard();
+  } catch (error) {
+    showToast(error.message || "급여명세서 안내 메일을 발송하지 못했습니다.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function dispatchPortalNotices(payrolls, run) {
+  if (appConfig.demoMode || !state.store) return { sent: 0, alreadySent: 0, failed: 0, skipped: true };
+  if (!state.receiptApi?.configured) throw new Error("급여 안내 메일 Worker 주소가 설정되지 않았습니다.");
+  const revision = artifactRevision(run);
+  const teachers = pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, run.month, revision);
+  if (!teachers.length) return { sent: 0, alreadySent: 0, failed: 0 };
+  const response = await state.receiptApi.sendPayslipNotices({
+    month: run.month,
+    revision,
+    teacherIds: teachers.map((teacher) => teacher.id)
+  });
+  const summary = { sent: 0, alreadySent: 0, failed: 0 };
+  for (const result of response.results || []) {
+    if (!['sent', 'already_sent'].includes(result.status)) {
+      summary.failed += 1;
+      continue;
+    }
+    try {
+      const saved = await state.store.recordPayslipDelivery({
+        payslipId: payslipId(run.month, result.teacherId),
+        teacherId: result.teacherId,
+        month: run.month,
+        revision,
+        recipientEmail: result.recipientEmail,
+        channel: PORTAL_NOTICE_CHANNEL,
+        gmailMessageId: result.gmailMessageId
+      }, portalNoticeDeliveryId(run.month, result.teacherId, revision));
+      if (!state.data.payslipDeliveries.some((item) => item.id === saved.id)) {
+        state.data.payslipDeliveries.push(saved);
+      }
+      if (result.status === "sent") summary.sent += 1;
+      else summary.alreadySent += 1;
+    } catch (error) {
+      console.error("자동 급여 안내 발송 이력 저장 실패", error);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+function showPortalNoticeSummary(summary) {
+  if (summary.skipped) return;
+  const completed = summary.sent + summary.alreadySent;
+  if (summary.failed) {
+    showToast(`급여 안내 ${completed}명 처리 완료, ${summary.failed}명 실패했습니다. 미발송 안내 발송에서 다시 시도해 주세요.`);
+    return;
+  }
+  showToast(completed ? `선생님 ${completed}명에게 급여명세서 확인 안내를 발송했습니다.` : "발송할 새 안내 메일이 없습니다.");
 }
 
 function receiptStatusClass(status) {
@@ -2784,7 +2897,7 @@ function openPublishModal() {
   if (currentRun.status === "published") return;
   const revision = nextPayrollRevision(currentRun);
   const isReissue = currentRun.status === "cancelled";
-  openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."}</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
+  openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."} Gmail 발송 계정이 연결되어 있으면 확정 직후 선생님에게 포털 확인 링크를 자동 발송합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
     if (!document.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
     const missingInsuredSalary = activeTeachers().filter((teacher) => {
       const settings = teacherPaySettings(teacher);
@@ -2852,7 +2965,19 @@ function openPublishModal() {
     const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
     if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
     else state.data.payrollRuns.push(run);
-    showToast(isReissue ? `${revision}차 수정 명세서를 재발행했습니다.` : "급여를 확정하고 명세서를 공개했습니다.");
+    try {
+      const noticeSummary = await dispatchPortalNotices(payrolls, run);
+      if (noticeSummary.failed) {
+        showToast(`급여는 확정했지만 안내 메일 ${noticeSummary.failed}명을 발송하지 못했습니다. 미발송 안내 발송에서 다시 시도해 주세요.`);
+      } else if (!noticeSummary.skipped) {
+        showPortalNoticeSummary(noticeSummary);
+      } else {
+        showToast(isReissue ? `${revision}차 수정 명세서를 재발행했습니다.` : "급여를 확정하고 명세서를 공개했습니다.");
+      }
+    } catch (error) {
+      console.error("자동 급여 안내 발송 실패", error);
+      showToast(`급여는 확정했지만 안내 메일은 보내지 못했습니다: ${error.message || "발송 계정 연결을 확인해 주세요."}`);
+    }
     renderDashboard();
   });
 }
@@ -3075,12 +3200,6 @@ function openPayslipEmailModal(teacher, document, run) {
 async function copyPortalLink() {
   await copyText(portalUrl());
   showToast("선생님 포털 링크를 복사했습니다.");
-}
-
-async function copyPayslipNotice() {
-  const message = `안녕하세요. ${appConfig.academyName} ${formatMonth(state.month)} 급여명세서가 발행되었습니다.\n아래 링크에서 등록된 Google 계정으로 로그인해 확인해 주세요.\n${portalUrl()}`;
-  await copyText(message);
-  showToast("급여명세서 안내문과 로그인 링크를 복사했습니다.");
 }
 
 async function copyText(value) {

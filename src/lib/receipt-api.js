@@ -31,6 +31,16 @@ export function createReceiptApi(baseUrl, getIdToken) {
     async connectUrl() {
       return (await request("/oauth/google/start")).json();
     },
+    async connectGmailUrl() {
+      return (await request("/oauth/gmail/start")).json();
+    },
+    async sendPayslipNotices(payload) {
+      return (await request("/payslip-notices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })).json();
+    },
     async upload(file, metadata) {
       const form = new FormData();
       form.append("file", file, file.name);

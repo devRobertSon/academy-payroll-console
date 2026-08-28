@@ -107,8 +107,8 @@
         <h3>Google 로그인</h3>
         <p>관리자와 선생님 로그인에는 Google 계정의 UID, 이메일과 표시 이름을 사용합니다. 이 정보는 승인 요청 생성, 계정 연결, 사용자 표시 및 본인 급여명세서 접근 제어에만 사용합니다.</p>
         <h3>관리자 Gmail 발송</h3>
-        <p><code>https://www.googleapis.com/auth/gmail.send</code> 권한은 관리자가 확정된 급여명세서의 “이메일 발송”을 직접 선택할 때 별도 승인받습니다. 이 권한은 관리자 계정에서 수신자에게 PDF 첨부 메일을 보내는 데만 사용합니다. 서비스는 받은편지함, 기존 메일, 주소록을 읽거나 삭제하지 않습니다.</p>
-        <p>Gmail 접근 토큰은 관리자 브라우저 메모리에서만 일시적으로 사용하고 서버 데이터베이스에 저장하지 않습니다. 발송 후에는 급여명세서 식별자, 수신자 이메일, 발송 시각, 발송자 UID와 Gmail 메시지 ID만 감사 목적으로 Firestore에 기록합니다.</p>
+        <p><code>https://www.googleapis.com/auth/gmail.send</code> 권한은 관리자가 발송 계정을 연결하거나 확정된 급여명세서의 개별 첨부 발송을 선택할 때 별도 승인받습니다. 급여 확정 후 포털 확인 링크를 자동 발송하거나 관리자가 선택한 PDF 첨부 메일을 보내는 데만 사용하며, 받은편지함, 기존 메일, 주소록을 읽거나 삭제하지 않습니다.</p>
+        <p>개별 PDF 첨부 발송의 Gmail 접근 토큰은 관리자 브라우저 메모리에서만 일시적으로 사용합니다. 자동 안내 발송용 갱신 토큰은 Cloudflare KV에 암호화해 저장하며 GitHub, Firestore와 선생님 브라우저에는 제공하지 않습니다. 발송 후에는 급여명세서 식별자, 수신자 이메일, 발송 시각, 발송자 UID와 Gmail 메시지 ID만 감사 목적으로 Firestore에 기록합니다.</p>
         <h3>관리자 Google Drive 보관</h3>
         <p><code>https://www.googleapis.com/auth/drive.file</code> 권한은 이 서비스가 만든 영수증 폴더와 파일을 생성·조회·삭제하는 데만 사용합니다. 관리자 Google Drive의 다른 파일을 광범위하게 읽지 않습니다. 장기 연결용 갱신 토큰은 Cloudflare KV에 암호화해 저장하며 GitHub, Firestore와 선생님 브라우저에는 제공하지 않습니다.</p>
         <div class="legal-callout">서비스가 Google API에서 받은 정보를 사용하거나 다른 앱으로 전달하는 행위는 제한적 사용 요건을 포함한 <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer">Google API Services User Data Policy</a>를 준수합니다. Google 사용자 데이터를 판매하거나 광고, 신용평가 또는 사용자 감시에 사용하지 않습니다.</div>

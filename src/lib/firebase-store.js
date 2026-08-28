@@ -566,10 +566,15 @@ export async function createFirebaseStore(config) {
     return response.json();
   }
 
-  async function recordPayslipDelivery(delivery) {
-    const id = crypto.randomUUID();
+  async function recordPayslipDelivery(delivery, preferredId = null) {
+    const id = preferredId || crypto.randomUUID();
+    const reference = firestoreSdk.doc(db, "payslipDeliveries", id);
+    if (preferredId) {
+      const existing = await firestoreSdk.getDoc(reference);
+      if (existing.exists()) return { id, ...existing.data() };
+    }
     const sentAt = new Date().toISOString();
-    await firestoreSdk.setDoc(firestoreSdk.doc(db, "payslipDeliveries", id), {
+    await firestoreSdk.setDoc(reference, {
       ...delivery,
       sentBy: auth.currentUser.uid,
       sentAt: firestoreSdk.serverTimestamp()

@@ -1,8 +1,10 @@
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const ALLOWED_CATEGORIES = new Set(["transport", "parking"]);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_NOTICE_RECIPIENTS = 30;
 
 let certificateCache = { expiresAt: 0, certificates: null };
 
@@ -17,11 +19,25 @@ export default {
       const session = await authenticate(request, env);
       if (url.pathname === "/integration/status" && request.method === "GET") {
         requireAdmin(session);
-        return json(request, env, { connected: Boolean(await loadDriveConnection(env)) });
+        const [driveConnection, gmailConnection] = await Promise.all([loadDriveConnection(env), loadGmailConnection(env)]);
+        return json(request, env, {
+          connected: Boolean(driveConnection),
+          driveConnected: Boolean(driveConnection),
+          gmailConnected: Boolean(gmailConnection),
+          gmailSenderEmail: gmailConnection?.senderEmail || null
+        });
       }
       if (url.pathname === "/oauth/google/start" && request.method === "GET") {
         requireAdmin(session);
-        return json(request, env, await startOAuth(session, env));
+        return json(request, env, await startOAuth(session, env, "drive"));
+      }
+      if (url.pathname === "/oauth/gmail/start" && request.method === "GET") {
+        requireAdmin(session);
+        return json(request, env, await startOAuth(session, env, "gmail"));
+      }
+      if (url.pathname === "/payslip-notices" && request.method === "POST") {
+        requireAdmin(session);
+        return json(request, env, await sendPayslipNotices(request, session, env));
       }
       if (url.pathname === "/receipts" && request.method === "POST") {
         return json(request, env, await uploadReceipt(request, session, env), 201);
@@ -78,21 +94,21 @@ async function getGoogleCertificates() {
   return certificateCache.certificates;
 }
 
-async function startOAuth(session, env) {
+async function startOAuth(session, env, purpose) {
   requireKv(env);
   requireOAuthConfig(env);
+  if (!['drive', 'gmail'].includes(purpose)) throw httpError(400, "Google 연결 종류를 확인해 주세요.");
   const state = crypto.randomUUID();
-  await env.RECEIPT_KV.put(`oauth_state:${state}`, JSON.stringify({ uid: session.uid, createdAt: Date.now() }), { expirationTtl: 600 });
+  await env.RECEIPT_KV.put(`oauth_state:${state}`, JSON.stringify({ uid: session.uid, purpose, createdAt: Date.now() }), { expirationTtl: 600 });
   const redirectUri = `${env.API_ORIGIN.replace(/\/$/, "")}/oauth/google/callback`;
   const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authorizationUrl.search = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: DRIVE_SCOPE,
+    scope: purpose === "gmail" ? `openid email ${GMAIL_SEND_SCOPE}` : DRIVE_SCOPE,
     access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
+    prompt: "consent select_account",
     state
   }).toString();
   return { authorizationUrl: authorizationUrl.toString() };
@@ -105,7 +121,7 @@ async function handleOAuthCallback(request, env) {
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
   const savedState = state ? await env.RECEIPT_KV.get(`oauth_state:${state}`, "json") : null;
-  if (!savedState || !code) throw httpError(400, "Google Drive 연결 요청이 만료되었거나 취소되었습니다.");
+  if (!savedState || !code || !['drive', 'gmail'].includes(savedState.purpose)) throw httpError(400, "Google 연결 요청이 만료되었거나 취소되었습니다.");
   await env.RECEIPT_KV.delete(`oauth_state:${state}`);
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -119,14 +135,124 @@ async function handleOAuthCallback(request, env) {
     })
   });
   const tokens = await tokenResponse.json();
-  if (!tokenResponse.ok || !tokens.refresh_token) throw httpError(400, tokens.error_description || "Google Drive 장기 연결 토큰을 받지 못했습니다.");
-  await env.RECEIPT_KV.put("drive_connection", JSON.stringify({
+  if (!tokenResponse.ok || !tokens.refresh_token) throw httpError(400, tokens.error_description || "Google 장기 연결 토큰을 받지 못했습니다.");
+  const common = {
     encryptedRefreshToken: await encryptSecret(tokens.refresh_token, env.TOKEN_ENCRYPTION_KEY),
     connectedBy: savedState.uid,
-    connectedAt: new Date().toISOString(),
-    rootFolderId: null
-  }));
+    connectedAt: new Date().toISOString()
+  };
+  if (savedState.purpose === "gmail") {
+    const senderEmail = await googleAccountEmail(tokens.access_token);
+    await env.RECEIPT_KV.put("gmail_connection", JSON.stringify({ ...common, senderEmail }));
+    return Response.redirect(`${env.APP_ORIGIN.replace(/\/$/, "")}/?gmail=connected`, 302);
+  }
+  await env.RECEIPT_KV.put("drive_connection", JSON.stringify({ ...common, rootFolderId: null }));
   return Response.redirect(`${env.APP_ORIGIN.replace(/\/$/, "")}/?drive=connected`, 302);
+}
+
+async function sendPayslipNotices(request, session, env) {
+  requireKv(env);
+  const payload = await request.json().catch(() => null);
+  const month = String(payload?.month || "");
+  const revision = Number(payload?.revision);
+  const teacherIds = [...new Set(Array.isArray(payload?.teacherIds) ? payload.teacherIds.map(String) : [])];
+  if (!/^\d{4}-\d{2}$/.test(month) || !Number.isInteger(revision) || revision < 1) {
+    throw httpError(400, "급여월과 발행 차수를 확인해 주세요.");
+  }
+  if (!teacherIds.length || teacherIds.length > MAX_NOTICE_RECIPIENTS || teacherIds.some((id) => !/^[A-Za-z0-9_-]{1,128}$/.test(id))) {
+    throw httpError(400, `한 번에 ${MAX_NOTICE_RECIPIENTS}명 이하의 올바른 선생님을 선택해 주세요.`);
+  }
+
+  const paths = [
+    `payrollRuns/${month}`,
+    ...teacherIds.flatMap((teacherId) => [`teachers/${teacherId}`, `payslips/${month}_${teacherId}`])
+  ];
+  const documents = await batchGetFirestoreDocuments(env.FIREBASE_PROJECT_ID, paths, session.token);
+  const run = documents.get(`payrollRuns/${month}`);
+  if (!run || run.status !== "published" || Number(run.revision || 1) !== revision) {
+    throw httpError(409, "현재 공개된 급여 확정 차수와 발송 요청이 일치하지 않습니다.");
+  }
+
+  const connection = await loadGmailConnection(env);
+  if (!connection) throw httpError(503, "관리자가 Gmail 발송 계정을 먼저 연결해야 합니다.");
+  const accessToken = await googleAccessToken(connection, env, "Gmail 발송");
+  const results = [];
+  for (const teacherId of teacherIds) {
+    const deliveryKey = `mail_delivery:${month}:${revision}:${teacherId}`;
+    const existing = await env.RECEIPT_KV.get(deliveryKey, "json");
+    if (existing?.gmailMessageId) {
+      results.push({ teacherId, status: "already_sent", ...existing });
+      continue;
+    }
+    const teacher = documents.get(`teachers/${teacherId}`);
+    const payslip = documents.get(`payslips/${month}_${teacherId}`);
+    if (!teacher || !isEmail(teacher.email) || !payslip || payslip.status !== "published" || Number(payslip.revision || 1) !== revision) {
+      results.push({ teacherId, status: "failed", error: "선생님 이메일 또는 공개 명세서를 확인하지 못했습니다." });
+      continue;
+    }
+    try {
+      const raw = buildPortalNoticeMessage({
+        to: teacher.email,
+        teacherName: teacher.name,
+        month,
+        revision,
+        academyName: env.ACADEMY_NAME || "학원 급여 포털",
+        portalUrl: env.APP_ORIGIN
+      });
+      const sent = await sendGmailRaw(accessToken, raw);
+      const delivery = {
+        recipientEmail: teacher.email,
+        gmailMessageId: sent.id,
+        sentAt: new Date().toISOString(),
+        senderEmail: connection.senderEmail || null
+      };
+      await env.RECEIPT_KV.put(deliveryKey, JSON.stringify(delivery));
+      results.push({ teacherId, status: "sent", ...delivery });
+    } catch (error) {
+      console.error("급여 안내 메일 발송 실패", teacherId, error);
+      results.push({ teacherId, status: "failed", error: "Gmail에서 안내 메일을 발송하지 못했습니다." });
+    }
+  }
+  return { senderEmail: connection.senderEmail || null, results };
+}
+
+export function buildPortalNoticeMessage({ to, teacherName, month, revision, academyName, portalUrl }) {
+  if (!isEmail(to)) throw httpError(400, "수신자 이메일 형식을 확인해 주세요.");
+  [teacherName, academyName, portalUrl].forEach(assertSafeMailValue);
+  const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
+  const subject = `[${academyName}] ${formatKoreanMonth(month)} 급여명세서 발행 안내${revisionLabel}`;
+  const body = `안녕하세요, ${teacherName} 선생님.\n\n${academyName} ${formatKoreanMonth(month)} 급여명세서${revisionLabel}가 발행되었습니다.\n아래 포털에서 등록된 Google 계정으로 로그인해 확인하고 필요한 경우 PDF로 내려받아 주세요.\n${portalUrl}\n\n감사합니다.`;
+  const mime = [
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${bytesToBase64(new TextEncoder().encode(subject))}?=`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrapBase64(bytesToBase64(new TextEncoder().encode(body))),
+    ""
+  ].join("\r\n");
+  return bytesToBase64(new TextEncoder().encode(mime)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+}
+
+async function sendGmailRaw(accessToken, raw) {
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.id) throw httpError(502, "Gmail API 발송 요청에 실패했습니다.");
+  return result;
+}
+
+async function googleAccountEmail(accessToken) {
+  const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const profile = await response.json().catch(() => ({}));
+  if (!response.ok || !isEmail(profile.email)) throw httpError(400, "연결한 Gmail 계정의 이메일을 확인하지 못했습니다.");
+  return profile.email;
 }
 
 async function uploadReceipt(request, session, env) {
@@ -204,6 +330,20 @@ async function getFirestoreDocument(projectId, path, token) {
   return decodeFirestoreFields((await response.json()).fields || {});
 }
 
+async function batchGetFirestoreDocuments(projectId, paths, token) {
+  const prefix = `projects/${projectId}/databases/(default)/documents/`;
+  const response = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:batchGet`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ documents: paths.map((path) => `${prefix}${path}`) })
+  });
+  if (!response.ok) throw httpError(response.status === 403 ? 403 : 502, "Firebase 급여 확정 정보를 확인하지 못했습니다.");
+  const results = await response.json();
+  return new Map(results
+    .filter((item) => item.found?.name)
+    .map((item) => [item.found.name.replace(prefix, ""), decodeFirestoreFields(item.found.fields || {})]));
+}
+
 function decodeFirestoreFields(fields) {
   return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, decodeFirestoreValue(value)]));
 }
@@ -224,6 +364,10 @@ async function driveAccessToken(env) {
   requireOAuthConfig(env);
   const connection = await loadDriveConnection(env);
   if (!connection) throw httpError(503, "관리자가 Google Drive를 먼저 연결해야 합니다.");
+  return googleAccessToken(connection, env, "Google Drive");
+}
+
+async function googleAccessToken(connection, env, label) {
   const refreshToken = await decryptSecret(connection.encryptedRefreshToken, env.TOKEN_ENCRYPTION_KEY);
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -231,7 +375,7 @@ async function driveAccessToken(env) {
     body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: refreshToken, grant_type: "refresh_token" })
   });
   const result = await response.json();
-  if (!response.ok || !result.access_token) throw httpError(503, "Google Drive 연결이 만료되었습니다. 관리자가 다시 연결해 주세요.");
+  if (!response.ok || !result.access_token) throw httpError(503, `${label} 연결이 만료되었습니다. 관리자가 다시 연결해 주세요.`);
   return result.access_token;
 }
 
@@ -292,6 +436,11 @@ async function loadDriveConnection(env) {
   return env.RECEIPT_KV.get("drive_connection", "json");
 }
 
+async function loadGmailConnection(env) {
+  requireKv(env);
+  return env.RECEIPT_KV.get("gmail_connection", "json");
+}
+
 async function encryptSecret(value, keySecret) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await encryptionKey(keySecret);
@@ -301,7 +450,7 @@ async function encryptSecret(value, keySecret) {
 
 async function decryptSecret(value, keySecret) {
   const [ivValue, cipherValue] = String(value || "").split(".");
-  if (!ivValue || !cipherValue) throw httpError(503, "저장된 Google Drive 연결 정보를 읽지 못했습니다.");
+  if (!ivValue || !cipherValue) throw httpError(503, "저장된 Google 연결 정보를 읽지 못했습니다.");
   const key = await encryptionKey(keySecret);
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64Bytes(ivValue) }, key, base64Bytes(cipherValue));
   return new TextDecoder().decode(plain);
@@ -369,6 +518,23 @@ function bytesToBase64(bytes) {
   let value = "";
   bytes.forEach((byte) => { value += String.fromCharCode(byte); });
   return btoa(value);
+}
+
+function wrapBase64(value) {
+  return value.match(/.{1,76}/g)?.join("\r\n") || "";
+}
+
+function assertSafeMailValue(value) {
+  if (!String(value || "").trim() || /[\r\n]/.test(String(value))) throw httpError(400, "메일 안내 정보 형식을 확인해 주세요.");
+}
+
+function isEmail(value) {
+  return /^\S+@\S+\.\S+$/.test(String(value || "")) && !/[\r\n]/.test(String(value));
+}
+
+function formatKoreanMonth(month) {
+  const [year, monthNumber] = String(month).split("-").map(Number);
+  return `${year}년 ${monthNumber}월`;
 }
 
 function escapeDriveQuery(value) {

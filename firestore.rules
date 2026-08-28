@@ -667,7 +667,7 @@ service cloud.firestore {
         && request.resource.data.month is string
         && request.resource.data.revision is int
         && request.resource.data.recipientEmail is string
-        && request.resource.data.channel == 'gmail_attachment'
+        && request.resource.data.channel in ['gmail_attachment', 'gmail_portal_notice']
         && request.resource.data.gmailMessageId is string
         && request.resource.data.sentBy == request.auth.uid
         && request.resource.data.sentAt == request.time

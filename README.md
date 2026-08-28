@@ -34,7 +34,7 @@
 - 공제액 자동 계산과 관리자 수동 보정
 - 월별 급여 확정, 명세서 공개, 확정본 잠금
 - 확정 취소 사유와 불변 버전을 보존하는 차수별 재발행
-- 급여 확정 후 포털 로그인 안내문·링크 복사
+- 급여 확정 직후 선생님별 포털 로그인 안내 메일 자동 발송과 미발송 재시도
 - 선생님 본인의 발행된 과거 급여명세서 열람 및 혼합형 근로·사업소득 명세서 분리
 - 선생님의 명세서 최초 열람 기록
 - 교사·관리자 소득 구분별 급여명세서 PDF 다운로드 및 총 지급액(신고액)·실 지급액·강사료 3.3%·보험별 기준액을 포함한 기장용 CSV 출력
@@ -49,16 +49,17 @@
 
 선생님 약 20명 규모에서 Google 로그인, Firestore 저장, 본인 명세서 조회, 열람 기록, 관리자 급여 계산은 Firebase Spark 요금제로 시작할 수 있습니다. Firestore의 현재 무료 제공량은 저장 1 GiB, 일 50,000회 읽기, 일 20,000회 쓰기, 월 10 GiB 외부 전송입니다. 이 앱의 정상적인 월 1회 급여 작업은 그보다 훨씬 작습니다. 자세한 수치는 [Cloud Firestore 요금 안내](https://firebase.google.com/docs/firestore/pricing)에서 확인하세요.
 
-Spark 버전에서도 관리자가 화면에서 직접 실행하는 Gmail 첨부 발송은 사용할 수 있습니다. PDF는 관리자 브라우저에서 만들고, Firebase Google 로그인에 `gmail.send` 권한을 추가 승인받아 관리자 Gmail 계정으로 보냅니다. OAuth 토큰과 PDF는 Firestore에 저장하지 않고 발송 성공 메타데이터만 기록합니다. 예약·일괄 자동 발송, 서버 PDF, 실패 재시도 큐가 필요해지면 Blaze 요금제와 Cloud Functions를 추가하는 방식이 적합합니다.
+Spark 버전에서도 관리자가 화면에서 직접 실행하는 Gmail 첨부 발송을 사용할 수 있습니다. 포털 링크 자동 안내는 기존 Cloudflare Worker가 별도로 연결한 Gmail 발송 계정의 암호화된 갱신 토큰을 사용하므로 Firebase Blaze나 Cloud Functions가 필요하지 않습니다. PDF는 자동 메일에 첨부하지 않으며, 관리자 브라우저의 기존 개별 첨부 발송 기능으로만 보냅니다.
 
-## Gmail 첨부 발송 설정
+## Gmail 자동 안내·첨부 발송 설정
 
 1. Firebase 프로젝트와 연결된 Google Cloud 프로젝트에서 Gmail API를 활성화합니다.
 2. Google Auth Platform의 OAuth 동의 화면에 `https://www.googleapis.com/auth/gmail.send` 범위를 추가합니다.
 3. 앱이 테스트 상태라면 실제 발송에 사용할 관리자 Google 계정을 테스트 사용자로 등록합니다.
 4. Firebase Authentication의 승인된 도메인에 GitHub Pages 도메인을 등록합니다.
-5. 관리자가 확정 명세서의 `이메일 발송`을 처음 누르면 Gmail 전송 권한을 승인합니다.
-6. Google Auth Platform의 브랜딩 설정에 홈페이지 `https://payroll.robertson.kr/`, 개인정보처리방침 `https://payroll.robertson.kr/privacy.html`, 서비스 이용약관 `https://payroll.robertson.kr/terms.html`을 등록합니다.
+5. 최신 Worker를 배포한 뒤 급여 대시보드의 `발송 계정 연결`에서 실제 발신에 사용할 관리자 Gmail 계정을 승인합니다. 이 계정은 Google Cloud 프로젝트 소유 계정이나 Drive 계정과 달라도 됩니다.
+6. 급여 확정 시 아직 발송되지 않은 현재 차수의 선생님에게 포털 확인 링크가 자동 발송되는지 확인합니다. 실패 건은 `미발송 안내 발송`으로 다시 처리합니다.
+7. Google Auth Platform의 브랜딩 설정에 홈페이지 `https://payroll.robertson.kr/`, 개인정보처리방침 `https://payroll.robertson.kr/privacy.html`, 서비스 이용약관 `https://payroll.robertson.kr/terms.html`을 등록합니다.
 
 `gmail.send`는 메일 전송만 허용하며 받은편지함 읽기 권한은 요청하지 않습니다. 이 범위는 Google의 민감한 OAuth 범위이므로 외부 사용자를 대상으로 앱을 정식 게시할 때는 OAuth 검증 요구 사항을 확인해야 합니다. Gmail API를 사용하지 않을 때는 `PDF 저장 후 메일 앱 열기`로 내려받은 파일을 직접 첨부할 수 있습니다.
 

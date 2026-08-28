@@ -17,15 +17,16 @@
 
 Repository의 최신 `firestore.rules`를 Firebase Console의 Firestore Database > 규칙에 붙여넣고 게시합니다. 게시 전에는 영수증 제출 화면이 있어도 메타데이터 저장이 거부됩니다.
 
-## 2. Google Drive API와 OAuth Client
+## 2. Google Drive·Gmail API와 OAuth Client
 
 1. Firebase와 같은 Google Cloud 프로젝트 `academy-payroll-console`을 엽니다.
 2. API 및 서비스 > 라이브러리에서 `Google Drive API`를 사용 설정합니다.
-3. Google Auth Platform에서 앱 홈페이지, 개인정보처리방침과 서비스 이용약관 주소를 확인합니다.
-4. 데이터 액세스 범위에 `https://www.googleapis.com/auth/drive.file`을 추가합니다.
-5. 클라이언트 > 클라이언트 만들기 > 웹 애플리케이션을 선택합니다.
-6. 승인된 리디렉션 URI에 `https://payroll-api.robertson.kr/oauth/google/callback`을 정확히 추가합니다.
-7. 발급된 Client ID와 Client secret은 GitHub에 적지 않고 다음 Worker Secret 단계에서만 사용합니다.
+3. 같은 라이브러리에서 `Gmail API`도 사용 설정합니다.
+4. Google Auth Platform에서 앱 홈페이지, 개인정보처리방침과 서비스 이용약관 주소를 확인합니다.
+5. 데이터 액세스 범위에 `https://www.googleapis.com/auth/drive.file`과 `https://www.googleapis.com/auth/gmail.send`를 추가합니다.
+6. 클라이언트 > 클라이언트 만들기 > 웹 애플리케이션을 선택합니다.
+7. 승인된 리디렉션 URI에 `https://payroll-api.robertson.kr/oauth/google/callback`을 정확히 추가합니다.
+8. 발급된 Client ID와 Client secret은 GitHub에 적지 않고 다음 Worker Secret 단계에서만 사용합니다.
 
 OAuth 앱이 테스트 상태이면 Drive 갱신 토큰이 짧은 기간 뒤 만료될 수 있습니다. 실제 운영 전에 Google Auth Platform의 게시 상태와 검증 요구 사항을 확인합니다. 테스트 중에는 관리자 Google 계정을 테스트 사용자로 등록합니다.
 
@@ -62,7 +63,16 @@ OAuth 앱이 테스트 상태이면 Drive 갱신 토큰이 짧은 기간 뒤 만
 4. 포털로 돌아와 `Google Drive 영수증 보관 연결을 완료했습니다.` 메시지를 확인합니다.
 5. Drive에 `Academy Payroll Receipts` 폴더가 생기는 것은 첫 영수증 제출 때입니다.
 
-## 5. 운영 전 QA
+## 5. 관리자 Gmail 발송 계정 연결
+
+1. 최신 Worker 코드를 배포한 뒤 급여 대시보드의 `발송 계정 연결`을 누릅니다.
+2. 실제 발신에 사용할 관리자 Gmail 계정을 선택하고 메일 발송 권한을 승인합니다. Google Cloud 프로젝트 또는 Drive 연결 계정과 달라도 됩니다.
+3. 포털로 돌아와 `급여 안내 Gmail 발송 계정을 연결했습니다.` 메시지를 확인합니다.
+4. 버튼에 연결한 발송 이메일이 표시되는지 확인합니다.
+5. 테스트 급여를 확정해 선생님에게 금액이나 PDF 없이 포털 확인 링크만 발송되는지 확인합니다.
+6. 일부 실패 시 `미발송 안내 발송`을 눌러 성공한 선생님에게 중복 발송되지 않고 실패 건만 처리되는지 확인합니다.
+
+## 6. 운영 전 QA
 
 1. 가상 선생님 계정으로 작은 테스트 이미지와 PDF를 각각 제출합니다.
 2. 관리자 알림을 눌러 해당 영수증 검토 화면이 열리는지 확인합니다.

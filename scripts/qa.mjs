@@ -49,6 +49,7 @@ async function checkRequiredFiles() {
     "src/lib/teacher-self-service.js",
     "src/lib/admin-notifications.js",
     "src/lib/expense-receipts.js",
+    "src/lib/payslip-notifications.js",
     "src/lib/receipt-api.js",
     "cloudflare/receipt-worker/src/index.js",
     "docs/google-drive-receipts-setup.md",
@@ -241,12 +242,24 @@ async function checkDeliverySecurity() {
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   const requiredRules = [
     "match /payslipDeliveries/{deliveryId}",
-    "request.resource.data.channel == 'gmail_attachment'",
+    "request.resource.data.channel in ['gmail_attachment', 'gmail_portal_notice']",
     "request.resource.data.sentBy == request.auth.uid",
     "request.resource.data.sentAt == request.time"
   ];
   for (const rule of requiredRules) {
     if (!rules.includes(rule)) failures.push(`Payslip delivery security rule is missing: ${rule}`);
+  }
+
+  const app = await readFile(join(root, "src", "app.js"), "utf8");
+  const worker = await readFile(join(root, "cloudflare", "receipt-worker", "src", "index.js"), "utf8");
+  for (const removedNoticeCopy of ["copy-notice", "copyPayslipNotice"]) {
+    if (app.includes(removedNoticeCopy)) failures.push(`Legacy notice-copy action must be removed: ${removedNoticeCopy}`);
+  }
+  for (const automaticMailSurface of ["sendPendingPayslipNotices", "dispatchPortalNotices", "connectGmailSender"]) {
+    if (!app.includes(automaticMailSurface)) failures.push(`Automatic payslip notice workflow is missing: ${automaticMailSurface}`);
+  }
+  for (const workerSafeguard of ["/oauth/gmail/start", "/payslip-notices", "mail_delivery:", "batchGetFirestoreDocuments"] ) {
+    if (!worker.includes(workerSafeguard)) failures.push(`Automatic mail Worker safeguard is missing: ${workerSafeguard}`);
   }
 
   const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");

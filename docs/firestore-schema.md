@@ -337,11 +337,11 @@
   "month": "2026-08",
   "revision": 2,
   "recipientEmail": "등록된 선생님 이메일",
-  "channel": "gmail_attachment",
+  "channel": "gmail_attachment 또는 gmail_portal_notice",
   "gmailMessageId": "Gmail API 메시지 ID",
   "sentBy": "관리자 UID",
   "sentAt": "server timestamp"
 }
 ```
 
-관리자만 생성·조회할 수 있으며 수정과 삭제는 허용하지 않습니다. 급여명세서 본문, PDF, Gmail OAuth 토큰은 저장하지 않습니다. 규칙은 연결된 `payslips` 문서가 `published` 상태이고 선생님과 급여월이 일치하는지 다시 확인합니다.
+관리자만 생성·조회할 수 있으며 수정과 삭제는 허용하지 않습니다. `gmail_portal_notice`는 자동 포털 링크 안내, `gmail_attachment`는 관리자가 확인한 PDF 첨부 발송을 뜻합니다. 급여명세서 본문, PDF, Gmail OAuth 토큰은 저장하지 않습니다. 규칙은 연결된 `payslips` 문서가 `published` 상태이고 선생님과 급여월이 일치하는지 다시 확인합니다.

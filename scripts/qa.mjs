@@ -72,6 +72,7 @@ async function checkHtmlAssets() {
   const html = await readFile(join(root, "index.html"), "utf8");
   const css = await readFile(join(root, "styles.css"), "utf8");
   const app = await readFile(join(root, "src", "app.js"), "utf8");
+  const worker = await readFile(join(root, "cloudflare", "receipt-worker", "src", "index.js"), "utf8");
   const localReferences = [...html.matchAll(/(?:href|src)="\.\/([^"?#]+)["?#]?/g)].map((match) => match[1]);
   for (const reference of localReferences) {
     if (!(await exists(join(root, reference)))) failures.push(`index.html references a missing file: ${reference}`);
@@ -82,7 +83,12 @@ async function checkHtmlAssets() {
   if (html.includes("급여 자료는 GitHub 저장소가 아닌 Firebase의 접근 제어 영역에 보관됩니다.")) {
     failures.push("Login page must not expose an infrastructure storage description.");
   }
-  if (!html.includes("<p>학원 급여 포털</p>")) failures.push("Login page is missing the concise portal label.");
+  for (const brandText of ["학원 급여 포털", "알파학원 급여 관리", "알파학원 급여 포털"]) {
+    if (!html.includes(brandText)) failures.push(`Login and sidebar branding is missing: ${brandText}`);
+  }
+  if (!app.includes("academyName}에서 보낸") || !worker.includes("academyName}에서 보낸")) {
+    failures.push("Manual and automatic payslip email branding must identify the academy sender.");
+  }
   if (!css.includes("--login-brand: #2563a6") || !css.includes("background: #173f6b")) {
     failures.push("Login page must use the blue color treatment.");
   }

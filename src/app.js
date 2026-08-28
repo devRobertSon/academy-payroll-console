@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-auto-mail-r31";
-import { helpArticles } from "./data/help-content.js?v=20260828-auto-mail-r31";
+import { appConfig } from "./config.js?v=20260828-alpha-brand-r32";
+import { helpArticles } from "./data/help-content.js?v=20260828-alpha-brand-r32";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-auto-mail-r31";
+} from "./data/demo-data.js?v=20260828-alpha-brand-r32";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-auto-mail-r31";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-auto-mail-r31";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-auto-mail-r31";
+} from "./data/nts-tax-policy.js?v=20260828-alpha-brand-r32";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-alpha-brand-r32";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-alpha-brand-r32";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-auto-mail-r31";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-alpha-brand-r32";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-auto-mail-r31";
+} from "./lib/payroll-lifecycle.js?v=20260828-alpha-brand-r32";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-auto-mail-r31";
+} from "./lib/payroll.js?v=20260828-alpha-brand-r32";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-auto-mail-r31";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-auto-mail-r31";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-auto-mail-r31";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-auto-mail-r31";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-alpha-brand-r32";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-alpha-brand-r32";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-alpha-brand-r32";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-alpha-brand-r32";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,19 +63,19 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-auto-mail-r31";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-auto-mail-r31";
+} from "./lib/expense-receipts.js?v=20260828-alpha-brand-r32";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-alpha-brand-r32";
 import {
   pendingPortalNoticeTeachers,
   PORTAL_NOTICE_CHANNEL,
   portalNoticeDeliveryId
-} from "./lib/payslip-notifications.js?v=20260828-auto-mail-r31";
+} from "./lib/payslip-notifications.js?v=20260828-alpha-brand-r32";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-auto-mail-r31";
+} from "./lib/teacher-self-service.js?v=20260828-alpha-brand-r32";
 
 const state = {
   user: null,
@@ -152,8 +152,9 @@ await bootstrap();
 
 async function bootstrap() {
   document.querySelectorAll("#login-academy-name, #sidebar-academy-name").forEach((node) => {
-    node.textContent = appConfig.academyName;
+    node.textContent = `${appConfig.academyName} 급여 관리`;
   });
+  document.querySelector("#login-portal-name").textContent = `${appConfig.academyName} 급여 포털`;
 
   bindStaticEvents();
   if (appConfig.demoMode) {
@@ -3125,8 +3126,8 @@ function openPayslipEmailModal(teacher, document, run) {
   const persisted = state.data.payslips.find((item) => item.id === document.payslipId);
   const revision = artifactRevision(persisted || currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
   const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
-  const subject = `[${appConfig.academyName}] ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}`;
-  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName} ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
+  const subject = `${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}`;
+  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
   const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth, document.incomeLabel);
   openModal("급여명세서 이메일 발송", `
     <div class="notice compact"><i data-lucide="shield-check"></i><span>발송할 때 관리자 Google 계정에 Gmail 전송 권한만 요청합니다. 권한 토큰과 첨부 파일은 저장하지 않습니다.</span></div>

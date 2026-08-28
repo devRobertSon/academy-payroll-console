@@ -33,7 +33,7 @@ test("Worker 안내 메일은 급여액 없이 포털 링크와 수정 차수를
     teacherName: "홍길동",
     month: "2026-08",
     revision: 2,
-    academyName: "학원 급여 포털",
+    academyName: "알파학원",
     portalUrl: "https://payroll.robertson.kr"
   });
   const mime = Buffer.from(raw.replaceAll("-", "+").replaceAll("_", "/"), "base64").toString("utf8");
@@ -41,7 +41,8 @@ test("Worker 안내 메일은 급여액 없이 포털 링크와 수정 차수를
   const body = Buffer.from(bodyValue, "base64").toString("utf8");
 
   assert.match(mime, /^To: teacher@example\.com\r\n/);
-  assert.match(body, /2026년 8월 급여명세서 수정 2차/);
+  assert.match(mime, new RegExp(Buffer.from("알파학원에서 보낸 2026년 8월 급여명세서 수정 2차").toString("base64")));
+  assert.match(body, /알파학원에서 보낸 2026년 8월 급여명세서 수정 2차/);
   assert.match(body, /https:\/\/payroll\.robertson\.kr/);
   assert.doesNotMatch(body, /\d[\d,]*원|지급액|공제액/);
 });
@@ -52,7 +53,7 @@ test("Worker 안내 메일은 헤더 줄바꿈 삽입을 거부한다", () => {
     teacherName: "홍길동",
     month: "2026-08",
     revision: 1,
-    academyName: "학원 급여 포털",
+    academyName: "알파학원",
     portalUrl: "https://payroll.robertson.kr"
   }), /이메일 형식/);
 });

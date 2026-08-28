@@ -196,7 +196,7 @@ async function sendPayslipNotices(request, session, env) {
         teacherName: teacher.name,
         month,
         revision,
-        academyName: env.ACADEMY_NAME || "학원 급여 포털",
+        academyName: env.ACADEMY_NAME || "알파학원",
         portalUrl: env.APP_ORIGIN
       });
       const sent = await sendGmailRaw(accessToken, raw);
@@ -220,8 +220,8 @@ export function buildPortalNoticeMessage({ to, teacherName, month, revision, aca
   if (!isEmail(to)) throw httpError(400, "수신자 이메일 형식을 확인해 주세요.");
   [teacherName, academyName, portalUrl].forEach(assertSafeMailValue);
   const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
-  const subject = `[${academyName}] ${formatKoreanMonth(month)} 급여명세서 발행 안내${revisionLabel}`;
-  const body = `안녕하세요, ${teacherName} 선생님.\n\n${academyName} ${formatKoreanMonth(month)} 급여명세서${revisionLabel}가 발행되었습니다.\n아래 포털에서 등록된 Google 계정으로 로그인해 확인하고 필요한 경우 PDF로 내려받아 주세요.\n${portalUrl}\n\n감사합니다.`;
+  const subject = `${academyName}에서 보낸 ${formatKoreanMonth(month)} 급여명세서${revisionLabel}`;
+  const body = `안녕하세요, ${teacherName} 선생님.\n\n${academyName}에서 보낸 ${formatKoreanMonth(month)} 급여명세서${revisionLabel}가 발행되었습니다.\n아래 포털에서 등록된 Google 계정으로 로그인해 확인하고 필요한 경우 PDF로 내려받아 주세요.\n${portalUrl}\n\n감사합니다.`;
   const mime = [
     `To: ${to}`,
     `Subject: =?UTF-8?B?${bytesToBase64(new TextEncoder().encode(subject))}?=`,

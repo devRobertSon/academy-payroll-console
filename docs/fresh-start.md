@@ -65,9 +65,10 @@ Workers KV의 `academy-payroll-receipts-kv`에서 테스트 발송·업로드 �
 mail_delivery: 로 시작하는 키
 upload_quota: 로 시작하는 키
 oauth_state: 로 시작하는 키
+gmail_connection: 로 시작하는 키
 ```
 
-현재 연결을 유지하려면 `drive_connection`과 `gmail_connection`은 삭제하지 않습니다. 두 Google 계정 연결까지 새로 시작하려는 경우에만 이 두 키를 삭제하고 급여 포털에서 다시 연결합니다. Worker 변수와 비밀값은 그대로 유지합니다.
+현재 공용 Drive 연결을 유지하려면 `drive_connection`은 삭제하지 않습니다. 이전 공용 Gmail 키 `gmail_connection`은 최신 Worker에서 사용하지 않으므로 삭제하고, 각 관리자로 로그인해 본인의 Gmail 발송 계정을 다시 연결합니다. 최신 연결은 `gmail_connection:{관리자 UID}` 형식으로 관리자마다 따로 저장됩니다. Worker 변수와 비밀값은 그대로 유지합니다.
 
 ## 6. 새 구조 확인
 

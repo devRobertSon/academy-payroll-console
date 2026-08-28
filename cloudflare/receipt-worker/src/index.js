@@ -5,7 +5,7 @@ const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "ap
 const ALLOWED_CATEGORIES = new Set(["transport", "parking"]);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_NOTICE_RECIPIENTS = 30;
-const WORKER_VERSION = "20260828-drive-owner-r35";
+const WORKER_VERSION = "20260828-admin-gmail-r36";
 
 let certificateCache = { expiresAt: 0, certificates: null };
 
@@ -20,7 +20,7 @@ export default {
       const session = await authenticate(request, env);
       if (url.pathname === "/integration/status" && request.method === "GET") {
         requireAdmin(session);
-        const [driveConnection, gmailConnection] = await Promise.all([loadDriveConnection(env), loadGmailConnection(env)]);
+        const [driveConnection, gmailConnection] = await Promise.all([loadDriveConnection(env), loadGmailConnection(env, session.uid)]);
         const driveAccess = driveConnectionAccess(driveConnection, session.uid);
         return json(request, env, {
           connected: driveAccess.connected,
@@ -149,7 +149,7 @@ async function handleOAuthCallback(request, env) {
   };
   if (savedState.purpose === "gmail") {
     const senderEmail = await googleAccountEmail(tokens.access_token);
-    await env.RECEIPT_KV.put("gmail_connection", JSON.stringify({ ...common, senderEmail }));
+    await env.RECEIPT_KV.put(gmailConnectionKey(savedState.uid), JSON.stringify({ ...common, senderEmail }));
     return Response.redirect(`${env.APP_ORIGIN.replace(/\/$/, "")}/?gmail=connected`, 302);
   }
   assertDriveConnectionAccess(await loadDriveConnection(env), savedState.uid);
@@ -180,8 +180,8 @@ async function sendPayslipNotices(request, session, env) {
     throw httpError(409, "현재 공개된 급여 확정 차수와 발송 요청이 일치하지 않습니다.");
   }
 
-  const connection = await loadGmailConnection(env);
-  if (!connection) throw httpError(503, "관리자가 Gmail 발송 계정을 먼저 연결해야 합니다.");
+  const connection = await loadGmailConnection(env, session.uid);
+  if (!connection) throw httpError(503, "현재 관리자의 Gmail 발송 계정을 먼저 연결해야 합니다.");
   const accessToken = await googleAccessToken(connection, env, "Gmail 발송");
   const results = [];
   for (const teacherId of teacherIds) {
@@ -444,9 +444,9 @@ async function loadDriveConnection(env) {
   return env.RECEIPT_KV.get("drive_connection", "json");
 }
 
-async function loadGmailConnection(env) {
+async function loadGmailConnection(env, uid) {
   requireKv(env);
-  return env.RECEIPT_KV.get("gmail_connection", "json");
+  return env.RECEIPT_KV.get(gmailConnectionKey(uid), "json");
 }
 
 async function encryptSecret(value, keySecret) {
@@ -478,6 +478,10 @@ export function driveConnectionAccess(connection, uid) {
   const connected = Boolean(connection);
   const owner = connected && typeof connection.connectedBy === "string" && connection.connectedBy === uid;
   return { connected, owner, locked: connected && !owner };
+}
+
+export function gmailConnectionKey(uid) {
+  return `gmail_connection:${uid}`;
 }
 
 function assertDriveConnectionAccess(connection, uid) {

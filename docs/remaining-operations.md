@@ -36,7 +36,7 @@
 2. [남음] `firestore.indexes.json`의 복합 색인이 생성됐는지 확인합니다.
 3. [남음] Storage 규칙은 사용 전까지 모든 읽기·쓰기를 거부한 상태인지 확인합니다.
 4. [완료] Firebase Authentication의 승인된 도메인에 `devrobertson.github.io`가 등록됐고 GitHub Pages에서 Google 로그인이 동작합니다.
-5. [부분 완료] App Check reCAPTCHA v3 등록과 사이트 키 적용은 완료했습니다. 요청 지표에서 GitHub Pages 요청이 유효한 요청으로 잡히는지 확인한 뒤 Firestore 적용 강제를 켭니다.
+5. [설정 필요] App Check 공급자를 reCAPTCHA Enterprise로 등록하고 `src/config.js`의 Enterprise 사이트 키와 일치시킵니다. 요청 지표에서 `payroll.robertson.kr` 요청이 유효한 요청으로 잡히는지 확인한 뒤 Firestore와 Firebase AI Logic 적용 강제를 켭니다.
 
 ## 2. 가상 계정 보안 시험
 

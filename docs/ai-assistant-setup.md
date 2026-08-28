@@ -1,6 +1,6 @@
 # AI 사용법·세무 도움말 설정
 
-관리자 화면의 AI 도움말은 두 단계로 동작합니다.
+관리자 화면의 AI 도움말은 두 단계로 동작합니다. 선생님 역할에는 사용 설명서와 AI 도움말 화면을 표시하지 않으며, 실행 함수도 관리자 역할만 허용합니다.
 
 - Firebase AI Logic 설정 전: 브라우저 안에서 내장 사용 설명서와 세무 검토 자료를 검색해 답변
 - Firebase AI Logic 설정 후: 관련 설명서·공식 근거 발췌와 질문만 Gemini에 보내 자연스러운 답변 생성
@@ -12,7 +12,7 @@
 - AI 제공자: Gemini Developer API
 - 연결 방식: Firebase AI Logic JavaScript SDK
 - 인증: 기존 Firebase Authentication Google 로그인
-- 앱 보호: Firebase App Check 적용 강제
+- 앱 보호: Firebase App Check reCAPTCHA Enterprise 적용 강제
 - 모델: `gemini-3.5-flash-lite`
 - 요금제: 초기 시험은 Spark 무료 등급
 
@@ -23,12 +23,16 @@
 3. 제공자는 `Gemini Developer API`를 선택합니다.
 4. 무료 등급으로 시작하고 결제 계정을 연결하지 않습니다.
 5. 현재 등록된 웹 앱 `academy-payroll-web`을 선택합니다.
-6. App Check가 Firebase AI Logic API에 적용 강제로 표시되는지 확인합니다.
-7. `AI Logic > 설정`에서 인증된 사용자 모드를 적용 강제로 설정합니다.
-8. AI Monitoring은 프롬프트와 응답 저장을 피하기 위해 사용 중지 상태로 둡니다.
-9. GitHub Pages에서 관리자 테스트 계정으로 정상 응답을 확인합니다.
+6. `App Check > 앱`에서 웹 앱의 공급자를 reCAPTCHA Enterprise로 등록하고 Google Cloud reCAPTCHA의 웹 사이트 키를 입력합니다.
+7. Enterprise 키에 `payroll.robertson.kr`을 허용 도메인으로 등록합니다.
+8. `src/config.js`의 `appCheckEnterpriseSiteKey`를 같은 웹 사이트 키로 설정합니다.
+9. 먼저 적용을 강제하지 않은 상태에서 관리자와 선생님 계정의 요청이 유효하게 집계되는지 확인합니다.
+10. App Check가 Cloud Firestore와 Firebase AI Logic API에 적용 강제로 표시되는지 확인합니다.
+11. `AI Logic > 설정`에서 인증된 사용자 모드를 적용 강제로 설정합니다.
+12. AI Monitoring은 프롬프트와 응답 저장을 피하기 위해 사용 중지 상태로 둡니다.
+13. `payroll.robertson.kr`에서 관리자 테스트 계정으로 정상 응답을 확인합니다.
 
-콘솔 안내에서 웹용 reCAPTCHA Enterprise 전환을 요구하면 기존 설정을 임의로 삭제하지 말고 안내 절차에 따라 새 공급자를 등록한 뒤 GitHub Pages 로그인을 다시 시험합니다.
+현재 앱은 `ReCaptchaEnterpriseProvider`만 지원합니다. 구형 reCAPTCHA v3 공급자와 `appCheckSiteKey` 설정은 사용하지 않습니다.
 
 ## 앱 기능 활성화
 
@@ -94,6 +98,7 @@ Gemini Developer API 무료 등급에서는 입력 내용이 Google 제품 개�
 ## 공식 문서
 
 - [Firebase AI Logic](https://firebase.google.com/docs/ai-logic)
+- [웹 App Check reCAPTCHA Enterprise](https://firebase.google.com/docs/app-check/web/recaptcha-enterprise-provider)
 - [웹 앱 시작하기](https://firebase.google.com/docs/ai-logic/get-started?platform=web)
 - [인증된 사용자 모드](https://firebase.google.com/docs/ai-logic/auth-mode)
 - [지원되는 모델](https://firebase.google.com/docs/ai-logic/models?hl=ko)

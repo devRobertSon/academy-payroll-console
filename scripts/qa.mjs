@@ -530,6 +530,17 @@ async function checkHelpAssistantSafety() {
   if (!store.includes('import(sdk("ai"))') || !store.includes("GoogleAIBackend")) {
     failures.push("Firebase AI Logic must be loaded through the Firebase SDK proxy.");
   }
+  if (!config.includes("appCheckEnterpriseSiteKey")
+    || !store.includes("ReCaptchaEnterpriseProvider")
+    || config.includes("appCheckSiteKey")
+    || store.includes("ReCaptchaV3Provider")) {
+    failures.push("Firebase App Check must use only the reCAPTCHA Enterprise provider.");
+  }
+  if (!app.includes('state.user?.role !== "admin"')
+    || !app.includes("const adminViews = new Set")
+    || !app.includes("const teacherViews = new Set")) {
+    failures.push("AI help and administrator views must be blocked for teacher accounts.");
+  }
   if (/gemini(?:Api)?Key\s*:/i.test(config)) failures.push("A Gemini API key must not be stored in public client configuration.");
   if (app.includes("askHelpAssistant(state.data")) failures.push("Payroll workspace data must not be passed to the AI assistant.");
   for (const safeguard of ["소득 누락", "허위 계약", "가공 경비", "실제 고용관계", "국세청 126"]) {

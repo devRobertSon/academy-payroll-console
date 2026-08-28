@@ -29,9 +29,9 @@ export async function createFirebaseStore(config) {
   ]);
 
   const app = appSdk.initializeApp(config);
-  if (config.appCheckSiteKey) {
+  if (config.appCheckEnterpriseSiteKey) {
     appCheckSdk.initializeAppCheck(app, {
-      provider: new appCheckSdk.ReCaptchaV3Provider(config.appCheckSiteKey),
+      provider: new appCheckSdk.ReCaptchaEnterpriseProvider(config.appCheckEnterpriseSiteKey),
       isTokenAutoRefreshEnabled: true
     });
   }

@@ -87,8 +87,8 @@ npm run qa
 2. Authentication에서 Google 로그인 제공업체를 활성화합니다. Firebase 공식 절차는 [Google 로그인 안내](https://firebase.google.com/docs/auth/web/google-signin)를 따릅니다.
 3. Authentication의 승인된 도메인에 `devrobertson.github.io`를 추가합니다.
 4. Cloud Firestore를 프로덕션 모드로 만듭니다. 테스트 모드로 개인정보를 올리지 마세요.
-5. App Check에서 웹 앱과 reCAPTCHA v3를 등록합니다. 처음에는 지표를 확인한 뒤 Firestore 적용을 강제합니다.
-6. Firebase 웹 앱 설정값을 [`src/config.js`](./src/config.js)에 입력하고 `demoMode`를 `false`로 바꿉니다. Firebase 웹 설정과 App Check 사이트 키는 공개 식별자이며 서버 비밀키가 아닙니다.
+5. App Check에서 웹 앱과 reCAPTCHA Enterprise를 등록합니다. 처음에는 지표를 확인한 뒤 Firestore와 Firebase AI Logic에 적용을 강제합니다.
+6. Firebase 웹 앱 설정값과 Enterprise 사이트 키를 [`src/config.js`](./src/config.js)에 입력하고 `demoMode`를 `false`로 바꿉니다. Firebase 웹 설정과 App Check 사이트 키는 공개 식별자이며 서버 비밀키가 아닙니다.
 7. `portalUrl`에 실제 GitHub Pages 주소를 입력합니다. 비워두면 현재 접속 주소를 자동으로 사용합니다.
 8. `firestore.rules`, `firestore.indexes.json`, `storage.rules`를 Firebase CLI 또는 Console에서 배포합니다. 규칙 배포 방법은 [Firestore Security Rules 안내](https://firebase.google.com/docs/firestore/security/get-started)를 참고하세요.
 

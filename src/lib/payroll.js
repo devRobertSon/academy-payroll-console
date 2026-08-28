@@ -18,8 +18,6 @@ export const INCOME_COMPOSITION_LABELS = {
   mixed: "근로소득 + 사업소득"
 };
 
-export const DEFAULT_BUSINESS_RATE_ID = "default-business-rate";
-
 export function businessRateLabel(index = 0) {
   const normalizedIndex = Math.max(0, Math.floor(Number(index) || 0));
   return `시급 ${normalizedIndex + 1}`;
@@ -36,23 +34,12 @@ const floorToUnit = (value, unit = 1) => {
 };
 
 export function calculateEarning(entry) {
-  const quantity = Number(entry.hours ?? entry.quantity ?? 0);
-  const rate = Number(entry.hourlyRate ?? entry.unitRate ?? 0);
-  return won(quantity * rate + Number(entry.adjustment || 0));
+  return won(Number(entry.hours || 0) * Number(entry.hourlyRate || 0));
 }
 
 export function resolveIncomeComposition(teacher = {}) {
   if (INCOME_COMPOSITIONS.has(teacher.incomeComposition)) return teacher.incomeComposition;
-
-  const hasEmployeeIncome = Number(teacher.defaultEmployeePay) > 0
-    || teacher.insuranceEnrolled === true
-    || Object.values(teacher.insuranceSettings || {}).some((item) => item?.enrolled === true);
-  const hasBusinessIncome = Number(teacher.defaultBusinessHourlyRate) > 0
-    || (Array.isArray(teacher.businessRates) && teacher.businessRates.length > 0);
-
-  if (hasEmployeeIncome && hasBusinessIncome) return "mixed";
-  if (hasBusinessIncome) return "business";
-  return "employee";
+  throw new Error("선생님의 소득 구성이 최신 스키마와 일치하지 않습니다.");
 }
 
 export function getTeacherPaySettings(teacher = {}) {
@@ -60,29 +47,16 @@ export function getTeacherPaySettings(teacher = {}) {
   const hasEmployeeIncome = incomeComposition === "employee" || incomeComposition === "mixed";
   const hasBusinessIncome = incomeComposition === "business" || incomeComposition === "mixed";
   const insuranceSettings = hasEmployeeIncome
-    ? normalizeInsuranceSettings(teacher.insuranceSettings, teacher.insuranceEnrolled === true)
+    ? normalizeInsuranceSettings(teacher.insuranceSettings)
     : normalizeInsuranceSettings();
-  const configuredBusinessRates = hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [];
-  const defaultBusinessHourlyRate = hasBusinessIncome
-    ? Math.max(0, won(teacher.defaultBusinessHourlyRate))
-    : 0;
-  const usesMultipleRates = hasBusinessIncome && teacher.usesMultipleRates === true;
-  const businessRates = usesMultipleRates
-    ? configuredBusinessRates
-    : defaultBusinessHourlyRate > 0
-      ? [{ id: DEFAULT_BUSINESS_RATE_ID, hourlyRate: defaultBusinessHourlyRate }]
-      : [];
+  const businessRates = hasBusinessIncome ? normalizeBusinessRates(teacher.businessRates) : [];
   return {
     incomeComposition,
-    insuranceEnrolled: Object.values(insuranceSettings).some((item) => item.enrolled),
+    hasInsurance: Object.values(insuranceSettings).some((item) => item.enrolled),
     insuranceSettings,
     defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
-    defaultBusinessHourlyRate,
-    usesMultipleRates,
-    configuredBusinessRates,
     businessRates,
-    transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
-    source: "current"
+    transportPolicy: normalizeTransportPolicy(teacher.transportPolicy)
   };
 }
 
@@ -192,7 +166,7 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       hours: 1,
       hourlyRate: amounts.employeeGrossPay,
       treatment: "employee",
-      insuranceCovered: settings.insuranceEnrolled,
+      insuranceCovered: settings.hasInsurance,
       note: override.grossPayNote || null,
       source: amounts.source
     });
@@ -224,8 +198,6 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       earningCategory: "transport",
       hours: amounts.transportTrips,
       hourlyRate: amounts.transportUnitAmount,
-      quantity: amounts.transportTrips,
-      unitRate: amounts.transportUnitAmount,
       treatment: amounts.transportTreatment,
       insuranceCovered: amounts.transportInsuranceCovered,
       source: amounts.source
@@ -255,7 +227,6 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       subjectName: `${receipt.category === "transport" ? "교통비" : "주차료"} 영수증 정산`,
       earningCategory: receipt.category,
       hours: 1,
-      quantity: 0,
       hourlyRate: receipt.amount,
       treatment: receipt.treatment,
       insuranceCovered: receipt.insuranceCovered,
@@ -285,11 +256,11 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
   return lines;
 }
 
-function normalizeInsuranceSettings(settings, legacyEnrolled = false) {
+function normalizeInsuranceSettings(settings) {
   return Object.fromEntries(Object.keys(INSURANCE_LABELS).map((key) => {
     const item = settings?.[key] || {};
     return [key, {
-      enrolled: item.enrolled == null ? legacyEnrolled : item.enrolled === true,
+      enrolled: item.enrolled === true,
       defaultBaseAmount: item.defaultBaseAmount == null ? null : Math.max(0, won(item.defaultBaseAmount)),
       effectiveFrom: item.effectiveFrom || null,
       effectiveTo: item.effectiveTo || null
@@ -358,8 +329,10 @@ export function createMonthlyEarningLine(teacher, month, override = {}) {
 }
 
 export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfile = {}) {
-  const taxPolicy = policyBundle.taxPolicy || policyBundle.tax || policyBundle;
-  const insurancePolicy = policyBundle.insurancePolicy || policyBundle.insurance || policyBundle;
+  const { taxPolicy, insurancePolicy } = policyBundle;
+  if (!taxPolicy?.version || !insurancePolicy?.version) {
+    throw new Error("세금·사회보험 정책 묶음이 최신 스키마와 일치하지 않습니다.");
+  }
   const earningLines = entries.map((entry) => ({
     ...entry,
     amount: calculateEarning(entry),
@@ -473,7 +446,7 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
       + otherIncomeTax + otherLocalTax,
     transportTrips: earningLines
       .filter((line) => line.earningCategory === "transport")
-      .reduce((sum, line) => sum + Number(line.quantity ?? line.hours ?? 0), 0),
+      .reduce((sum, line) => sum + Number(line.hours || 0), 0),
     transportAmount: categoryGross(earningLines, "transport"),
     parkingAmount: categoryGross(earningLines, "parking"),
     otherPaymentAmount: categoryGross(earningLines, "otherPayment"),
@@ -500,7 +473,6 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     net: gross - totalDeductions,
     reporting,
     unconfirmedEarningLines,
-    policyVersion: `${taxPolicy.version} / ${insurancePolicy.version}`,
     taxPolicyVersion: taxPolicy.version,
     insurancePolicyVersion: insurancePolicy.version
   };
@@ -546,9 +518,8 @@ export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
       incomeLabel: INCOME_COMPOSITION_LABELS[incomeType],
       payroll: {
         ...split,
-        policyVersion: payroll.policyVersion || split.policyVersion,
-        taxPolicyVersion: payroll.taxPolicyVersion || split.taxPolicyVersion,
-        insurancePolicyVersion: payroll.insurancePolicyVersion || split.insurancePolicyVersion
+        taxPolicyVersion: payroll.taxPolicyVersion,
+        insurancePolicyVersion: payroll.insurancePolicyVersion
       }
     };
   });

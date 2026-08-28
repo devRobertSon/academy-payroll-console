@@ -169,7 +169,7 @@ async function sendPayslipNotices(request, session, env) {
   ];
   const documents = await batchGetFirestoreDocuments(env.FIREBASE_PROJECT_ID, paths, session.token);
   const run = documents.get(`payrollRuns/${month}`);
-  if (!run || run.status !== "published" || Number(run.revision || 1) !== revision) {
+  if (!run || run.status !== "published" || Number(run.revision) !== revision) {
     throw httpError(409, "현재 공개된 급여 확정 차수와 발송 요청이 일치하지 않습니다.");
   }
 
@@ -186,7 +186,8 @@ async function sendPayslipNotices(request, session, env) {
     }
     const teacher = documents.get(`teachers/${teacherId}`);
     const payslip = documents.get(`payslips/${month}_${teacherId}`);
-    if (!teacher || !isEmail(teacher.email) || !payslip || payslip.status !== "published" || Number(payslip.revision || 1) !== revision) {
+    if (!teacher || !isEmail(teacher.email)
+      || !payslip || payslip.status !== "published" || Number(payslip.revision) !== revision) {
       results.push({ teacherId, status: "failed", error: "선생님 이메일 또는 공개 명세서를 확인하지 못했습니다." });
       continue;
     }

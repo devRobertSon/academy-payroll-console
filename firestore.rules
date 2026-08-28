@@ -86,13 +86,13 @@ service cloud.firestore {
         ])
         && validInsuranceItem(data.insuranceSettings.nationalPension)
         && validInsuranceItem(data.insuranceSettings.healthInsurance)
-        && validInsuranceItem(data.insuranceSettings.employmentInsurance)
-        && data.insuranceEnrolled is bool
-        && data.insuranceEnrolled == (
-          data.insuranceSettings.nationalPension.enrolled
-          || data.insuranceSettings.healthInsurance.enrolled
-          || data.insuranceSettings.employmentInsurance.enrolled
-        );
+        && validInsuranceItem(data.insuranceSettings.employmentInsurance);
+    }
+
+    function hasAnyInsurance(data) {
+      return data.insuranceSettings.nationalPension.enrolled
+        || data.insuranceSettings.healthInsurance.enrolled
+        || data.insuranceSettings.employmentInsurance.enrolled;
     }
 
     function preservesInsuranceAdministrationFields(data) {
@@ -133,11 +133,7 @@ service cloud.firestore {
     }
 
     function hasValidBusinessRates(data) {
-      return data.defaultBusinessHourlyRate is number
-        && data.defaultBusinessHourlyRate >= 0
-        && data.defaultBusinessHourlyRate <= 10000000
-        && data.usesMultipleRates is bool
-        && data.businessRates is list
+      return data.businessRates is list
         && data.businessRates.size() <= 10
         && validBusinessRateAt(data.businessRates, 0)
         && validBusinessRateAt(data.businessRates, 1)
@@ -148,21 +144,16 @@ service cloud.firestore {
         && validBusinessRateAt(data.businessRates, 6)
         && validBusinessRateAt(data.businessRates, 7)
         && validBusinessRateAt(data.businessRates, 8)
-        && validBusinessRateAt(data.businessRates, 9)
-        && (data.usesMultipleRates
-          ? data.defaultBusinessHourlyRate == 0
-            && data.businessRates.size() >= 2
-          : data.businessRates.size() == 0);
+        && validBusinessRateAt(data.businessRates, 9);
     }
 
     function hasValidSelfIncomeComposition(data) {
-      return data.insuranceEnrolled
-        ? ((data.defaultBusinessHourlyRate > 0 || data.businessRates.size() > 0)
-          ? data.incomeComposition == 'mixed' && data.contractSummary == '근로소득 + 사업소득'
-          : data.incomeComposition == 'employee' && data.contractSummary == '근로소득')
+      return hasAnyInsurance(data)
+        ? (data.businessRates.size() > 0
+          ? data.incomeComposition == 'mixed'
+          : data.incomeComposition == 'employee')
         : data.incomeComposition == 'business'
-          && data.contractSummary == '사업소득'
-          && (data.defaultBusinessHourlyRate > 0 || data.businessRates.size() > 0);
+          && data.businessRates.size() > 0;
     }
 
     function hasValidTransportPolicy(data) {
@@ -190,18 +181,15 @@ service cloud.firestore {
         && data.taxProfile.withholdingRatio in [0.8, 1, 1.2];
     }
 
-    function hasConsistentContractSummary(data) {
+    function hasConsistentIncomeComposition(data) {
       return (data.incomeComposition == 'employee'
-          && data.contractSummary == '근로소득'
-          && data.defaultBusinessHourlyRate == 0
-          && data.usesMultipleRates == false
           && data.businessRates.size() == 0)
         || (data.incomeComposition == 'business'
-          && data.contractSummary == '사업소득'
           && data.defaultEmployeePay == 0
-          && data.insuranceEnrolled == false)
+          && !hasAnyInsurance(data)
+          && (data.businessRates.size() > 0 || data.profileCompleted == false))
         || (data.incomeComposition == 'mixed'
-          && data.contractSummary == '근로소득 + 사업소득');
+          && data.businessRates.size() > 0);
     }
 
     function hasValidPhoneNumber(phone) {
@@ -219,7 +207,13 @@ service cloud.firestore {
     }
 
     function hasValidTeacherDocument(data, teacherId) {
-      return data.id == teacherId
+      return data.keys().hasOnly([
+          'id', 'name', 'email', 'phone', 'birthDateCode', 'genderCode',
+          'status', 'authUid', 'profileCompleted', 'incomeComposition',
+          'insuranceSettings', 'defaultEmployeePay', 'businessRates',
+          'transportPolicy', 'paymentDay', 'taxProfile', 'updatedAt', 'updatedBy'
+        ])
+        && data.id == teacherId
         && hasValidPersonName(data.name)
         && data.email is string
         && data.email.size() > 3
@@ -235,7 +229,7 @@ service cloud.firestore {
         && data.defaultEmployeePay >= 0
         && data.defaultEmployeePay <= 100000000
         && hasValidBusinessRates(data)
-        && hasConsistentContractSummary(data)
+        && hasConsistentIncomeComposition(data)
         && hasValidTransportPolicy(data)
         && data.paymentDay is int
         && data.paymentDay >= 1
@@ -420,8 +414,7 @@ service cloud.firestore {
           && request.resource.data.updatedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'name', 'phone', 'birthDateCode', 'genderCode',
-            'incomeComposition', 'contractSummary', 'insuranceEnrolled', 'insuranceSettings',
-            'defaultBusinessHourlyRate', 'usesMultipleRates', 'businessRates', 'profileCompleted',
+            'incomeComposition', 'insuranceSettings', 'businessRates', 'profileCompleted',
             'updatedAt', 'updatedBy'
           ]));
       allow delete: if isAdmin();
@@ -533,12 +526,6 @@ service cloud.firestore {
           && !existsAfter(/databases/$(database)/documents/expenseReceipts/$(resource.data.receiptId)));
     }
 
-    match /payrollPolicies/{policyId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin();
-      allow delete: if false;
-    }
-
     match /taxPolicies/{policyId} {
       allow read: if isAdmin();
       allow create: if isAdmin()
@@ -575,7 +562,7 @@ service cloud.firestore {
             && request.resource.data.status in ['draft', 'ready', 'published'])
           || (resource.data.status == 'published'
             && request.resource.data.status == 'cancelled'
-            && request.resource.data.revision == resource.data.get('revision', 1)
+            && request.resource.data.revision == resource.data.revision
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'status', 'revision', 'cancellationId', 'cancellationReason',
               'cancelledAt', 'updatedAt', 'updatedBy'
@@ -605,7 +592,7 @@ service cloud.firestore {
             ]))
           || (resource.data.status == 'cancelled'
             && validPublishedPayslip()
-            && request.resource.data.revision == resource.data.get('revision', 1) + 1)
+            && request.resource.data.revision == resource.data.revision + 1)
         );
       allow delete: if false;
     }

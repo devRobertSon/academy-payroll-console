@@ -153,7 +153,6 @@ export const officialInsurancePolicies = [
 
 export function createCombinedPolicy(taxPolicy = ntsTaxPolicy2024, insurancePolicy = officialInsurancePolicies.at(-1)) {
   return {
-    version: `${taxPolicy.version} / ${insurancePolicy.version}`,
     taxPolicy,
     insurancePolicy
   };

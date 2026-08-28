@@ -336,7 +336,7 @@ async function checkTeacherMonthlyPayroll() {
   const adminNav = app.match(/const adminNav = \[([\s\S]*?)\n\];/)?.[1] || "";
 
   for (const field of [
-    "insuranceSettings", "defaultEmployeePay", "defaultBusinessHourlyRate", "usesMultipleRates", "businessRates", "employeeGrossPay",
+    "incomeComposition", "insuranceSettings", "defaultEmployeePay", "businessRates", "employeeGrossPay",
     "employeeWorkHours", "businessWorkLines", "transportTrips", "parkingAmount",
     "additionalEarnings", "nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"
   ]) {
@@ -439,6 +439,7 @@ async function checkTeacherMonthlyPayroll() {
 async function checkTeacherSelfService() {
   const app = await readFile(join(root, "src", "app.js"), "utf8");
   const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  const payroll = await readFile(join(root, "src", "lib", "payroll.js"), "utf8");
   const rules = await readFile(join(root, "firestore.rules"), "utf8");
   const guide = await readFile(join(root, "docs", "user-guide.md"), "utf8");
 
@@ -468,7 +469,7 @@ async function checkTeacherSelfService() {
     if (!rules.includes(safeguard)) failures.push(`Admin notification security rule is missing: ${safeguard}`);
   }
   for (const workflow of [
-    'loadOptionalCollection("adminNotifications")',
+    'loadCollection("adminNotifications")',
     'workHoursNotificationId(input.month, input.teacherId)',
     'state.view = "payrollInputs"',
     "openMonthlyPayModal(teacher)"
@@ -479,7 +480,7 @@ async function checkTeacherSelfService() {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (teacherUpdateRule.includes(`'${adminOnlyField}'`)) failures.push(`Teacher self-update rule exposes admin-only field: ${adminOnlyField}`);
   }
-  for (const selfField of ["insuranceSettings", "defaultBusinessHourlyRate", "usesMultipleRates", "businessRates", "profileCompleted"]) {
+  for (const selfField of ["insuranceSettings", "businessRates", "profileCompleted"]) {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (!teacherUpdateRule.includes(`'${selfField}'`)) failures.push(`Teacher self-update rule is missing the allowed field: ${selfField}`);
   }
@@ -491,6 +492,14 @@ async function checkTeacherSelfService() {
   }
   for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject"]) {
     if (app.includes(removedSurface)) failures.push(`Subject-based hourly-rate input must be removed: ${removedSurface}`);
+  }
+  for (const legacyField of ["insuranceEnrolled", "defaultBusinessHourlyRate", "usesMultipleRates", "contractSummary", "policyVersion"]) {
+    if (app.includes(legacyField) || payroll.includes(legacyField) || rules.includes(legacyField)) {
+      failures.push(`Legacy payroll field must be removed: ${legacyField}`);
+    }
+  }
+  if (store.includes('loadCollection("payrollPolicies")') || rules.includes("match /payrollPolicies/")) {
+    failures.push("Legacy payrollPolicies compatibility must be removed.");
   }
   for (const legacyCollection of ["rateRules", "workEntries"]) {
     if (app.includes(legacyCollection) || store.includes(`loadCollection("${legacyCollection}")`) || rules.includes(`match /${legacyCollection}/`)) {

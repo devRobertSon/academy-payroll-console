@@ -115,22 +115,17 @@ export function provisionalTeacherForAccessRequest(request) {
     phone: "",
     status: "active",
     incomeComposition: "business",
-    insuranceEnrolled: false,
     insuranceSettings: {
       nationalPension: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
       healthInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
       employmentInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null }
     },
     defaultEmployeePay: 0,
-    defaultBusinessHourlyRate: 0,
-    usesMultipleRates: false,
     businessRates: [],
     transportPolicy: { regionLabel: "", unitAmount: 0, treatment: "pending" },
-    contractSummary: "사업소득",
     paymentDay: 10,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 },
-    profileCompleted: false,
-    createdFromAccessRequest: true
+    profileCompleted: false
   };
 }
 

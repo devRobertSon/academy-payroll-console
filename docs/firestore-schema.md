@@ -1,5 +1,7 @@
 # Firestore 컬렉션
 
+이 문서는 빈 Firestore에서 시작하는 현재 구조만 설명합니다. 이전 컬렉션이나 이전 필드를 읽어 변환하는 호환 계층은 두지 않습니다. 테스트 데이터는 모두 삭제한 뒤 이 구조로 새로 등록합니다.
+
 ## 접근 권한 요약
 
 | 컬렉션 | 관리자 | 선생님 |
@@ -12,7 +14,6 @@
 | `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간·영수증 제출 알림 생성 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
 | `insurancePolicies` | 조회·새 버전 생성 | 차단 |
-| `payrollPolicies` | 이전 버전 호환 | 차단 |
 | `payrollOverrides` | 관리 | 차단 |
 | `payrollRuns` | 관리 | 차단 |
 | `payslips` | 관리 | 본인 확정본만 |
@@ -85,15 +86,12 @@
   "genderCode": "주민등록번호 뒷자리 첫 숫자 1자리, 최초 등록 때 생략 가능",
   "status": "active",
   "incomeComposition": "employee | business | mixed",
-  "insuranceEnrolled": true,
   "insuranceSettings": {
     "nationalPension": { "enrolled": true, "defaultBaseAmount": 3000000, "effectiveFrom": "2026-01-01", "effectiveTo": null },
     "healthInsurance": { "enrolled": true, "defaultBaseAmount": 3200000, "effectiveFrom": "2026-01-01", "effectiveTo": null },
     "employmentInsurance": { "enrolled": true, "defaultBaseAmount": 3100000, "effectiveFrom": "2026-01-01", "effectiveTo": null }
   },
   "defaultEmployeePay": 3000000,
-  "defaultBusinessHourlyRate": 0,
-  "usesMultipleRates": true,
   "businessRates": [
     { "id": "rate-a", "hourlyRate": 70000 },
     { "id": "rate-b", "hourlyRate": 85000 }
@@ -104,7 +102,6 @@
     "treatment": "pending | business | employee | exempt | other"
   },
   "paymentDay": 10,
-  "contractSummary": "근로소득 | 사업소득 | 근로소득 + 사업소득",
   "profileCompleted": true,
   "taxProfile": {
     "dependentCount": 4,
@@ -116,7 +113,7 @@
 
 계좌, 전체 주민등록번호, 주소는 현재 앱에 저장하지 않습니다. 회계 확인에는 `birthDateCode` 6자리와 `genderCode` 1자리만 사용합니다. 이 두 필드도 개인정보이므로 관리자와 본인 외에는 읽을 수 없도록 Firestore 규칙을 유지하고, CSV는 안전한 채널로 전달합니다. Firestore 규칙은 신규 선생님 문서에서 두 필드의 형식을 검사하며 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 같은 전체 번호 필드의 저장을 거부합니다.
 
-`incomeComposition`은 소득 구성을 저장합니다. `employee`는 근로소득 설정만, `business`는 사업소득 설정만, `mixed`는 두 설정을 모두 급여 계산에 사용합니다. `contractSummary`는 표준 한글 표시값입니다. `insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험의 가입 여부, 기본 신고 기준액과 적용 기간을 관리합니다. 선생님은 가입 여부만 바꿀 수 있고 신고 기준액·기간은 관리자 값이 보존됩니다. `defaultEmployeePay`는 관리자 전용 근로소득 기본 월급입니다. `usesMultipleRates`가 `false`이면 `defaultBusinessHourlyRate`와 고정 ID `default-business-rate`를 사용합니다. `true`이면 `businessRates`에 ID와 금액만 있는 서로 다른 시급을 2개 이상 저장합니다. `시급 1`, `시급 2` 같은 표시명은 화면에서 순서대로 만들며 Firestore에는 저장하지 않습니다.
+`incomeComposition`은 소득 구성을 저장합니다. `employee`는 근로소득 설정만, `business`는 사업소득 설정만, `mixed`는 두 설정을 모두 급여 계산에 사용합니다. 화면의 한글 계약 요약은 이 값에서 계산하며 별도 필드로 중복 저장하지 않습니다. `insuranceSettings`는 국민연금·건강보험(장기요양 포함)·고용보험의 가입 여부, 기본 신고 기준액과 적용 기간을 관리합니다. 전체 보험 가입 여부도 이 세 항목에서 계산합니다. 선생님은 가입 여부만 바꿀 수 있고 신고 기준액·기간은 관리자 값이 보존됩니다. `defaultEmployeePay`는 관리자 전용 근로소득 기본 월급입니다. 사업소득 시급은 한 개이든 여러 개이든 항상 `businessRates` 배열에 ID와 금액으로 저장합니다. `시급 1`, `시급 2` 같은 표시명은 화면에서 순서대로 만들며 Firestore에는 저장하지 않습니다.
 
 선생님 본인은 `name`, `phone`, `birthDateCode`, `genderCode`, 보험 가입 여부, 한 개/여러 개 시급과 그에 따른 소득 구성을 수정할 수 있습니다. 이름은 한글 또는 영문과 단어 사이 공백만, 휴대전화와 생년월일 식별값은 숫자 형식만 규칙에서 허용합니다. 여러 시급 목록은 최대 10개이며 ID와 시급 형식을 규칙에서 검사합니다. `email`, `authUid`, `status`, 보험 신고 기준액·적용 기간, 근로소득 월급, 교통비 기준, 지급일과 원천징수 정보는 관리자만 수정할 수 있습니다. 관리자 생성·수정도 동일한 현재 스키마 검사를 통과해야 합니다.
 
@@ -138,7 +135,7 @@
 }
 ```
 
-이 문서에는 급여액, 시급, 소득 구분이나 보험 정보가 없습니다. `businessHours`의 키는 선생님 문서의 유효 시급 항목 ID입니다. 시급 한 개는 `default-business-rate`, 여러 시급은 각 `businessRates.id`를 사용합니다. 계산 시 등록된 ID의 수업시간만 사용하며 알 수 없는 키는 무시합니다. 선생님은 본인 UID·teacherId의 문서만 읽고 쓸 수 있고, `payrollRuns/{month}`가 `published`이면 쓰기가 거부됩니다.
+이 문서에는 급여액, 시급, 소득 구분이나 보험 정보가 없습니다. `businessHours`의 키는 선생님 문서의 `businessRates.id`입니다. 계산 시 등록된 ID의 수업시간만 사용하며 알 수 없는 키는 무시합니다. 선생님은 본인 UID·teacherId의 문서만 읽고 쓸 수 있고, `payrollRuns/{month}`가 `published`이면 쓰기가 거부됩니다.
 
 ### `adminNotifications/{work-hours_yyyy-mm_teacherId}`
 
@@ -275,7 +272,6 @@
   "documentType": "combined",
   "revision": 2,
   "releaseId": "2026-08_v2",
-  "policyVersion": "NTS-2024-02-29 / INSURANCE-2026-01",
   "taxPolicyVersion": "NTS-2024-02-29",
   "insurancePolicyVersion": "INSURANCE-2026-01",
   "calculation": {

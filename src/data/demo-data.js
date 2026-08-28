@@ -4,6 +4,12 @@ import {
   ntsTaxPolicy2024
 } from "./nts-tax-policy.js";
 
+const emptyInsuranceSettings = () => ({
+  nationalPension: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
+  healthInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null },
+  employmentInsurance: { enrolled: false, defaultBaseAmount: null, effectiveFrom: null, effectiveTo: null }
+});
+
 export const demoPolicy = createCombinedPolicy(ntsTaxPolicy2024, demoInsurancePolicy);
 
 export const demoUsers = {
@@ -58,17 +64,13 @@ export const demoTeachers = [
     genderCode: "1",
     status: "active",
     incomeComposition: "employee",
-    insuranceEnrolled: true,
     insuranceSettings: {
       nationalPension: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null },
       healthInsurance: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null },
       employmentInsurance: { enrolled: true, defaultBaseAmount: 3200000, effectiveFrom: "2026-01-01", effectiveTo: null }
     },
     defaultEmployeePay: 3200000,
-    defaultBusinessHourlyRate: 0,
-    usesMultipleRates: false,
     businessRates: [],
-    contractSummary: "근로소득",
     paymentDay: 10,
     profileCompleted: true,
     taxProfile: { dependentCount: 2, children8To20: 0, withholdingRatio: 1 }
@@ -83,13 +85,10 @@ export const demoTeachers = [
     genderCode: "2",
     status: "active",
     incomeComposition: "business",
-    insuranceEnrolled: false,
+    insuranceSettings: emptyInsuranceSettings(),
     defaultEmployeePay: 0,
-    defaultBusinessHourlyRate: 45000,
-    usesMultipleRates: false,
-    businessRates: [],
+    businessRates: [{ id: "business-rate-02", hourlyRate: 45000 }],
     transportPolicy: { regionLabel: "서울 시내", unitAmount: 1500, treatment: "business" },
-    contractSummary: "사업소득",
     paymentDay: 10,
     profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
@@ -104,15 +103,16 @@ export const demoTeachers = [
     genderCode: "1",
     status: "active",
     incomeComposition: "mixed",
-    insuranceEnrolled: true,
+    insuranceSettings: {
+      nationalPension: { enrolled: true, defaultBaseAmount: 3000000, effectiveFrom: "2026-01-01", effectiveTo: null },
+      healthInsurance: { enrolled: true, defaultBaseAmount: 3000000, effectiveFrom: "2026-01-01", effectiveTo: null },
+      employmentInsurance: { enrolled: true, defaultBaseAmount: 3000000, effectiveFrom: "2026-01-01", effectiveTo: null }
+    },
     defaultEmployeePay: 3000000,
-    defaultBusinessHourlyRate: 0,
-    usesMultipleRates: true,
     businessRates: [
       { id: "business-rate-03-a", hourlyRate: 70000 },
       { id: "business-rate-03-b", hourlyRate: 85000 }
     ],
-    contractSummary: "근로소득 + 사업소득",
     paymentDay: 12,
     profileCompleted: true,
     taxProfile: { dependentCount: 4, children8To20: 2, withholdingRatio: 1 }
@@ -127,12 +127,9 @@ export const demoTeachers = [
     genderCode: "2",
     status: "active",
     incomeComposition: "business",
-    insuranceEnrolled: false,
+    insuranceSettings: emptyInsuranceSettings(),
     defaultEmployeePay: 0,
-    defaultBusinessHourlyRate: 50000,
-    usesMultipleRates: false,
-    businessRates: [],
-    contractSummary: "사업소득",
+    businessRates: [{ id: "business-rate-04", hourlyRate: 50000 }],
     paymentDay: 12,
     profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
@@ -147,12 +144,9 @@ export const demoTeachers = [
     genderCode: "1",
     status: "active",
     incomeComposition: "business",
-    insuranceEnrolled: false,
+    insuranceSettings: emptyInsuranceSettings(),
     defaultEmployeePay: 0,
-    defaultBusinessHourlyRate: 50000,
-    usesMultipleRates: false,
-    businessRates: [],
-    contractSummary: "사업소득",
+    businessRates: [{ id: "business-rate-05", hourlyRate: 50000 }],
     paymentDay: 10,
     profileCompleted: true,
     taxProfile: { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
@@ -166,15 +160,15 @@ export const demoPayrollRuns = [
 ];
 
 export const demoOverrides = Object.fromEntries([
-  ["2026-08", "teacher-02", [["default-business-rate", 45000, 50]]],
-  ["2026-07", "teacher-02", [["default-business-rate", 45000, 45]]],
-  ["2026-06", "teacher-02", [["default-business-rate", 45000, 42]]],
+  ["2026-08", "teacher-02", [["business-rate-02", 45000, 50]]],
+  ["2026-07", "teacher-02", [["business-rate-02", 45000, 45]]],
+  ["2026-06", "teacher-02", [["business-rate-02", 45000, 42]]],
   ["2026-08", "teacher-03", [["business-rate-03-a", 70000, 10], ["business-rate-03-b", 85000, 2]]],
   ["2026-07", "teacher-03", [["business-rate-03-a", 70000, 8], ["business-rate-03-b", 85000, 1]]],
   ["2026-06", "teacher-03", [["business-rate-03-a", 70000, 6], ["business-rate-03-b", 85000, 1]]],
-  ["2026-08", "teacher-04", [["default-business-rate", 50000, 24]]],
-  ["2026-07", "teacher-04", [["default-business-rate", 50000, 22]]],
-  ["2026-06", "teacher-04", [["default-business-rate", 50000, 20]]]
+  ["2026-08", "teacher-04", [["business-rate-04", 50000, 24]]],
+  ["2026-07", "teacher-04", [["business-rate-04", 50000, 22]]],
+  ["2026-06", "teacher-04", [["business-rate-04", 50000, 20]]]
 ].map(([month, teacherId, rateRows]) => {
   const id = `${month}_${teacherId}`;
   return [`${month}:${teacherId}`, {

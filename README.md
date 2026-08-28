@@ -81,6 +81,8 @@ npm run qa
 
 ## Firebase 연결
 
+이전 테스트 문서를 모두 버리고 현재 구조로 새로 시작하는 절차는 [`docs/fresh-start.md`](./docs/fresh-start.md)를 먼저 따르세요. 현재 앱은 이전 필드나 컬렉션을 자동 변환하지 않습니다.
+
 1. [Firebase Console](https://console.firebase.google.com/)에서 프로젝트와 웹 앱을 만듭니다.
 2. Authentication에서 Google 로그인 제공업체를 활성화합니다. Firebase 공식 절차는 [Google 로그인 안내](https://firebase.google.com/docs/auth/web/google-signin)를 따릅니다.
 3. Authentication의 승인된 도메인에 `devrobertson.github.io`를 추가합니다.
@@ -130,7 +132,7 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 - 확정 후 오류는 기존 문서를 덮어쓰지 말고 취소·재발행 이력을 남기는 기능으로 처리합니다.
 - CSV와 PDF도 개인정보이므로 공개 저장소, 개인 메신저, 공용 PC에 남기지 않습니다.
 
-설계 상세는 [`docs/architecture.md`](./docs/architecture.md), 컬렉션 구조는 [`docs/firestore-schema.md`](./docs/firestore-schema.md), 운영 점검은 [`docs/security-checklist.md`](./docs/security-checklist.md), 변경 QA는 [`docs/qa.md`](./docs/qa.md)를 참고하세요.
+설계 상세는 [`docs/architecture.md`](./docs/architecture.md), 컬렉션 구조는 [`docs/firestore-schema.md`](./docs/firestore-schema.md), 완전 초기화는 [`docs/fresh-start.md`](./docs/fresh-start.md), 운영 점검은 [`docs/security-checklist.md`](./docs/security-checklist.md), 변경 QA는 [`docs/qa.md`](./docs/qa.md)를 참고하세요.
 
 실제 운영을 시작하는 전체 순서는 [`docs/remaining-operations.md`](./docs/remaining-operations.md), 화면 사용법은 [`docs/user-guide.md`](./docs/user-guide.md), Google Drive 영수증 설정은 [`docs/google-drive-receipts-setup.md`](./docs/google-drive-receipts-setup.md), Gemini 연결은 [`docs/ai-assistant-setup.md`](./docs/ai-assistant-setup.md)를 따르세요.
 

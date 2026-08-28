@@ -56,15 +56,16 @@ export async function createFirebaseStore(config) {
         ? "계정 승인 요청을 보냈습니다. 관리자가 연결한 뒤 다시 로그인해 주세요."
         : "계정 승인 요청이 대기 중입니다. 관리자가 연결한 뒤 다시 로그인해 주세요.");
     }
-    if (userSnap.data().status !== "active") {
+    const accountData = userSnap.data();
+    if (accountData.status !== "active") {
       await authSdk.signOut(auth);
       throw new Error("비활성화된 계정입니다. 관리자에게 문의해 주세요.");
     }
     return {
       uid: firebaseUser.uid,
       email: firebaseUser.email,
-      name: userSnap.data().displayName || firebaseUser.displayName || firebaseUser.email,
-      ...userSnap.data()
+      name: accountData.displayName || firebaseUser.displayName || firebaseUser.email,
+      ...accountData
     };
   }
 
@@ -122,39 +123,29 @@ export async function createFirebaseStore(config) {
     return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
   }
 
-  async function loadOptionalCollection(path, constraints = []) {
-    try {
-      return await loadCollection(path, constraints);
-    } catch (error) {
-      console.warn(`${path} 컬렉션을 아직 사용할 수 없습니다. 최신 Firestore 규칙을 게시해 주세요.`, error);
-      return [];
-    }
-  }
-
   async function loadWorkspace(user) {
     if (user.role === "admin") {
-      const [teachers, payrollRuns, taxPolicies, insurancePolicies, legacyPolicies, payrollOverrides, teacherMonthlyInputs, expenseReceipts, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
+      const [teachers, payrollRuns, taxPolicies, insurancePolicies, payrollOverrides, teacherMonthlyInputs, expenseReceipts, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
         loadCollection("teachers"),
         loadCollection("payrollRuns"),
         loadCollection("taxPolicies"),
         loadCollection("insurancePolicies"),
-        loadCollection("payrollPolicies"),
         loadCollection("payrollOverrides"),
-        loadOptionalCollection("teacherMonthlyInputs"),
-        loadOptionalCollection("expenseReceipts"),
-        loadOptionalCollection("adminNotifications"),
+        loadCollection("teacherMonthlyInputs"),
+        loadCollection("expenseReceipts"),
+        loadCollection("adminNotifications"),
         loadCollection("payslips"),
-        loadOptionalCollection("payslipVersions"),
+        loadCollection("payslipVersions"),
         loadCollection("payslipReceipts"),
         loadCollection("payslipDeliveries"),
-        loadOptionalCollection("payrollCancellations"),
-        loadOptionalCollection("accessRequests")
+        loadCollection("payrollCancellations"),
+        loadCollection("accessRequests")
       ]);
       return {
         teachers,
         payrollRuns,
         taxPolicies,
-        insurancePolicies: insurancePolicies.length ? insurancePolicies : legacyPolicies,
+        insurancePolicies,
         payrollOverrides,
         teacherMonthlyInputs,
         expenseReceipts,
@@ -173,13 +164,13 @@ export async function createFirebaseStore(config) {
         firestoreSdk.where("teacherUid", "==", user.uid),
         firestoreSdk.where("status", "==", "published")
       ]),
-      loadOptionalCollection("teacherMonthlyInputs", [
+      loadCollection("teacherMonthlyInputs", [
         firestoreSdk.where("teacherUid", "==", user.uid)
       ]),
-      loadOptionalCollection("expenseReceipts", [
+      loadCollection("expenseReceipts", [
         firestoreSdk.where("teacherUid", "==", user.uid)
       ]),
-      loadOptionalCollection("payrollRuns")
+      loadCollection("payrollRuns")
     ]);
     const teacherSnap = user.teacherId
       ? await firestoreSdk.getDoc(firestoreSdk.doc(db, "teachers", user.teacherId))

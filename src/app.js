@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-enterprise-r34";
-import { helpArticles } from "./data/help-content.js?v=20260828-enterprise-r34";
+import { appConfig } from "./config.js?v=20260828-drive-owner-r35";
+import { helpArticles } from "./data/help-content.js?v=20260828-drive-owner-r35";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-enterprise-r34";
+} from "./data/demo-data.js?v=20260828-drive-owner-r35";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-enterprise-r34";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-enterprise-r34";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-enterprise-r34";
+} from "./data/nts-tax-policy.js?v=20260828-drive-owner-r35";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-drive-owner-r35";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-drive-owner-r35";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-enterprise-r34";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-drive-owner-r35";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-enterprise-r34";
+} from "./lib/payroll-lifecycle.js?v=20260828-drive-owner-r35";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-enterprise-r34";
+} from "./lib/payroll.js?v=20260828-drive-owner-r35";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-enterprise-r34";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-enterprise-r34";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-enterprise-r34";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-enterprise-r34";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-drive-owner-r35";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-drive-owner-r35";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-drive-owner-r35";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-drive-owner-r35";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,19 +63,19 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-enterprise-r34";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-enterprise-r34";
+} from "./lib/expense-receipts.js?v=20260828-drive-owner-r35";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-drive-owner-r35";
 import {
   pendingPortalNoticeTeachers,
   PORTAL_NOTICE_CHANNEL,
   portalNoticeDeliveryId
-} from "./lib/payslip-notifications.js?v=20260828-enterprise-r34";
+} from "./lib/payslip-notifications.js?v=20260828-drive-owner-r35";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-enterprise-r34";
+} from "./lib/teacher-self-service.js?v=20260828-drive-owner-r35";
 
 const state = {
   user: null,
@@ -1042,14 +1042,26 @@ async function connectReceiptDrive() {
 
 async function refreshReceiptDriveStatus(button) {
   if (!button || appConfig.demoMode || !state.receiptApi?.configured) return;
+  button.disabled = true;
   try {
     const status = await state.receiptApi.status();
-    if (!status.connected || !button.isConnected) return;
+    const connected = status.driveConnected ?? status.connected;
+    if (!connected || !button.isConnected) {
+      button.disabled = false;
+      return;
+    }
     button.querySelector("span").textContent = "Google Drive 연결됨";
     button.querySelector("i")?.setAttribute("data-lucide", "hard-drive-download");
-    button.title = "다른 관리자 Drive 계정으로 다시 연결";
+    const ownershipStatusAvailable = typeof status.driveConnectionLocked === "boolean";
+    button.disabled = !ownershipStatusAvailable || status.driveConnectionLocked;
+    button.title = status.driveConnectionLocked
+      ? "다른 관리자가 연결한 공용 Google Drive를 사용 중입니다."
+      : ownershipStatusAvailable
+        ? "공용 Google Drive 계정을 다시 연결"
+        : "Drive 연결 보호를 적용하려면 Worker를 최신 버전으로 배포해 주세요.";
     refreshIcons();
   } catch (error) {
+    button.disabled = false;
     button.title = error.message || "Google Drive 연결 상태를 확인하지 못했습니다.";
   }
 }

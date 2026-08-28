@@ -5,6 +5,7 @@ const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "ap
 const ALLOWED_CATEGORIES = new Set(["transport", "parking"]);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_NOTICE_RECIPIENTS = 30;
+const WORKER_VERSION = "20260828-drive-owner-r35";
 
 let certificateCache = { expiresAt: 0, certificates: null };
 
@@ -13,22 +14,26 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return corsResponse(request, env, new Response(null, { status: 204 }));
     try {
-      if (url.pathname === "/health") return json(request, env, { ok: true });
+      if (url.pathname === "/health") return json(request, env, { ok: true, version: WORKER_VERSION });
       if (url.pathname === "/oauth/google/callback") return handleOAuthCallback(request, env);
 
       const session = await authenticate(request, env);
       if (url.pathname === "/integration/status" && request.method === "GET") {
         requireAdmin(session);
         const [driveConnection, gmailConnection] = await Promise.all([loadDriveConnection(env), loadGmailConnection(env)]);
+        const driveAccess = driveConnectionAccess(driveConnection, session.uid);
         return json(request, env, {
-          connected: Boolean(driveConnection),
-          driveConnected: Boolean(driveConnection),
+          connected: driveAccess.connected,
+          driveConnected: driveAccess.connected,
+          driveConnectionOwner: driveAccess.owner,
+          driveConnectionLocked: driveAccess.locked,
           gmailConnected: Boolean(gmailConnection),
           gmailSenderEmail: gmailConnection?.senderEmail || null
         });
       }
       if (url.pathname === "/oauth/google/start" && request.method === "GET") {
         requireAdmin(session);
+        assertDriveConnectionAccess(await loadDriveConnection(env), session.uid);
         return json(request, env, await startOAuth(session, env, "drive"));
       }
       if (url.pathname === "/oauth/gmail/start" && request.method === "GET") {
@@ -123,6 +128,7 @@ async function handleOAuthCallback(request, env) {
   const savedState = state ? await env.RECEIPT_KV.get(`oauth_state:${state}`, "json") : null;
   if (!savedState || !code || !['drive', 'gmail'].includes(savedState.purpose)) throw httpError(400, "Google 연결 요청이 만료되었거나 취소되었습니다.");
   await env.RECEIPT_KV.delete(`oauth_state:${state}`);
+  if (savedState.purpose === "drive") assertDriveConnectionAccess(await loadDriveConnection(env), savedState.uid);
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -146,6 +152,7 @@ async function handleOAuthCallback(request, env) {
     await env.RECEIPT_KV.put("gmail_connection", JSON.stringify({ ...common, senderEmail }));
     return Response.redirect(`${env.APP_ORIGIN.replace(/\/$/, "")}/?gmail=connected`, 302);
   }
+  assertDriveConnectionAccess(await loadDriveConnection(env), savedState.uid);
   await env.RECEIPT_KV.put("drive_connection", JSON.stringify({ ...common, rootFolderId: null }));
   return Response.redirect(`${env.APP_ORIGIN.replace(/\/$/, "")}/?drive=connected`, 302);
 }
@@ -465,6 +472,18 @@ async function encryptionKey(secret) {
 
 function requireAdmin(session) {
   if (session.account.role !== "admin") throw httpError(403, "관리자만 설정할 수 있습니다.");
+}
+
+export function driveConnectionAccess(connection, uid) {
+  const connected = Boolean(connection);
+  const owner = connected && typeof connection.connectedBy === "string" && connection.connectedBy === uid;
+  return { connected, owner, locked: connected && !owner };
+}
+
+function assertDriveConnectionAccess(connection, uid) {
+  if (driveConnectionAccess(connection, uid).locked) {
+    throw httpError(409, "Google Drive는 다른 관리자가 이미 연결했습니다.");
+  }
 }
 
 function requireKv(env) {

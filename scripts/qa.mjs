@@ -264,6 +264,9 @@ async function checkDeliverySecurity() {
   for (const removedMailSurface of ["sendPendingPayslipNotices", "dispatchPortalNotices", "connectGmailSender", "data-action=\"send-pending-notices\"", "data-action=\"connect-gmail\""]) {
     if (app.includes(removedMailSurface)) failures.push(`Dashboard automatic payslip notice surface must stay removed: ${removedMailSurface}`);
   }
+  if (app.includes("<th>전달</th>")) {
+    failures.push("Dashboard payroll table must not show the delivery column.");
+  }
   for (const individualMailSurface of ["data-action='email-payslip'", "openPayslipEmailModal", "authorizeGmailSend", "sendGmailMessage", "recordPayslipDelivery"]) {
     if (!app.includes(individualMailSurface)) failures.push(`Individual payslip email workflow is missing: ${individualMailSurface}`);
   }

@@ -267,14 +267,20 @@ async function checkDeliverySecurity() {
   if (app.includes("<th>전달</th>")) {
     failures.push("Dashboard payroll table must not show the delivery column.");
   }
-  for (const individualMailSurface of ["data-action='email-payslip'", "openPayslipEmailModal", "authorizeGmailSend", "sendGmailMessage", "recordPayslipDelivery"]) {
+  for (const individualMailSurface of ["data-action='email-payslip'", "openPayslipEmailModal", "sendGmailMessage", "recordPayslipDelivery"]) {
     if (!app.includes(individualMailSurface)) failures.push(`Individual payslip email workflow is missing: ${individualMailSurface}`);
+  }
+  if (app.includes('document.querySelector("#payslip-email-form")')) {
+    failures.push("Payslip email modal must resolve its form from the modal root, not the global document.");
   }
   for (const workerSafeguard of ["/oauth/gmail/start", "/payslip-notices", "mail_delivery:", "batchGetFirestoreDocuments"] ) {
     if (!worker.includes(workerSafeguard)) failures.push(`Automatic mail Worker safeguard is missing: ${workerSafeguard}`);
   }
 
   const store = await readFile(join(root, "src", "lib", "firebase-store.js"), "utf8");
+  if (!store.includes("authorizeGmailSend")) {
+    failures.push("Firebase store must authorize Gmail send before sending messages.");
+  }
   if (!store.includes('loadCollection("payslips")')) {
     failures.push("Admin workspace must load immutable payslip snapshots for delivery.");
   }

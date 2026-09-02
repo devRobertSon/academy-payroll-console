@@ -3029,7 +3029,8 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
     </form>
     <div class="email-fallback"><span>Gmail API를 사용하지 않을 때</span><button class="button button-secondary" type="button" data-download-compose><i data-lucide="external-link"></i>PDF 저장 후 메일 앱 열기</button></div>
   `, "Gmail로 발송", async () => {
-    const form = document.querySelector("#payslip-email-form");
+    const form = elements.modalRoot.querySelector("#payslip-email-form");
+    if (!form) throw new Error("이메일 발송 양식을 찾지 못했습니다. 명세서 보기를 다시 열어 주세요.");
     const data = Object.fromEntries(new FormData(form));
     if (!form.elements.confirmed.checked) {
       showToast("발송 전 확인 항목을 선택해 주세요.");
@@ -3037,7 +3038,6 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
     }
     if (!state.store) throw new Error("데모에서는 실제 메일을 발송하지 않습니다. Firebase 연결 후 사용해 주세요.");
 
-    await state.store.authorizeGmailSend();
     const file = await createCurrentPayslipPdf(teacher, payslipDocument);
     const raw = buildGmailMessage({
       to: data.to,
@@ -3069,7 +3069,11 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
 
   elements.modalRoot.querySelector("[data-download-compose]").addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    const form = document.querySelector("#payslip-email-form");
+    const form = elements.modalRoot.querySelector("#payslip-email-form");
+    if (!form) {
+      showToast("이메일 발송 양식을 찾지 못했습니다. 명세서 보기를 다시 열어 주세요.");
+      return;
+    }
     const data = Object.fromEntries(new FormData(form));
     button.disabled = true;
     try {

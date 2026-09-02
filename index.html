@@ -127,6 +127,21 @@
 
     <div id="modal-root"></div>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
+    <script>
+      (() => {
+        function removeDashboardMailNoticeSurfaces() {
+          document.querySelectorAll('[data-action="connect-gmail"], [data-action="send-pending-notices"]').forEach((node) => node.remove());
+          document.querySelectorAll("table").forEach((table) => {
+            const headers = [...table.querySelectorAll("thead th")];
+            const deliveryIndex = headers.findIndex((header) => header.textContent.trim() === "전달");
+            if (deliveryIndex < 0) return;
+            table.querySelectorAll("tr").forEach((row) => row.children[deliveryIndex]?.remove());
+          });
+        }
+        removeDashboardMailNoticeSurfaces();
+        new MutationObserver(removeDashboardMailNoticeSurfaces).observe(document.body, { childList: true, subtree: true });
+      })();
+    </script>
     <script type="module" src="./src/app.js?v=20260828-admin-gmail-r36"></script>
   </body>
 </html>

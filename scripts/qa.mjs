@@ -261,8 +261,11 @@ async function checkDeliverySecurity() {
   for (const removedNoticeCopy of ["copy-notice", "copyPayslipNotice"]) {
     if (app.includes(removedNoticeCopy)) failures.push(`Legacy notice-copy action must be removed: ${removedNoticeCopy}`);
   }
-  for (const automaticMailSurface of ["sendPendingPayslipNotices", "dispatchPortalNotices", "connectGmailSender"]) {
-    if (!app.includes(automaticMailSurface)) failures.push(`Automatic payslip notice workflow is missing: ${automaticMailSurface}`);
+  for (const removedMailSurface of ["sendPendingPayslipNotices", "dispatchPortalNotices", "connectGmailSender", "data-action=\"send-pending-notices\"", "data-action=\"connect-gmail\""]) {
+    if (app.includes(removedMailSurface)) failures.push(`Dashboard automatic payslip notice surface must stay removed: ${removedMailSurface}`);
+  }
+  for (const individualMailSurface of ["data-action='email-payslip'", "openPayslipEmailModal", "authorizeGmailSend", "sendGmailMessage", "recordPayslipDelivery"]) {
+    if (!app.includes(individualMailSurface)) failures.push(`Individual payslip email workflow is missing: ${individualMailSurface}`);
   }
   for (const workerSafeguard of ["/oauth/gmail/start", "/payslip-notices", "mail_delivery:", "batchGetFirestoreDocuments"] ) {
     if (!worker.includes(workerSafeguard)) failures.push(`Automatic mail Worker safeguard is missing: ${workerSafeguard}`);

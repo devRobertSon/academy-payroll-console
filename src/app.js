@@ -66,11 +66,6 @@ import {
 } from "./lib/expense-receipts.js?v=20260828-admin-gmail-r36";
 import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r36";
 import {
-  pendingPortalNoticeTeachers,
-  PORTAL_NOTICE_CHANNEL,
-  portalNoticeDeliveryId
-} from "./lib/payslip-notifications.js?v=20260828-admin-gmail-r36";
-import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
@@ -448,14 +443,9 @@ function renderDashboard() {
   const payrolls = payrollsForMonth(state.month);
   const summary = summarizePayroll(payrolls.map((item) => item.payroll));
   const run = runForMonth(state.month);
-  const pendingNotices = run.status === "published"
-    ? pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, state.month, artifactRevision(run))
-    : [];
   const cancellations = cancellationsForMonth(state.month);
   const unconfirmedItems = payrolls.flatMap(({ teacher, payroll }) => (payroll.unconfirmedEarningLines || []).map((line) => `${teacher.name} ${line.subjectName}`));
   setPage("급여 대시보드", formatMonth(state.month), `
-    <button class="button button-secondary" type="button" data-action="connect-gmail"><i data-lucide="mail-check"></i><span>발송 계정 연결</span></button>
-    ${run.status === "published" ? `<button class="button button-secondary" type="button" data-action="send-pending-notices" ${pendingNotices.length ? "" : "disabled"}><i data-lucide="send"></i><span>미발송 ${pendingNotices.length}명 발송</span></button>` : ""}
     <button class="button button-secondary" type="button" data-action="export-ledger"><i data-lucide="download"></i><span>내역서 저장</span></button>
     ${run.status === "published"
       ? `<button class="button button-danger" type="button" data-action="cancel-run"><i data-lucide="rotate-ccw"></i><span>확정 취소</span></button>`
@@ -495,10 +485,6 @@ function renderDashboard() {
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
-  const gmailButton = elements.topbarActions.querySelector("[data-action='connect-gmail']");
-  gmailButton?.addEventListener("click", connectGmailSender);
-  refreshGmailSenderStatus(gmailButton);
-  elements.topbarActions.querySelector("[data-action='send-pending-notices']")?.addEventListener("click", sendPendingPayslipNotices);
   elements.topbarActions.querySelector("[data-action='publish-run']")?.addEventListener("click", openPublishModal);
   elements.topbarActions.querySelector("[data-action='cancel-run']")?.addEventListener("click", openCancelPayrollModal);
   bindPayrollRows();
@@ -1064,102 +1050,6 @@ async function refreshReceiptDriveStatus(button) {
     button.disabled = false;
     button.title = error.message || "Google Drive 연결 상태를 확인하지 못했습니다.";
   }
-}
-
-async function connectGmailSender() {
-  try {
-    if (appConfig.demoMode) throw new Error("실제 Firebase 모드에서 연결할 수 있습니다.");
-    const { authorizationUrl } = await state.receiptApi.connectGmailUrl();
-    window.location.href = authorizationUrl;
-  } catch (error) {
-    showToast(error.message || "Gmail 발송 계정 연결을 시작하지 못했습니다.");
-  }
-}
-
-async function refreshGmailSenderStatus(button) {
-  if (!button || appConfig.demoMode || !state.receiptApi?.configured) return;
-  try {
-    const status = await state.receiptApi.status();
-    if (!status.gmailConnected || !button.isConnected) return;
-    button.querySelector("span").textContent = status.gmailSenderEmail
-      ? `발송: ${status.gmailSenderEmail}`
-      : "Gmail 발송 연결됨";
-    button.title = "다른 관리자 Gmail 계정으로 다시 연결";
-  } catch (error) {
-    button.title = error.message || "Gmail 발송 계정 상태를 확인하지 못했습니다.";
-  }
-}
-
-async function sendPendingPayslipNotices(event) {
-  const button = event.currentTarget;
-  const run = runForMonth(state.month);
-  const payrolls = payrollsForMonth(state.month);
-  const pending = pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, state.month, artifactRevision(run));
-  if (!pending.length) {
-    showToast("현재 확정 차수의 미발송 선생님이 없습니다.");
-    return;
-  }
-  if (!window.confirm(`${formatMonth(state.month)} 급여명세서 확인 안내를 미발송 ${pending.length}명에게 보내시겠습니까?`)) return;
-  button.disabled = true;
-  try {
-    const summary = await dispatchPortalNotices(payrolls, run);
-    showPortalNoticeSummary(summary);
-    renderDashboard();
-  } catch (error) {
-    showToast(error.message || "급여명세서 안내 메일을 발송하지 못했습니다.");
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function dispatchPortalNotices(payrolls, run) {
-  if (appConfig.demoMode || !state.store) return { sent: 0, alreadySent: 0, failed: 0, skipped: true };
-  if (!state.receiptApi?.configured) throw new Error("급여 안내 메일 Worker 주소가 설정되지 않았습니다.");
-  const revision = artifactRevision(run);
-  const teachers = pendingPortalNoticeTeachers(payrolls, state.data.payslipDeliveries, run.month, revision);
-  if (!teachers.length) return { sent: 0, alreadySent: 0, failed: 0 };
-  const response = await state.receiptApi.sendPayslipNotices({
-    month: run.month,
-    revision,
-    teacherIds: teachers.map((teacher) => teacher.id)
-  });
-  const summary = { sent: 0, alreadySent: 0, failed: 0 };
-  for (const result of response.results || []) {
-    if (!['sent', 'already_sent'].includes(result.status)) {
-      summary.failed += 1;
-      continue;
-    }
-    try {
-      const saved = await state.store.recordPayslipDelivery({
-        payslipId: payslipId(run.month, result.teacherId),
-        teacherId: result.teacherId,
-        month: run.month,
-        revision,
-        recipientEmail: result.recipientEmail,
-        channel: PORTAL_NOTICE_CHANNEL,
-        gmailMessageId: result.gmailMessageId
-      }, portalNoticeDeliveryId(run.month, result.teacherId, revision));
-      if (!state.data.payslipDeliveries.some((item) => item.id === saved.id)) {
-        state.data.payslipDeliveries.push(saved);
-      }
-      if (result.status === "sent") summary.sent += 1;
-      else summary.alreadySent += 1;
-    } catch (error) {
-      console.error("자동 급여 안내 발송 이력 저장 실패", error);
-      summary.failed += 1;
-    }
-  }
-  return summary;
-}
-
-function showPortalNoticeSummary(summary) {
-  if (summary.skipped) return;
-  const completed = summary.sent + summary.alreadySent;
-  if (summary.failed) {
-    showToast(`급여 안내 ${completed}명 처리 완료, ${summary.failed}명 실패했습니다. 미발송 안내 발송에서 다시 시도해 주세요.`);
-    return;
-  }
-  showToast(completed ? `선생님 ${completed}명에게 급여명세서 확인 안내를 발송했습니다.` : "발송할 새 안내 메일이 없습니다.");
 }
 
 function receiptStatusClass(status) {
@@ -2908,7 +2798,7 @@ function openPublishModal() {
   if (currentRun.status === "published") return;
   const revision = nextPayrollRevision(currentRun);
   const isReissue = currentRun.status === "cancelled";
-  openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."} Gmail 발송 계정이 연결되어 있으면 확정 직후 선생님에게 포털 확인 링크를 자동 발송합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
+  openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."} 이메일 발송은 명세서 보기 화면에서 수신자와 첨부 파일을 확인한 뒤 개별로 진행합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
     if (!document.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
     const missingInsuredSalary = activeTeachers().filter((teacher) => {
       const settings = teacherPaySettings(teacher);
@@ -2975,19 +2865,7 @@ function openPublishModal() {
     const runIndex = state.data.payrollRuns.findIndex((item) => item.month === state.month);
     if (runIndex >= 0) state.data.payrollRuns[runIndex] = run;
     else state.data.payrollRuns.push(run);
-    try {
-      const noticeSummary = await dispatchPortalNotices(payrolls, run);
-      if (noticeSummary.failed) {
-        showToast(`급여는 확정했지만 안내 메일 ${noticeSummary.failed}명을 발송하지 못했습니다. 미발송 안내 발송에서 다시 시도해 주세요.`);
-      } else if (!noticeSummary.skipped) {
-        showPortalNoticeSummary(noticeSummary);
-      } else {
-        showToast(isReissue ? `${revision}차 수정 명세서를 재발행했습니다.` : "급여를 확정하고 명세서를 공개했습니다.");
-      }
-    } catch (error) {
-      console.error("자동 급여 안내 발송 실패", error);
-      showToast(`급여는 확정했지만 안내 메일은 보내지 못했습니다: ${error.message || "발송 계정 연결을 확인해 주세요."}`);
-    }
+    showToast(isReissue ? `${revision}차 수정 명세서를 재발행했습니다.` : "급여를 확정하고 명세서를 공개했습니다.");
     renderDashboard();
   });
 }
@@ -3096,8 +2974,8 @@ async function downloadCurrentPayslip(event) {
   button.disabled = true;
   try {
     const teacher = teacherById(state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId);
-    const document = selectedPayslipDocument(teacher);
-    const file = await createCurrentPayslipPdf(teacher, document);
+    const payslipDocument = selectedPayslipDocument(teacher);
+    const file = await createCurrentPayslipPdf(teacher, payslipDocument);
     downloadFile(file);
     showToast("급여명세서 PDF를 저장했습니다.");
   } catch (error) {
@@ -3115,29 +2993,29 @@ function selectedPayslipDocument(teacher) {
   return documents.find((document) => document.incomeType === state.selectedPayslipType) || documents[0] || null;
 }
 
-function createCurrentPayslipPdf(teacher, document = selectedPayslipDocument(teacher)) {
+function createCurrentPayslipPdf(teacher, payslipDocument = selectedPayslipDocument(teacher)) {
   if (!teacher) throw new Error("선생님 정보를 찾지 못했습니다.");
-  if (!document) throw new Error("급여명세서를 찾지 못했습니다.");
+  if (!payslipDocument) throw new Error("급여명세서를 찾지 못했습니다.");
   return createPayslipPdfFile(elements.content.querySelector(".payslip-sheet"), {
     academyName: appConfig.academyName,
     teacherName: teacher.name,
     month: state.selectedPayslipMonth,
-    incomeLabel: document.incomeLabel
+    incomeLabel: payslipDocument.incomeLabel
   });
 }
 
-function openPayslipEmailModal(teacher, document, run) {
-  if (!teacher || !document?.payroll || run.status !== "published") {
+function openPayslipEmailModal(teacher, payslipDocument, run) {
+  if (!teacher || !payslipDocument?.payroll || run.status !== "published") {
     showToast("확정된 급여명세서만 이메일로 발송할 수 있습니다.");
     return;
   }
-  const payroll = document.payroll;
-  const persisted = state.data.payslips.find((item) => item.id === document.payslipId);
+  const payroll = payslipDocument.payroll;
+  const persisted = state.data.payslips.find((item) => item.id === payslipDocument.payslipId);
   const revision = artifactRevision(persisted || currentPayslip(teacher.id, state.selectedPayslipMonth) || run);
   const revisionLabel = revision > 1 ? ` 수정 ${revision}차` : "";
-  const subject = `${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}`;
-  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${document.incomeLabel} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
-  const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth, document.incomeLabel);
+  const subject = `${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${payslipDocument.incomeLabel} 급여명세서${revisionLabel}`;
+  const body = `안녕하세요, ${teacher.name} 선생님.\n\n${appConfig.academyName}에서 보낸 ${formatMonth(state.selectedPayslipMonth)} ${payslipDocument.incomeLabel} 급여명세서${revisionLabel}를 첨부합니다.\n등록된 Google 계정으로 로그인하면 포털에서도 지난 명세서를 확인할 수 있습니다.\n${portalUrl()}\n\n감사합니다.`;
+  const filename = payslipFilename(appConfig.academyName, teacher.name, state.selectedPayslipMonth, payslipDocument.incomeLabel);
   openModal("급여명세서 이메일 발송", `
     <div class="notice compact"><i data-lucide="shield-check"></i><span>발송할 때 관리자 Google 계정에 Gmail 전송 권한만 요청합니다. 권한 토큰과 첨부 파일은 저장하지 않습니다.</span></div>
     <div class="delivery-summary">
@@ -3161,7 +3039,7 @@ function openPayslipEmailModal(teacher, document, run) {
     if (!state.store) throw new Error("데모에서는 실제 메일을 발송하지 않습니다. Firebase 연결 후 사용해 주세요.");
 
     await state.store.authorizeGmailSend();
-    const file = await createCurrentPayslipPdf(teacher, document);
+    const file = await createCurrentPayslipPdf(teacher, payslipDocument);
     const raw = buildGmailMessage({
       to: data.to,
       subject: data.subject,
@@ -3171,7 +3049,7 @@ function openPayslipEmailModal(teacher, document, run) {
     });
     const result = await state.store.sendGmailMessage(raw);
     const deliveryData = {
-      payslipId: document.payslipId,
+      payslipId: payslipDocument.payslipId,
       teacherId: teacher.id,
       month: state.selectedPayslipMonth,
       revision,
@@ -3196,7 +3074,7 @@ function openPayslipEmailModal(teacher, document, run) {
     const data = Object.fromEntries(new FormData(form));
     button.disabled = true;
     try {
-      downloadFile(await createCurrentPayslipPdf(teacher, document));
+      downloadFile(await createCurrentPayslipPdf(teacher, payslipDocument));
       window.location.href = `mailto:${encodeURIComponent(data.to)}?subject=${encodeURIComponent(data.subject)}&body=${encodeURIComponent(data.body)}`;
       showToast("PDF를 저장했습니다. 열린 메일에 파일을 첨부해 주세요.");
     } catch (error) {

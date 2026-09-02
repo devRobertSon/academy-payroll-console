@@ -31,9 +31,9 @@ button { color: inherit; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .login-view { --login-brand: #2563a6; --login-brand-dark: #194b80; min-height: 100vh; display: grid; grid-template-columns: minmax(360px, 480px) minmax(0, 1fr); background: var(--surface); }
-.public-home { min-width: 0; grid-column: 2; grid-row: 1; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: clamp(44px, 7vw, 96px); background: var(--surface-subtle); }
+.public-home { min-width: 0; grid-column: 2; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: clamp(44px, 7vw, 96px); background: var(--surface-subtle); }
 .public-home > * { width: min(640px, 100%); margin-right: auto; margin-left: auto; }
-.login-panel { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(32px, 6vw, 76px); border-right: 1px solid var(--line); background: var(--surface); }
+.login-panel { grid-column: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(32px, 6vw, 76px); border-right: 1px solid var(--line); background: var(--surface); }
 .login-view .brand-mark, .login-view .button-primary { background: var(--login-brand); }
 .login-view .button-primary:hover { background: var(--login-brand-dark); }
 .brand-lockup, .sidebar-brand { display: flex; align-items: center; gap: 12px; }

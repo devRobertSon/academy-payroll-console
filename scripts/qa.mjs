@@ -273,6 +273,28 @@ async function checkDeliverySecurity() {
   if (app.includes('document.querySelector("#payslip-email-form")')) {
     failures.push("Payslip email modal must resolve its form from the modal root, not the global document.");
   }
+  const modalGlobalSelectors = [
+    "#receipt-review-form",
+    "#teacher-self-profile-form",
+    "#teacher-form",
+    "#access-approval-form",
+    "#reject-access-confirm",
+    "#teacher-delete-form",
+    "#teacher-edit-form",
+    "#tax-profile-form",
+    "#monthly-pay-form",
+    "#payroll-adjustment-form",
+    "#tax-policy-form",
+    "#tax-table-file",
+    "#insurance-policy-form",
+    "#publish-confirm",
+    "#cancel-payroll-form"
+  ];
+  for (const selector of modalGlobalSelectors) {
+    if (app.includes(`document.querySelector("${selector}")`)) {
+      failures.push(`Modal selector must use modalRoot instead of global document: ${selector}`);
+    }
+  }
   for (const workerSafeguard of ["/oauth/gmail/start", "/payslip-notices", "mail_delivery:", "batchGetFirestoreDocuments"] ) {
     if (!worker.includes(workerSafeguard)) failures.push(`Automatic mail Worker safeguard is missing: ${workerSafeguard}`);
   }

@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-admin-gmail-r37";
-import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r37";
+import { appConfig } from "./config.js?v=20260828-admin-gmail-r38";
+import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r38";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-admin-gmail-r37";
+} from "./data/demo-data.js?v=20260828-admin-gmail-r38";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r37";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r37";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r37";
+} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r38";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r38";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r38";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r37";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r38";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r37";
+} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r38";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-admin-gmail-r37";
+} from "./lib/payroll.js?v=20260828-admin-gmail-r38";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r37";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r37";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r37";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r37";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r38";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r38";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r38";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r38";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,14 +63,14 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r37";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r37";
+} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r38";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r38";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r37";
+} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r38";
 
 const state = {
   user: null,
@@ -973,14 +973,14 @@ function openReceiptReviewModal(receipt) {
     </form>
     <div class="receipt-review-reject"><button class="button button-danger" type="button" data-reject-receipt><i data-lucide="x-circle"></i><span>반려</span></button></div>
   `, "승인", async () => {
-    const form = document.querySelector("#receipt-review-form");
+    const form = elements.modalRoot.querySelector("#receipt-review-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     await reviewExpenseReceipt(receipt, { status: "approved", treatment: data.treatment, insuranceCovered: form.elements.insuranceCovered.checked, reviewNote: data.reviewNote.trim() });
   });
   elements.modalRoot.querySelector("[data-view-review-file]")?.addEventListener("click", () => openReceiptFile(receipt));
   elements.modalRoot.querySelector("[data-reject-receipt]")?.addEventListener("click", async (event) => {
-    const form = document.querySelector("#receipt-review-form");
+    const form = elements.modalRoot.querySelector("#receipt-review-form");
     const note = form.elements.reviewNote.value.trim();
     if (!note) {
       showToast("선생님이 확인할 반려 사유를 입력해 주세요.");
@@ -2095,7 +2095,7 @@ function openTeacherSelfProfileModal(teacher) {
       ${businessPayRateEditorHtml(settings, "self", "self-business-rates")}
     </form>
   `, "저장", async () => {
-    const form = document.querySelector("#teacher-self-profile-form");
+    const form = elements.modalRoot.querySelector("#teacher-self-profile-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     const businessPaySettings = readBusinessPaySettings(form, "self", "#self-business-rates");
@@ -2126,7 +2126,7 @@ function openTeacherSelfProfileModal(teacher) {
     showToast("내 정보를 저장했습니다.");
     renderProfile();
   });
-  const form = document.querySelector("#teacher-self-profile-form");
+  const form = elements.modalRoot.querySelector("#teacher-self-profile-form");
   bindPersonNameInput(form);
   bindTeacherIdentityInput(form);
   bindMobilePhoneInput(form);
@@ -2168,7 +2168,7 @@ function openTeacherModal() {
       <div class="form-field"><label for="teacher-payday">지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" required /></div>
       <p class="form-help full">실제 계정 연결은 사용자가 처음 로그인한 뒤 관리자 승인 절차에서 UID를 확인하도록 운영하세요.</p>
     </form>`, "등록", async () => {
-    const form = document.querySelector("#teacher-form");
+    const form = elements.modalRoot.querySelector("#teacher-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     const email = normalizeEmail(data.email);
@@ -2212,7 +2212,7 @@ function openTeacherModal() {
       showToast("선생님을 등록했습니다.");
       renderTeachers();
     });
-  const form = document.querySelector("#teacher-form");
+  const form = elements.modalRoot.querySelector("#teacher-form");
   bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
   bindInsuranceEditorAutomation(form, "teacher", "#teacher-employee-pay");
@@ -2243,7 +2243,7 @@ function openAccessApprovalModal(request) {
       <label class="checkbox-row full"><input name="confirmed" type="checkbox" ${matches.length || canCreateTeacher ? "" : "disabled"} /> Google 이메일과 계정 생성 여부를 확인했습니다.</label>
     </form>
   `, "승인 및 연결", async () => {
-    const form = document.querySelector("#access-approval-form");
+    const form = elements.modalRoot.querySelector("#access-approval-form");
     if (!matches.length && !canCreateTeacher) throw new Error("같은 이메일의 기존 선생님 정보를 먼저 확인해 주세요.");
     if (!form.reportValidity()) return false;
     if (!form.elements.confirmed.checked) { showToast("승인 확인을 선택해 주세요."); return false; }
@@ -2268,7 +2268,7 @@ function openAccessRejectionModal(request) {
     <dl class="definition-list approval-summary"><div><dt>요청자</dt><dd>${e(request.displayName || "이름 미확인")}</dd></div><div><dt>Google 이메일</dt><dd>${e(request.email)}</dd></div></dl>
     <label class="checkbox-row" style="margin-top:18px"><input id="reject-access-confirm" type="checkbox" /> 이 계정을 연결하지 않고 반려합니다.</label>
   `, "요청 반려", async () => {
-    if (!document.querySelector("#reject-access-confirm").checked) {
+    if (!elements.modalRoot.querySelector("#reject-access-confirm").checked) {
       showToast("반려 확인을 선택해 주세요.");
       return false;
     }
@@ -2299,7 +2299,7 @@ function openTeacherDeletionModal(teacher) {
       <div class="form-field full"><label for="teacher-delete-email">삭제 확인 이메일</label><input id="teacher-delete-email" name="confirmationEmail" type="email" autocomplete="off" spellcheck="false" placeholder="위 Google 이메일을 입력하세요" required /><span class="form-help">등록된 Google 이메일과 일치해야 삭제할 수 있습니다.</span></div>
     </form>
   `, "선생님 삭제", async () => {
-    const form = document.querySelector("#teacher-delete-form");
+    const form = elements.modalRoot.querySelector("#teacher-delete-form");
     if (!form.reportValidity()) return false;
     const confirmationEmail = new FormData(form).get("confirmationEmail");
     validateTeacherDeletion(teacher, confirmationEmail, state.data);
@@ -2319,7 +2319,7 @@ function openTeacherDeletionModal(teacher) {
     renderTeachers();
   });
 
-  const form = document.querySelector("#teacher-delete-form");
+  const form = elements.modalRoot.querySelector("#teacher-delete-form");
   const emailInput = form.querySelector('[name="confirmationEmail"]');
   const submit = elements.modalRoot.querySelector("[data-submit-modal]");
   submit.classList.remove("button-primary");
@@ -2370,7 +2370,7 @@ function openTeacherEditModal(teacher) {
       <div class="form-field"><label for="teacher-edit-status">계정 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select></div>
     </form>
   `, "저장", async () => {
-    const form = document.querySelector("#teacher-edit-form");
+    const form = elements.modalRoot.querySelector("#teacher-edit-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     const email = normalizeEmail(data.email);
@@ -2412,7 +2412,7 @@ function openTeacherEditModal(teacher) {
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
     renderTeachers();
   });
-  const form = document.querySelector("#teacher-edit-form");
+  const form = elements.modalRoot.querySelector("#teacher-edit-form");
   bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
   bindInsuranceEditorAutomation(form, "teacher-edit", "#teacher-edit-employee-pay");
@@ -2431,7 +2431,7 @@ function openTaxProfileModal(teacher) {
       <div class="form-field full"><label for="profile-ratio">원천징수 비율</label><select id="profile-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select><span class="form-help">신청하지 않은 경우 100%입니다. 변경 신청한 비율은 해당 과세기간 종료일까지 적용합니다.</span></div>
     </form>
   `, "저장", async () => {
-    const form = document.querySelector("#tax-profile-form");
+    const form = elements.modalRoot.querySelector("#tax-profile-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     teacher.taxProfile = {
@@ -2474,7 +2474,7 @@ function openMonthlyPayModal(teacher) {
       <div class="form-field full"><label for="monthly-pay-note">변경 메모</label><input id="monthly-pay-note" name="grossPayNote" maxlength="200" value="${e(current.grossPayNote || "")}" placeholder="예: 보강 수업 2시간 포함" /><span class="form-help">개인정보나 상세 급여 내역을 적지 말고 변경 이유만 간단히 기록합니다.</span></div>
     </form>
   `, "저장", async () => {
-    const form = document.querySelector("#monthly-pay-form");
+    const form = elements.modalRoot.querySelector("#monthly-pay-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     const businessWorkLines = readBusinessWorkLines("#monthly-business-work");
@@ -2545,7 +2545,7 @@ function openPayrollAdjustmentModal(teacher) {
       <div class="form-field full"><label for="adjust-custom">기타 공제</label><input id="adjust-custom" name="custom" type="number" min="0" step="1" value="${optionalValue("custom")}" placeholder="0" /></div>
     </form>
   `, "저장", async () => {
-    const form = document.querySelector("#payroll-adjustment-form");
+    const form = elements.modalRoot.querySelector("#payroll-adjustment-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     const automaticFields = [
@@ -2595,7 +2595,7 @@ function openTaxPolicyModal() {
       <div class="form-field full"><label for="high-income-rules">월 1천만원 초과 산식 JSON</label><textarea id="high-income-rules" name="highIncomeRules" spellcheck="false" required>${e(JSON.stringify(current.employment.highIncomeBrackets, null, 2))}</textarea><span class="form-help">소득세법 시행령 별표 2의 고액 급여 구간, 가산액, 초과금액 비율과 세율입니다.</span></div>
     </form>
   `, "등록", async () => {
-    const form = document.querySelector("#tax-policy-form");
+    const form = elements.modalRoot.querySelector("#tax-policy-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     if (state.data.taxPolicies.some((policy) => policy.version === data.version)) {
@@ -2611,7 +2611,7 @@ function openTaxPolicyModal() {
       tableRows: structuredClone(current.employment.tableRows),
       taxAtTenMillion: structuredClone(current.employment.taxAtTenMillion)
     };
-    const tableFile = document.querySelector("#tax-table-file").files?.[0];
+    const tableFile = elements.modalRoot.querySelector("#tax-table-file").files?.[0];
     if (tableFile) table = parseEmploymentTaxTableRows(csvRowsToObjects(parseCsv(await tableFile.text())));
 
     const localRatio = Number(data.localIncomeTaxRatio) / 100;
@@ -2692,7 +2692,7 @@ function openInsurancePolicyModal() {
       <div class="form-field full"><label for="rounding-source">보험료 단수 처리 공식 확인 URL</label><input id="rounding-source" name="roundingSourceUrl" type="url" value="${e(sourceUrl("calculationRounding"))}" required /><span class="form-help">국민연금공단·건강보험공단·4대사회보험정보연계센터·정부·국가법령정보센터 주소만 허용합니다.</span></div>
     </form>
   `, "등록", async () => {
-    const form = document.querySelector("#insurance-policy-form");
+    const form = elements.modalRoot.querySelector("#insurance-policy-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     if (state.data.insurancePolicies.some((policy) => policy.version === data.version)) {
@@ -2798,7 +2798,7 @@ function openPublishModal() {
   const revision = nextPayrollRevision(currentRun);
   const isReissue = currentRun.status === "cancelled";
   openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."} 이메일 발송은 명세서 보기 화면에서 수신자와 첨부 파일을 확인한 뒤 개별로 진행합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
-    if (!document.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
+    if (!elements.modalRoot.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
     const missingInsuredSalary = activeTeachers().filter((teacher) => {
       const settings = teacherPaySettings(teacher);
       return settings.hasInsurance && monthlyPayAmounts(teacher, state.month).employeeGrossPay <= 0;
@@ -2880,7 +2880,7 @@ function openCancelPayrollModal() {
       <label class="checkbox-row full"><input name="confirmed" type="checkbox" /> 선생님에게 공개된 명세서가 취소된다는 점을 확인했습니다.</label>
     </form>
   `, "확정 취소", async () => {
-    const form = document.querySelector("#cancel-payroll-form");
+    const form = elements.modalRoot.querySelector("#cancel-payroll-form");
     if (!form.reportValidity()) return false;
     if (!form.elements.confirmed.checked) { showToast("취소 확인을 선택해 주세요."); return false; }
     const reason = new FormData(form).get("reason").trim();

@@ -184,6 +184,23 @@ export const helpArticles = [
       "Firebase 규칙, 복합 색인, Storage 차단과 App Check 적용 상태를 정기적으로 확인합니다.",
       "공개 저장소에 비밀키, OAuth 토큰이나 개인정보가 없는지 확인합니다."
     ],
+    screenshots: [
+      {
+        src: "./docs/images/oauth-branding-app-domain.png",
+        alt: "Google Cloud OAuth 브랜딩의 앱 도메인 입력 화면",
+        caption: "OAuth 브랜딩에서는 앱 이름, 홈페이지, 개인정보처리방침, 서비스 이용약관, 승인된 도메인을 확인합니다."
+      },
+      {
+        src: "./docs/images/oauth-sensitive-scope-reason.png",
+        alt: "gmail.send 민감한 범위 사용 방식 입력 화면",
+        caption: "Gmail 전송 범위는 급여명세서 PDF를 관리자 Gmail 계정에서 개별 발송할 때만 사용한다고 설명합니다."
+      },
+      {
+        src: "./docs/images/oauth-demo-video-link.png",
+        alt: "OAuth 검증 데모 동영상 링크 입력 화면",
+        caption: "검증 제출이 필요한 경우 로그인, 명세서 보기, Gmail 권한 요청과 발송 장면이 담긴 데모 영상을 등록합니다."
+      }
+    ],
     cautions: ["AI 도움말에는 실제 이름, 이메일, 휴대전화 번호, 계좌번호, 주민번호와 생년월일 식별값을 입력하지 않습니다. 금액이 필요하면 익명·가상 사례로 반올림해 질문합니다."],
     keywords: ["설정", "세금", "사회보험", "요율", "정책", "App Check", "Firestore", "보안", "개인정보"]
   },
@@ -212,6 +229,18 @@ export const helpArticles = [
       "이메일 버튼이 비활성화되면 급여 확정 여부를 확인합니다.",
       "Gmail 발송 오류가 나면 Gmail API 활성화와 OAuth 동의 범위를 확인하고 PDF 직접 첨부 방식을 사용합니다.",
       "오류 팝업은 확인 버튼을 누를 때까지 남아 있으므로 문구를 닫기 전에 캡처합니다."
+    ],
+    screenshots: [
+      {
+        src: "./docs/images/oauth-appeal-reasons-privacy-home.png",
+        alt: "OAuth 이의신청 사유 입력 화면",
+        caption: "이의신청에는 개인정보처리방침 내용, 로그인 전 홈페이지 안내, 앱 목적 설명을 항목별로 적습니다."
+      },
+      {
+        src: "./docs/images/oauth-appeal-reasons-app-name.png",
+        alt: "OAuth 앱 이름 이의신청 사유 입력 화면",
+        caption: "앱 이름 지적이 있으면 OAuth 앱 이름과 포털 첫 화면의 이름이 일치하는지 확인합니다."
+      }
     ],
     cautions: ["오류 화면을 공유할 때 이름, 이메일, UID, 급여액과 토큰은 가린 뒤 전달합니다."],
     keywords: ["오류", "문제", "안됨", "로그인", "미표시", "비활성", "Gmail", "해결"]

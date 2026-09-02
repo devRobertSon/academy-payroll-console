@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-admin-gmail-r40";
-import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r40";
+import { appConfig } from "./config.js?v=20260828-admin-gmail-r41";
+import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r41";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-admin-gmail-r40";
+} from "./data/demo-data.js?v=20260828-admin-gmail-r41";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r40";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r40";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r40";
+} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r41";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r41";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r41";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r40";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r41";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r40";
+} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r41";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-admin-gmail-r40";
+} from "./lib/payroll.js?v=20260828-admin-gmail-r41";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r40";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r40";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r40";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r40";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r41";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r41";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r41";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r41";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,14 +63,14 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r40";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r40";
+} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r41";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r41";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r40";
+} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r41";
 
 const state = {
   user: null,
@@ -670,6 +670,12 @@ function renderHelp() {
           <article id="help-${e(article.id)}" class="help-article">
             <header><span>${String(index + 1).padStart(2, "0")}</span><div><h2>${e(article.title)}</h2><p>${e(article.summary)}</p></div></header>
             <ol>${article.steps.map((step) => `<li>${e(step)}</li>`).join("")}</ol>
+            ${article.screenshots?.length ? `<div class="help-screenshots">${article.screenshots.map((screenshot) => `
+              <figure class="help-screenshot">
+                <img src="${e(screenshot.src)}" alt="${e(screenshot.alt)}" loading="lazy" />
+                <figcaption>${e(screenshot.caption)}</figcaption>
+              </figure>
+            `).join("")}</div>` : ""}
             ${article.cautions.map((caution) => `<div class="help-caution"><i data-lucide="triangle-alert"></i><span>${e(caution)}</span></div>`).join("")}
             <button class="button button-secondary button-compact" type="button" data-help-ask="${e(article.title)}"><i data-lucide="message-circle-question"></i><span>이 항목 질문하기</span></button>
           </article>

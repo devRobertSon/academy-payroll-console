@@ -221,6 +221,10 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .help-article header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
 .help-article ol { margin: 0 0 18px 54px; padding-left: 18px; }
 .help-article li { margin-bottom: 8px; padding-left: 4px; font-size: 12px; line-height: 1.65; }
+.help-screenshots { display: grid; gap: 14px; margin: 0 0 18px 54px; }
+.help-screenshot { margin: 0; border: 1px solid var(--line); background: var(--surface); }
+.help-screenshot img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--line); }
+.help-screenshot figcaption { padding: 10px 12px; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .help-caution { display: flex; gap: 8px; margin: 0 0 14px 54px; padding: 10px 12px; border-left: 3px solid var(--accent); color: #744814; background: var(--accent-pale); font-size: 10px; line-height: 1.6; }
 .help-caution svg { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 1px; }
 .help-article > .button { margin-left: 54px; }
@@ -531,7 +535,7 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .help-toc { grid-template-columns: 1fr; }
   .help-toc > strong { grid-column: auto; }
   .help-article header { grid-template-columns: 30px minmax(0, 1fr); }
-  .help-article ol, .help-caution, .help-article > .button { margin-left: 0; }
+  .help-article ol, .help-screenshots, .help-caution, .help-article > .button { margin-left: 0; }
 }
 
 @media print {

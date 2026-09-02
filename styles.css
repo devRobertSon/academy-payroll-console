@@ -289,6 +289,13 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .modal-header .icon-button { margin-left: auto; }
 .modal-body { padding: 20px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--surface-subtle); }
+.error-dialog-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15,33,53,.35); z-index: 220; }
+.error-dialog { width: min(440px, 100%); border-radius: 7px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.3); }
+.error-dialog header { display: flex; align-items: center; gap: 10px; padding: 18px 18px 12px; color: var(--danger); }
+.error-dialog header svg { width: 20px; height: 20px; }
+.error-dialog h2 { margin: 0; color: var(--ink); font-size: 16px; }
+.error-dialog p { margin: 0; padding: 0 18px 18px; color: var(--text); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.error-dialog footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--surface-subtle); }
 .notification-list { display: grid; border: 1px solid var(--line); }
 .notification-item { width: 100%; min-height: 68px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 18px; align-items: center; gap: 12px; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }
 .notification-item:last-child { border-bottom: 0; }

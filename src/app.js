@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-admin-gmail-r39";
-import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r39";
+import { appConfig } from "./config.js?v=20260828-admin-gmail-r40";
+import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r40";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-admin-gmail-r39";
+} from "./data/demo-data.js?v=20260828-admin-gmail-r40";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r39";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r39";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r39";
+} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r40";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r40";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r40";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r39";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r40";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r39";
+} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r40";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-admin-gmail-r39";
+} from "./lib/payroll.js?v=20260828-admin-gmail-r40";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r39";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r39";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r39";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r39";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r40";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r40";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r40";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r40";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,14 +63,14 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r39";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r39";
+} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r40";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r40";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r39";
+} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r40";
 
 const state = {
   user: null,
@@ -124,6 +124,7 @@ const elements = {
   assistantForm: document.querySelector("#assistant-form"),
   assistantInput: document.querySelector("#assistant-input"),
   modalRoot: document.querySelector("#modal-root"),
+  errorDialogRoot: document.querySelector("#error-dialog-root"),
   toastRoot: document.querySelector("#toast-root")
 };
 
@@ -397,7 +398,7 @@ function openAdminNotifications() {
 async function openAdminNotification(notification) {
   const teacher = teacherById(notification.teacherId);
   if (!teacher) {
-    showToast("연결된 선생님 정보를 찾을 수 없습니다.");
+    showError("연결된 선생님 정보를 찾을 수 없습니다.");
     return;
   }
   if (notification.status === "unread") {
@@ -407,14 +408,14 @@ async function openAdminNotification(notification) {
       notification.readAt = new Date().toISOString();
       notification.readBy = state.user.uid;
     } catch (error) {
-      showToast(error.message || "알림을 읽음 처리하지 못했습니다.");
+      showError(error, "알림을 읽음 처리하지 못했습니다.");
     }
   }
   if (notification.type === EXPENSE_RECEIPT_NOTIFICATION_TYPE) {
     const receipt = state.data.expenseReceipts.find((item) => item.id === notification.receiptId);
     if (!receipt) {
       closeModal();
-      showToast("연결된 영수증을 찾을 수 없습니다.");
+      showError("연결된 영수증을 찾을 수 없습니다.");
       return;
     }
     state.month = receipt.month;
@@ -433,7 +434,7 @@ async function openAdminNotification(notification) {
   closeModal();
   render();
   if (runForMonth(state.month).status === "published") {
-    showToast("확정된 급여월입니다. 수정하려면 먼저 급여 확정을 취소해 주세요.");
+    showError("확정된 급여월입니다. 수정하려면 먼저 급여 확정을 취소해 주세요.");
     return;
   }
   requestAnimationFrame(() => openMonthlyPayModal(teacher));
@@ -739,7 +740,7 @@ function renderWorkHours() {
       ...[...form.querySelectorAll("[data-business-hour]")].map((input) => Number(input.value || 0))
     ];
     if (hourValues.some((hours) => !Number.isFinite(hours) || hours < 0 || hours > 744)) {
-      showToast("수업시간은 0 이상 744 이하로 입력해 주세요.");
+      showError("수업시간은 0 이상 744 이하로 입력해 주세요.");
       return;
     }
     const rawBusinessHours = Object.fromEntries([...form.querySelectorAll("[data-business-hour]")]
@@ -760,7 +761,7 @@ function renderWorkHours() {
       showToast(`${formatMonth(state.month)} 수업시간을 저장했습니다.`);
       renderWorkHours();
     } catch (error) {
-      showToast(error.message || "수업시간을 저장하지 못했습니다.");
+      showError(error, "수업시간을 저장하지 못했습니다.");
     } finally {
       button.disabled = false;
     }
@@ -870,7 +871,7 @@ async function submitExpenseReceipt(event) {
     ? (RECEIPT_ALLOWED_MIME_TYPES.has(file.type) ? null : validateReceiptFile(file))
     : validateReceiptFile(file);
   if (draftError || fileError) {
-    showToast(draftError || fileError);
+    showError(draftError || fileError);
     return;
   }
   const button = form.querySelector("button[type='submit']");
@@ -907,7 +908,7 @@ async function submitExpenseReceipt(event) {
     showToast(`${EXPENSE_CATEGORY_LABELS[receipt.category]} 영수증을 제출했습니다.`);
     renderTeacherReceipts();
   } catch (error) {
-    showToast(error.message || "영수증을 제출하지 못했습니다.");
+    showError(error, "영수증을 제출하지 못했습니다.");
   } finally {
     button.disabled = false;
   }
@@ -926,7 +927,7 @@ function bindReceiptFileActions() {
 
 async function openReceiptFile(receipt) {
   if (state.user.role === "teacher" && receipt.status === "approved") {
-    showToast("승인된 영수증 파일은 관리자만 보관·열람합니다.");
+    showError("승인된 영수증 파일은 관리자만 보관·열람합니다.");
     return;
   }
   const preview = window.open("", "_blank");
@@ -944,7 +945,7 @@ async function openReceiptFile(receipt) {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (error) {
     preview?.close();
-    showToast(error.message || "영수증 파일을 열지 못했습니다.");
+    showError(error, "영수증 파일을 열지 못했습니다.");
   }
 }
 
@@ -957,7 +958,7 @@ async function deleteExpenseReceipt(receipt) {
     showToast("영수증 제출을 취소했습니다.");
     renderTeacherReceipts();
   } catch (error) {
-    showToast(error.message || "영수증 제출을 취소하지 못했습니다.");
+    showError(error, "영수증 제출을 취소하지 못했습니다.");
   }
 }
 
@@ -983,7 +984,7 @@ function openReceiptReviewModal(receipt) {
     const form = elements.modalRoot.querySelector("#receipt-review-form");
     const note = form.elements.reviewNote.value.trim();
     if (!note) {
-      showToast("선생님이 확인할 반려 사유를 입력해 주세요.");
+      showError("선생님이 확인할 반려 사유를 입력해 주세요.");
       form.elements.reviewNote.focus();
       return;
     }
@@ -992,7 +993,7 @@ function openReceiptReviewModal(receipt) {
       await reviewExpenseReceipt(receipt, { status: "rejected", treatment: "pending", insuranceCovered: false, reviewNote: note });
       closeModal();
     } catch (error) {
-      showToast(error.message || "영수증을 반려하지 못했습니다.");
+      showError(error, "영수증을 반려하지 못했습니다.");
       event.currentTarget.disabled = false;
     }
   });
@@ -1022,7 +1023,7 @@ async function connectReceiptDrive() {
     const { authorizationUrl } = await state.receiptApi.connectUrl();
     window.location.href = authorizationUrl;
   } catch (error) {
-    showToast(error.message || "Google Drive 연결을 시작하지 못했습니다.");
+    showError(error, "Google Drive 연결을 시작하지 못했습니다.");
   }
 }
 
@@ -1901,7 +1902,7 @@ function bindBusinessRateEditor(containerSelector) {
   document.querySelector(`[data-add-business-rate='${container.id}']`)?.addEventListener("click", () => {
     const rowCount = container.querySelectorAll("[data-business-rate-row]").length;
     if (rowCount >= 10) {
-      showToast("시급 항목은 최대 10개까지 등록할 수 있습니다.");
+      showError("시급 항목은 최대 10개까지 등록할 수 있습니다.");
       return;
     }
     container.insertAdjacentHTML("beforeend", businessRateRowHtml({}, rowCount));
@@ -2004,7 +2005,7 @@ function bindBusinessWorkEditor(containerSelector) {
   document.querySelector(`[data-add-business-work='${container.id}']`)?.addEventListener("click", () => {
     const rowCount = container.querySelectorAll("[data-business-work-row]").length;
     if (rowCount >= 10) {
-      showToast("시급 항목은 최대 10개까지 입력할 수 있습니다.");
+      showError("시급 항목은 최대 10개까지 입력할 수 있습니다.");
       return;
     }
     container.insertAdjacentHTML("beforeend", businessWorkRowHtml({}, rowCount));
@@ -2246,7 +2247,7 @@ function openAccessApprovalModal(request) {
     const form = elements.modalRoot.querySelector("#access-approval-form");
     if (!matches.length && !canCreateTeacher) throw new Error("같은 이메일의 기존 선생님 정보를 먼저 확인해 주세요.");
     if (!form.reportValidity()) return false;
-    if (!form.elements.confirmed.checked) { showToast("승인 확인을 선택해 주세요."); return false; }
+    if (!form.elements.confirmed.checked) { showError("승인 확인을 선택해 주세요."); return false; }
     const selection = new FormData(form).get("teacherId");
     const createTeacher = selection === "__create__";
     const teacher = createTeacher ? provisionalTeacherForAccessRequest(request) : teacherById(selection);
@@ -2269,7 +2270,7 @@ function openAccessRejectionModal(request) {
     <label class="checkbox-row" style="margin-top:18px"><input id="reject-access-confirm" type="checkbox" /> 이 계정을 연결하지 않고 반려합니다.</label>
   `, "요청 반려", async () => {
     if (!elements.modalRoot.querySelector("#reject-access-confirm").checked) {
-      showToast("반려 확인을 선택해 주세요.");
+      showError("반려 확인을 선택해 주세요.");
       return false;
     }
     if (state.store) await state.store.rejectTeacherAccess(request);
@@ -2798,7 +2799,7 @@ function openPublishModal() {
   const revision = nextPayrollRevision(currentRun);
   const isReissue = currentRun.status === "cancelled";
   openModal(isReissue ? "수정 급여명세서 재발행" : "급여 확정 및 명세서 공개", `<div class="notice warning"><i data-lucide="lock"></i><span>${formatMonth(state.month)} 급여를 ${revision}차 확정본으로 발행합니다. ${isReissue ? "취소된 이전 확정본은 이력에 그대로 보존됩니다." : "확정 후 수정하려면 취소 사유를 남기고 새 차수로 재발행해야 합니다."} 이메일 발송은 명세서 보기 화면에서 수신자와 첨부 파일을 확인한 뒤 개별로 진행합니다.</span></div><label class="checkbox-row"><input id="publish-confirm" type="checkbox" /> 계산 결과와 공제액, 발행 차수를 모두 검토했습니다.</label>`, isReissue ? "재발행" : "확정", async () => {
-    if (!elements.modalRoot.querySelector("#publish-confirm").checked) { showToast("검토 확인을 선택해 주세요."); return false; }
+    if (!elements.modalRoot.querySelector("#publish-confirm").checked) { showError("검토 확인을 선택해 주세요."); return false; }
     const missingInsuredSalary = activeTeachers().filter((teacher) => {
       const settings = teacherPaySettings(teacher);
       return settings.hasInsurance && monthlyPayAmounts(teacher, state.month).employeeGrossPay <= 0;
@@ -2882,7 +2883,7 @@ function openCancelPayrollModal() {
   `, "확정 취소", async () => {
     const form = elements.modalRoot.querySelector("#cancel-payroll-form");
     if (!form.reportValidity()) return false;
-    if (!form.elements.confirmed.checked) { showToast("취소 확인을 선택해 주세요."); return false; }
+    if (!form.elements.confirmed.checked) { showError("취소 확인을 선택해 주세요."); return false; }
     const reason = new FormData(form).get("reason").trim();
     const cancelledAt = new Date().toISOString();
     const cancellationId = `${state.month}_v${revision}`;
@@ -2946,7 +2947,7 @@ function openModal(title, body, submitLabel, onSubmit) {
       const result = await onSubmit();
       if (result !== false) closeModal();
     } catch (error) {
-      showToast(error.message || "저장하지 못했습니다.");
+      showError(error, "저장하지 못했습니다.");
     } finally {
       submit.disabled = false;
     }
@@ -2988,7 +2989,7 @@ async function downloadCurrentPayslip(event) {
     downloadFile(file);
     showToast("급여명세서 PDF를 저장했습니다.");
   } catch (error) {
-    showToast(error.message || "PDF를 만들지 못했습니다.");
+    showError(error, "PDF를 만들지 못했습니다.");
   } finally {
     button.disabled = false;
   }
@@ -3015,7 +3016,7 @@ function createCurrentPayslipPdf(teacher, payslipDocument = selectedPayslipDocum
 
 function openPayslipEmailModal(teacher, payslipDocument, run) {
   if (!teacher || !payslipDocument?.payroll || run.status !== "published") {
-    showToast("확정된 급여명세서만 이메일로 발송할 수 있습니다.");
+    showError("확정된 급여명세서만 이메일로 발송할 수 있습니다.");
     return;
   }
   const payroll = payslipDocument.payroll;
@@ -3043,7 +3044,7 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
     if (!form) throw new Error("이메일 발송 양식을 찾지 못했습니다. 명세서 보기를 다시 열어 주세요.");
     const data = Object.fromEntries(new FormData(form));
     if (!form.elements.confirmed.checked) {
-      showToast("발송 전 확인 항목을 선택해 주세요.");
+      showError("발송 전 확인 항목을 선택해 주세요.");
       return false;
     }
     if (!state.store) throw new Error("데모에서는 실제 메일을 발송하지 않습니다. Firebase 연결 후 사용해 주세요.");
@@ -3072,7 +3073,7 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
       showToast(`${teacher.name} 선생님에게 급여명세서를 발송했습니다.`);
     } catch (error) {
       console.error("급여명세서 발송 이력 저장 실패", error);
-      showToast("메일은 발송됐지만 발송 이력을 저장하지 못했습니다.");
+      showError("메일은 발송됐지만 발송 이력을 저장하지 못했습니다.");
     }
     renderPayslips();
   });
@@ -3081,7 +3082,7 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
     const button = event.currentTarget;
     const form = elements.modalRoot.querySelector("#payslip-email-form");
     if (!form) {
-      showToast("이메일 발송 양식을 찾지 못했습니다. 명세서 보기를 다시 열어 주세요.");
+      showError("이메일 발송 양식을 찾지 못했습니다. 명세서 보기를 다시 열어 주세요.");
       return;
     }
     const data = Object.fromEntries(new FormData(form));
@@ -3091,7 +3092,7 @@ function openPayslipEmailModal(teacher, payslipDocument, run) {
       window.location.href = `mailto:${encodeURIComponent(data.to)}?subject=${encodeURIComponent(data.subject)}&body=${encodeURIComponent(data.body)}`;
       showToast("PDF를 저장했습니다. 열린 메일에 파일을 첨부해 주세요.");
     } catch (error) {
-      showToast(error.message || "PDF를 만들지 못했습니다.");
+      showError(error, "PDF를 만들지 못했습니다.");
     } finally {
       button.disabled = false;
     }
@@ -3203,6 +3204,26 @@ function isOfficialPublicSourceUrl(value) {
   }
 }
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
+function closeErrorDialog() { elements.errorDialogRoot.innerHTML = ""; }
+function showError(error, fallback = "작업을 완료하지 못했습니다.") {
+  let message = typeof error === "string" ? error : error?.message;
+  if (!message) message = fallback;
+  if (message === "Missing or insufficient permissions.") {
+    message = "권한이 부족해 작업을 완료하지 못했습니다. Firebase 권한 또는 로그인 계정의 역할을 확인해 주세요.";
+  }
+  elements.errorDialogRoot.innerHTML = `
+    <div class="error-dialog-backdrop">
+      <section class="error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-dialog-title" aria-describedby="error-dialog-message">
+        <header><i data-lucide="circle-alert" aria-hidden="true"></i><h2 id="error-dialog-title">오류 확인</h2></header>
+        <p id="error-dialog-message">${e(message)}</p>
+        <footer><button class="button button-primary" type="button" data-close-error>확인</button></footer>
+      </section>
+    </div>`;
+  const closeButton = elements.errorDialogRoot.querySelector("[data-close-error]");
+  closeButton.addEventListener("click", closeErrorDialog);
+  refreshIcons();
+  closeButton.focus();
+}
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }
 

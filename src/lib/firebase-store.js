@@ -165,10 +165,12 @@ export async function createFirebaseStore(config) {
         firestoreSdk.where("status", "==", "published")
       ]),
       loadCollection("teacherMonthlyInputs", [
-        firestoreSdk.where("teacherUid", "==", user.uid)
+        firestoreSdk.where("teacherUid", "==", user.uid),
+        firestoreSdk.where("teacherId", "==", user.teacherId)
       ]),
       loadCollection("expenseReceipts", [
-        firestoreSdk.where("teacherUid", "==", user.uid)
+        firestoreSdk.where("teacherUid", "==", user.uid),
+        firestoreSdk.where("teacherId", "==", user.teacherId)
       ]),
       loadCollection("payrollRuns")
     ]);

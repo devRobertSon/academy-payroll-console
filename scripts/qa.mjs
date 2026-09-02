@@ -156,29 +156,29 @@ async function checkHtmlAssets() {
   for (const legacyGreen of ["#126b57", "#0d4c40", "#dff1eb", "#cfebe2", "#f4faf7"]) {
     if (css.includes(legacyGreen)) failures.push(`Legacy green workspace color remains: ${legacyGreen}`);
   }
-  const releaseVersion = html.match(/src\/app\.js\?v=([^"']+)/)?.[1];
-  if (!releaseVersion) {
-    failures.push("Application release version is missing from index.html.");
-  } else {
-    for (const modulePath of [
-      "./config.js",
-      "./data/help-content.js",
-      "./data/demo-data.js",
-      "./data/nts-tax-policy.js",
-      "./lib/admin-notifications.js",
-      "./lib/expense-receipts.js",
-      "./lib/receipt-api.js",
-      "./lib/firebase-store.js",
-      "./lib/payroll.js",
-      "./lib/payroll-lifecycle.js",
-      "./lib/payslip-file.js",
-      "./lib/phone-number.js",
-      "./lib/teacher-identity.js",
-      "./lib/teacher-self-service.js"
-    ]) {
-      if (!app.includes(`"${modulePath}?v=${releaseVersion}"`)) {
-        failures.push(`Changed application module is missing the release version: ${modulePath}`);
-      }
+  if (html.includes("?v=") || app.includes("?v=")) {
+    failures.push("Application assets must not use query-string cache versions; purge Cloudflare cache after deployment instead.");
+  }
+  if (!html.includes('href="./styles.css"')) failures.push("index.html must reference styles.css without a query-string version.");
+  if (!html.includes('src="./src/app.js"')) failures.push("index.html must reference app.js without a query-string version.");
+  for (const modulePath of [
+    "./config.js",
+    "./data/help-content.js",
+    "./data/demo-data.js",
+    "./data/nts-tax-policy.js",
+    "./lib/admin-notifications.js",
+    "./lib/expense-receipts.js",
+    "./lib/receipt-api.js",
+    "./lib/firebase-store.js",
+    "./lib/payroll.js",
+    "./lib/payroll-lifecycle.js",
+    "./lib/payslip-file.js",
+    "./lib/phone-number.js",
+    "./lib/teacher-identity.js",
+    "./lib/teacher-self-service.js"
+  ]) {
+    if (!app.includes(`"${modulePath}"`)) {
+      failures.push(`Application module import must not use a query-string version: ${modulePath}`);
     }
   }
   for (const receiptSurface of ["영수증 관리", "영수증 제출", "approvedReceiptEarnings", "openReceiptReviewModal", "receiptApi.upload"]) {

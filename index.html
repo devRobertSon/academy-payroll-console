@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="학원 급여명세서 관리 포털" />
+    <meta name="description" content="학원 관리자와 선생님이 수업시간, 영수증, 급여 계산, 급여명세서 열람과 Gmail 안내 발송을 처리하는 학원 급여 포털" />
     <meta name="color-scheme" content="light" />
     <title>학원 급여 포털</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,6 +16,34 @@
   <body>
     <div id="app" aria-live="polite">
       <section id="login-view" class="login-view">
+        <div class="public-home">
+          <div class="brand-lockup public-brand">
+            <span class="brand-mark" aria-hidden="true">AP</span>
+            <div>
+              <strong>학원 급여 포털</strong>
+              <span>알파학원 급여 관리</span>
+            </div>
+          </div>
+          <div class="public-copy">
+            <p class="eyebrow">Academy Payroll Console</p>
+            <h1>학원 급여 포털</h1>
+            <p id="login-portal-name" class="public-portal-name">알파학원 급여 포털</p>
+            <p>학원 관리자가 선생님별 수업시간, 교통비·주차비 영수증, 소득 구분, 세금·사회보험 공제와 급여명세서 발행을 한 곳에서 관리하는 업무용 포털입니다.</p>
+          </div>
+          <div class="public-feature-grid" aria-label="주요 기능">
+            <div><strong>수업시간·급여 계산</strong><span>선생님 제출 시수와 관리자 입력값을 기준으로 월별 지급액과 공제액을 계산합니다.</span></div>
+            <div><strong>영수증 처리</strong><span>교통비·주차비 증빙을 Google Drive에 보관하고 승인 금액을 급여에 합산합니다.</span></div>
+            <div><strong>명세서 공개·발송</strong><span>확정된 급여명세서를 선생님 본인에게 공개하고 관리자 Gmail 계정으로 안내 메일을 보냅니다.</span></div>
+          </div>
+          <div class="public-data-note">
+            <strong>Google 데이터 사용</strong>
+            <p>Google 로그인은 계정 식별과 접근 권한 확인에 사용합니다. Gmail 권한은 급여명세서 안내 발송에만, Drive 권한은 서비스가 만든 영수증 파일 보관에만 사용하며 받은편지함이나 기존 Drive 파일을 읽지 않습니다.</p>
+          </div>
+          <nav class="public-legal-links" aria-label="공개 정책">
+            <a href="./privacy.html">개인정보처리방침</a>
+            <a href="./terms.html">서비스 이용약관</a>
+          </nav>
+        </div>
         <div class="login-panel">
           <div class="brand-lockup">
             <span class="brand-mark" aria-hidden="true">AP</span>
@@ -53,12 +81,6 @@
             <a href="./terms.html" target="_blank" rel="noopener">서비스 이용약관</a>
           </nav>
         </div>
-        <aside class="login-aside" aria-label="서비스 상태">
-          <div class="aside-content">
-            <div class="status-seal"><i data-lucide="badge-check" aria-hidden="true"></i></div>
-            <p id="login-portal-name">알파학원 급여 포털</p>
-          </div>
-        </aside>
       </section>
 
       <div id="workspace" class="workspace" hidden>

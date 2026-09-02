@@ -20,6 +20,16 @@ export function accessRequestAction(accessRequest) {
   return "wait";
 }
 
+export function payrollRunCancellationUpdate(run, common = {}) {
+  return {
+    status: "cancelled",
+    revision: run.revision,
+    cancellationId: run.cancellationId,
+    cancellationReason: run.cancellationReason,
+    ...common
+  };
+}
+
 export async function createFirebaseStore(config) {
   const [appSdk, authSdk, firestoreSdk, appCheckSdk] = await Promise.all([
     import(sdk("app")),
@@ -496,11 +506,10 @@ export async function createFirebaseStore(config) {
         ...common
       });
     });
-    batch.update(firestoreSdk.doc(db, "payrollRuns", run.month), {
-      ...run,
+    batch.update(firestoreSdk.doc(db, "payrollRuns", run.month), payrollRunCancellationUpdate(run, {
       cancelledAt: firestoreSdk.serverTimestamp(),
       ...common
-    });
+    }));
     batch.set(firestoreSdk.doc(db, "payrollCancellations", cancellation.id), {
       ...cancellation.data,
       createdAt: firestoreSdk.serverTimestamp()

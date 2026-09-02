@@ -1,5 +1,5 @@
-import { appConfig } from "./config.js?v=20260828-admin-gmail-r38";
-import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r38";
+import { appConfig } from "./config.js?v=20260828-admin-gmail-r39";
+import { helpArticles } from "./data/help-content.js?v=20260828-admin-gmail-r39";
 import {
   demoAccessRequests,
   demoAdminNotifications,
@@ -8,17 +8,17 @@ import {
   demoTeacherMonthlyInputs,
   demoTeachers,
   demoUsers
-} from "./data/demo-data.js?v=20260828-admin-gmail-r38";
+} from "./data/demo-data.js?v=20260828-admin-gmail-r39";
 import {
   createCombinedPolicy,
   ntsTaxPolicy2024,
   officialInsurancePolicies
-} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r38";
-import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r38";
-import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r38";
+} from "./data/nts-tax-policy.js?v=20260828-admin-gmail-r39";
+import { createFirebaseStore } from "./lib/firebase-store.js?v=20260828-admin-gmail-r39";
+import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js?v=20260828-admin-gmail-r39";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
-import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r38";
+import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js?v=20260828-admin-gmail-r39";
 import {
   artifactRevision,
   currentArtifactForRevision,
@@ -32,7 +32,7 @@ import {
   teacherDeletionCleanupReferences,
   validateTeacherAccessApproval,
   validateTeacherDeletion
-} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r38";
+} from "./lib/payroll-lifecycle.js?v=20260828-admin-gmail-r39";
 import {
   businessRateLabel,
   calculatePayroll,
@@ -47,12 +47,12 @@ import {
   splitPayrollByIncome,
   summarizePayroll,
   TREATMENT_LABELS
-} from "./lib/payroll.js?v=20260828-admin-gmail-r38";
+} from "./lib/payroll.js?v=20260828-admin-gmail-r39";
 import { downloadCsv, escapeHtml as e, formatHours, formatMonth, formatNumber, formatWon } from "./lib/format.js";
-import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r38";
-import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r38";
-import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r38";
-import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r38";
+import { formatMaskedTeacherIdentity, formatTeacherIdentity, parseOptionalTeacherIdentity, parseTeacherIdentity } from "./lib/teacher-identity.js?v=20260828-admin-gmail-r39";
+import { formatMobilePhoneNumber, mobilePhoneParts, normalizeMobilePhoneNumber, phoneDigits } from "./lib/phone-number.js?v=20260828-admin-gmail-r39";
+import { normalizePersonName, sanitizePersonNameInput } from "./lib/person-name.js?v=20260828-admin-gmail-r39";
+import { WORK_HOURS_NOTIFICATION_TYPE, unreadAdminNotifications } from "./lib/admin-notifications.js?v=20260828-admin-gmail-r39";
 import {
   approvedReceiptEarnings,
   approvedReceiptTotals,
@@ -63,14 +63,14 @@ import {
   RECEIPT_MAX_FILE_BYTES,
   validateExpenseReceiptDraft,
   validateReceiptFile
-} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r38";
-import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r38";
+} from "./lib/expense-receipts.js?v=20260828-admin-gmail-r39";
+import { createReceiptApi, prepareReceiptFile } from "./lib/receipt-api.js?v=20260828-admin-gmail-r39";
 import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
   monthlyWorkInputId
-} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r38";
+} from "./lib/teacher-self-service.js?v=20260828-admin-gmail-r39";
 
 const state = {
   user: null,

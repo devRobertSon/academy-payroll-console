@@ -480,8 +480,12 @@ export async function createFirebaseStore(config) {
       updatedAt: firestoreSdk.serverTimestamp(),
       updatedBy: auth.currentUser.uid
     };
-    archives.forEach((archive) => {
-      batch.set(firestoreSdk.doc(db, "payslipVersions", archive.id), { ...archive.data, ...common });
+    const missingArchives = await Promise.all(archives.map(async (archive) => {
+      const reference = firestoreSdk.doc(db, "payslipVersions", archive.id);
+      return (await firestoreSdk.getDoc(reference)).exists() ? null : { archive, reference };
+    }));
+    missingArchives.filter(Boolean).forEach(({ archive, reference }) => {
+      batch.set(reference, { ...archive.data, ...common });
     });
     payslips.forEach((payslip) => {
       batch.update(firestoreSdk.doc(db, "payslips", payslip.id), {

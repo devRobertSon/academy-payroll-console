@@ -2898,7 +2898,17 @@ function openCancelPayrollModal() {
     const archives = currentPayslips
       .map((item) => {
         const { id, ...data } = item;
-        return { id: `${item.id}_v${revision}`, data: { ...data, status: "published", revision } };
+        const teacher = teacherById(item.teacherId);
+        return {
+          id: `${item.id}_v${revision}`,
+          data: {
+            ...data,
+            teacherUid: data.teacherUid || teacher?.authUid || "",
+            teacherName: data.teacherName || teacher?.name || "",
+            status: "published",
+            revision
+          }
+        };
       })
       .filter((archive) => !state.data.payslipVersions.some((item) => item.id === archive.id));
     const run = { ...currentRun, status: "cancelled", revision, cancellationId, cancellationReason: reason, cancelledAt };

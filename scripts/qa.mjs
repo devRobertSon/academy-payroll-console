@@ -311,7 +311,13 @@ async function checkLifecycleSecurity() {
   for (const operation of ["approveTeacherAccess", "rejectTeacherAccess", "updateTeacher", "deleteTeacher", "cancelPayrollRun"]) {
     if (!store.includes(`async function ${operation}`)) failures.push(`Firebase store operation is missing: ${operation}`);
   }
+  if (!store.includes("missingArchives") || !store.includes('getDoc(reference)).exists() ? null')) {
+    failures.push("Payroll cancellation must avoid overwriting existing payslip version archives.");
+  }
   const app = await readFile(join(root, "src", "app.js"), "utf8");
+  if (!app.includes("teacherUid: data.teacherUid || teacher?.authUid")) {
+    failures.push("Payroll cancellation archives must preserve or restore teacher UID.");
+  }
   for (const rejectionSurface of ["data-reject-access", "openAccessRejectionModal", 'request.status = "rejected"']) {
     if (!app.includes(rejectionSurface)) failures.push(`Access-request rejection surface is missing: ${rejectionSurface}`);
   }

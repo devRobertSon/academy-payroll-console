@@ -1395,7 +1395,7 @@ function currentPayslip(teacherId, month) {
 }
 
 function payrollTable(items) {
-  return `<table><thead><tr><th>선생님</th><th>급여 구성</th><th class="numeric">총 지급액</th><th class="numeric">공제액</th><th class="numeric">실 지급액</th><th>발행</th><th>열람</th><th aria-label="작업"></th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
+  return `<table class="payroll-table"><thead><tr><th>선생님</th><th>급여 구성</th><th class="numeric">총 지급액</th><th class="numeric">공제액</th><th class="numeric">실 지급액</th><th>발행</th><th>열람</th><th aria-label="작업"></th></tr></thead><tbody>${items.map(({ teacher, payroll }) => {
     const receipt = receiptFor(teacher.id, state.month);
     const published = runForMonth(state.month).status === "published";
     const insured = Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0);
@@ -1448,7 +1448,7 @@ function accountingReportFor(payroll) {
 function payslipSheet(teacher, payroll, month, run, incomeLabel = payrollCompositionLabel(payroll)) {
   const deductionRows = Object.entries(deductionLabels()).filter(([key]) => payroll.deductions[key] > 0);
   return `<article class="payslip-sheet">
-    <header class="payslip-title"><div><h2>${formatMonth(month)} ${e(incomeLabel)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><span class="brand-mark" aria-hidden="true">AP</span></header>
+    <header class="payslip-title"><div><h2>${formatMonth(month)} ${e(incomeLabel)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="${e(appConfig.academyName)}" width="2728" height="638" /></header>
     <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>소득 구분</span><strong>${e(incomeLabel)} · 사회보험 ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "적용" : "미적용"}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? `${artifactRevision(run)}차 발행 완료` : "미리보기"}</strong></div></div>
     <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>지급 항목</th><th>소득 구분</th><th>산정 기준</th><th class="numeric">금액</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td><td>${e(earningBasisLabel(line))}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
@@ -3182,7 +3182,7 @@ function deliveryTime(value) {
 }
 
 function metric(icon, label, value, helper) { return `<div class="metric"><span class="metric-label"><i data-lucide="${icon}"></i>${e(label)}</span><strong>${e(value)}</strong><small>${e(helper)}</small></div>`; }
-function progressStep(number, title, detail, active, complete) { return `<div class="progress-step ${active ? "active" : ""} ${complete ? "complete" : ""}"><strong>${e(number)}. ${e(title)}</strong><span>${e(detail)}</span></div>`; }
+function progressStep(number, title, detail, active, complete) { return `<div class="progress-step ${active ? "active" : ""} ${complete ? "complete" : ""}"><span class="progress-number">${e(number)}</span><div><strong>${e(title)}</strong><span>${e(detail)}</span></div></div>`; }
 function personCell(teacher) { return `<div class="person-cell"><span class="avatar">${e(teacher.name.slice(0, 1))}</span><span class="person-meta"><strong>${e(teacher.name)}</strong><span>${e(teacher.email)}</span></span></div>`; }
 function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="empty-state">표시할 내역이 없습니다.</div></td></tr>`; }
 function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", cancelled: "취소 후 수정", paid: "지급 완료" })[status] || status; }

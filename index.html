@@ -18,14 +18,12 @@
       <section id="login-view" class="login-view">
         <div class="login-panel">
           <div class="brand-lockup">
-            <span class="brand-mark" aria-hidden="true">AP</span>
-            <div>
-              <strong>학원 급여 포털</strong>
-              <span id="login-academy-name">알파학원 급여 관리</span>
-            </div>
+            <img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="알파학원" width="2728" height="638" />
           </div>
+          <div class="login-form">
           <div class="login-copy">
-            <h1>급여명세서 확인</h1>
+            <p id="login-academy-name" class="eyebrow">알파학원 급여 관리</p>
+            <h1>학원 급여 포털</h1>
             <p>등록된 Google 계정으로 로그인하세요.</p>
           </div>
           <button id="google-login" class="button button-primary button-wide" type="button">
@@ -47,15 +45,16 @@
           </div>
           <p id="login-status" class="form-status" role="status"></p>
           <p class="privacy-note"><i data-lucide="lock-keyhole" aria-hidden="true"></i> 승인된 계정만 이용할 수 있습니다.</p>
+          </div>
           <nav class="login-legal-links" aria-label="서비스 정책">
             <a href="./privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
             <span aria-hidden="true">·</span>
             <a href="./terms.html" target="_blank" rel="noopener">서비스 이용약관</a>
           </nav>
         </div>
-        <aside class="login-aside" aria-label="서비스 상태">
+        <aside class="login-aside" aria-label="알파학원 급여 포털">
           <div class="aside-content">
-            <div class="status-seal"><i data-lucide="badge-check" aria-hidden="true"></i></div>
+            <img class="login-brand-image" src="./assets/alpha-logo-stacked.jpg" alt="알파학원" width="3378" height="3378" />
             <p id="login-portal-name">알파학원 급여 포털</p>
           </div>
         </aside>
@@ -64,8 +63,8 @@
       <div id="workspace" class="workspace" hidden>
         <aside class="sidebar">
           <div class="sidebar-brand">
-            <span class="brand-mark brand-mark-small" aria-hidden="true">AP</span>
-            <div><strong>학원 급여 포털</strong><span id="sidebar-academy-name">알파학원 급여 관리</span></div>
+            <img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="알파학원" width="2728" height="638" />
+            <div><strong>학원 급여 포털</strong><span id="sidebar-academy-name" class="sr-only">알파학원 급여 관리</span></div>
           </div>
           <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
           <div id="assistant-entry" class="sidebar-assistant" hidden>
@@ -93,6 +92,10 @@
         </aside>
 
         <main class="main-content">
+          <div class="mobile-brand">
+            <img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="알파학원" width="2728" height="638" />
+            <span>학원 급여 포털</span>
+          </div>
           <header class="topbar">
             <button id="mobile-menu" class="icon-button mobile-menu" type="button" title="메뉴 열기" aria-label="메뉴 열기">
               <i data-lucide="menu" aria-hidden="true"></i>

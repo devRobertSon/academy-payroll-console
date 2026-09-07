@@ -89,11 +89,11 @@ async function checkHtmlAssets() {
   if (!app.includes("academyName}에서 보낸") || !worker.includes("academyName}에서 보낸")) {
     failures.push("Manual and automatic payslip email branding must identify the academy sender.");
   }
-  if (!css.includes("--login-brand: #2563a6") || !css.includes("background: #173f6b")) {
-    failures.push("Login page must use the blue color treatment.");
+  if (!html.includes('src="./assets/alpha-logo-horizontal.png"') || !html.includes('src="./assets/alpha-logo-stacked.jpg"')) {
+    failures.push("Login and sidebar must use the academy logo assets.");
   }
-  if (!css.includes("--brand: #2563a6") || !css.includes("--brand-pale: #e4effb")) {
-    failures.push("Admin workspace must use the blue color treatment.");
+  if (!css.includes("--brand: #004c98") || !css.includes("--brand-indigo: #29265f") || !css.includes("--brand-sky: #3fa9df")) {
+    failures.push("Workspace must use the academy logo palette.");
   }
   if (!app.includes('split-layout ${selected ? "" : "single-column"}')) {
     failures.push("Teacher table must switch to a single-column layout when no detail panel is shown.");

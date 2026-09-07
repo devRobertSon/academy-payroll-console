@@ -162,7 +162,11 @@ async function bootstrap() {
   } else {
     try {
       state.store = await createFirebaseStore(appConfig.firebase);
-      state.receiptApi = createReceiptApi(appConfig.receiptApiUrl, () => state.store.getIdToken());
+      state.receiptApi = createReceiptApi(
+        appConfig.receiptApiUrl,
+        () => state.store.getIdToken(),
+        () => state.store.getAppCheckToken()
+      );
       const restored = await state.store.restoreSession();
       if (restored) await openWorkspace(restored);
     } catch (error) {

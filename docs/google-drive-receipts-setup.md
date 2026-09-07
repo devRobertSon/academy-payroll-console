@@ -55,6 +55,30 @@ OAuth 앱이 테스트 상태이면 Drive 갱신 토큰이 짧은 기간 뒤 만
 6. Worker Custom Domain에 `payroll-api.robertson.kr`을 연결합니다. Cloudflare가 이 호스트의 DNS를 관리하게 하고 별도의 GitHub Pages CNAME으로 만들지 않습니다.
 7. `https://payroll-api.robertson.kr/health`에서 `{"ok":true,"version":"20260828-admin-gmail-r36"}`가 표시되는지 확인합니다.
 
+## 3-1. App Check 강제 적용과 기존 서비스 업데이트
+
+포털은 Firebase 로그인 토큰과 App Check 토큰을 함께 Worker로 보냅니다. Worker는 `X-Firebase-AppCheck` 헤더를 계정 확인, 영수증 조회, 급여월 잠금 확인과 안내 메일 발송 전 일괄 조회에 전달합니다. Firestore가 인증과 역할을 확인하기 전에는 Drive·Gmail 작업을 진행하지 않습니다. 이 구조는 **Firestore App Check 강제 적용을 유지하는 것**을 전제로 합니다. 토큰은 URL, 로그, 저장소에 넣거나 Drive·Gmail API로 전달하지 않습니다.
+
+기존 서비스의 인증 전달 문제를 수정한 뒤에는 다음 순서로 반영합니다.
+
+1. Firebase의 Authentication, Cloud Firestore, Firebase AI Logic App Check 적용은 유지합니다. 이 수정에는 Firestore·Storage 규칙이나 OAuth 범위 변경이 필요하지 않습니다.
+2. Cloudflare의 기존 Worker `academy-payroll-receipts`에서 코드 편집을 열어 `cloudflare/receipt-worker/src/index.js`를 반영하고 배포합니다. 기존 `RECEIPT_KV` 바인딩, 변수, Secret, 도메인과 저장된 Drive·Gmail 연결은 변경하거나 삭제하지 않습니다. 로컬 `wrangler.toml`에는 운영 KV 바인딩 정보가 없으므로 그대로 배포해 운영 설정을 덮어쓰지 않습니다.
+3. 포털의 `src/app.js`, `src/lib/firebase-store.js`, `src/lib/receipt-api.js` 변경을 `main`에 push하고 GitHub Pages의 `Deploy from branch` 배포가 끝날 때까지 기다립니다. GitHub Actions는 만들지 않습니다. Worker와 포털 양쪽 모두 반영되어야 인증값 전달이 동작합니다.
+4. Cloudflare 캐시에서 아래 세 URL을 대상으로 제거한 뒤 포털을 새로고침합니다. 파일명이나 URL에 버전 문자열은 추가하지 않습니다.
+   - `https://payroll.robertson.kr/src/app.js`
+   - `https://payroll.robertson.kr/src/lib/firebase-store.js`
+   - `https://payroll.robertson.kr/src/lib/receipt-api.js`
+5. 관리자 `영수증 관리`의 `Google Drive 연결됨` 표시를 확인합니다. 이미 연결된 계정을 단순 점검하려고 다시 연결할 필요는 없습니다. 연결 상태 조회 성공은 실제 파일 업로드·열람 또는 메일 전달 성공과는 별개입니다.
+6. 테스트 계정이나 가상 자료를 사용하지 않는 운영 환경에서는 실제 업무 때 지정된 영수증의 제출·열람과 지정된 급여월의 안내 메일 전달을 확인합니다. 확인만을 위해 임의 급여를 확정하거나 메일을 발송하지 않습니다.
+
+관련 자동 검사(실제 Firebase·Google 계정이나 네트워크를 사용하지 않음):
+
+```bash
+node --test tests/receipt-api-app-check.test.mjs tests/receipt-worker-app-check.test.mjs tests/receipt-worker-drive-owner.test.mjs tests/expense-receipts.test.mjs tests/payslip-notifications.test.mjs
+```
+
+참고: [Firebase의 웹 앱 App Check 토큰 전달 안내](https://firebase.google.com/docs/app-check/web/custom-resource).
+
 ## 4. 관리자 Drive 연결
 
 1. `https://payroll.robertson.kr`에 관리자 계정으로 로그인합니다.

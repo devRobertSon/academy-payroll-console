@@ -39,8 +39,9 @@ export async function createFirebaseStore(config) {
   ]);
 
   const app = appSdk.initializeApp(config);
+  let appCheck = null;
   if (config.appCheckEnterpriseSiteKey) {
-    appCheckSdk.initializeAppCheck(app, {
+    appCheck = appCheckSdk.initializeAppCheck(app, {
       provider: new appCheckSdk.ReCaptchaEnterpriseProvider(config.appCheckEnterpriseSiteKey),
       isTokenAutoRefreshEnabled: true
     });
@@ -617,6 +618,13 @@ export async function createFirebaseStore(config) {
     return auth.currentUser.getIdToken();
   }
 
+  async function getAppCheckToken() {
+    if (!auth.currentUser) throw new Error("Google 계정으로 다시 로그인해 주세요.");
+    if (!appCheck) throw new Error("App Check 보안 인증 설정을 확인해 주세요.");
+    const result = await appCheckSdk.getToken(appCheck);
+    return result.token;
+  }
+
   return {
     signIn,
     restoreSession,
@@ -641,6 +649,7 @@ export async function createFirebaseStore(config) {
     sendGmailMessage,
     recordPayslipDelivery,
     askHelpAssistant,
-    getIdToken
+    getIdToken,
+    getAppCheckToken
   };
 }

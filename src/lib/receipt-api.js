@@ -3,18 +3,19 @@ import { RECEIPT_MAX_FILE_BYTES, validateReceiptFile } from "./expense-receipts.
 const MAX_IMAGE_EDGE = 1800;
 const JPEG_QUALITY = 0.84;
 
-export function createReceiptApi(baseUrl, getIdToken) {
+export function createReceiptApi(baseUrl, getIdToken, getAppCheckToken) {
   const normalizedBaseUrl = String(baseUrl || "").replace(/\/$/, "");
 
   async function request(path, options = {}) {
     if (!normalizedBaseUrl) throw new Error("Google Drive 영수증 연결 주소가 설정되지 않았습니다.");
-    const token = await getIdToken();
+    const [token, appCheckToken] = await Promise.all([getIdToken(), getAppCheckToken()]);
+    if (!appCheckToken) throw new Error("보안 인증을 완료하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+    const headers = new Headers(options.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    headers.set("X-Firebase-AppCheck", appCheckToken);
     const response = await fetch(`${normalizedBaseUrl}${path}`, {
       ...options,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(options.headers || {})
-      }
+      headers
     });
     if (!response.ok) {
       const details = await response.json().catch(() => null);

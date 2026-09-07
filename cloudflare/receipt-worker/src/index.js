@@ -48,7 +48,7 @@ export default {
         return json(request, env, await uploadReceipt(request, session, env), 201);
       }
       const fileMatch = url.pathname.match(/^\/receipts\/([^/]+)\/file$/);
-      if (fileMatch && request.method === "GET") return downloadReceiptFile(request, decodeURIComponent(fileMatch[1]), session, env);
+      if (fileMatch && request.method === "GET") return await downloadReceiptFile(request, decodeURIComponent(fileMatch[1]), session, env);
       if (fileMatch && request.method === "DELETE") {
         await deleteReceiptFile(request, decodeURIComponent(fileMatch[1]), session, env);
         return json(request, env, { deleted: true });
@@ -64,11 +64,14 @@ export default {
 async function authenticate(request, env) {
   const authorization = request.headers.get("Authorization") || "";
   if (!authorization.startsWith("Bearer ")) throw httpError(401, "로그인이 필요합니다.");
+  const appCheckToken = request.headers.get("X-Firebase-AppCheck");
+  if (!appCheckToken) throw httpError(401, "보안 인증 정보가 없습니다. 포털을 새로고침한 뒤 다시 시도해 주세요.");
   const token = authorization.slice(7);
   const claims = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
-  const account = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `users/${claims.sub}`, token);
+  // Firestore validates App Check before any Drive or Gmail operation is allowed.
+  const account = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `users/${claims.sub}`, token, appCheckToken);
   if (!account || account.status !== "active") throw httpError(403, "활성 계정만 사용할 수 있습니다.");
-  return { token, claims, account, uid: claims.sub };
+  return { token, appCheckToken, claims, account, uid: claims.sub };
 }
 
 async function verifyFirebaseToken(token, projectId) {
@@ -174,7 +177,7 @@ async function sendPayslipNotices(request, session, env) {
     `payrollRuns/${month}`,
     ...teacherIds.flatMap((teacherId) => [`teachers/${teacherId}`, `payslips/${month}_${teacherId}`])
   ];
-  const documents = await batchGetFirestoreDocuments(env.FIREBASE_PROJECT_ID, paths, session.token);
+  const documents = await batchGetFirestoreDocuments(env.FIREBASE_PROJECT_ID, paths, session.token, session.appCheckToken);
   const run = documents.get(`payrollRuns/${month}`);
   if (!run || run.status !== "published" || Number(run.revision) !== revision) {
     throw httpError(409, "현재 공개된 급여 확정 차수와 발송 요청이 일치하지 않습니다.");
@@ -307,14 +310,14 @@ async function deleteReceiptFile(request, receiptId, session, env) {
 }
 
 async function authorizedReceipt(receiptId, session, env) {
-  const receipt = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `expenseReceipts/${receiptId}`, session.token);
+  const receipt = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `expenseReceipts/${receiptId}`, session.token, session.appCheckToken);
   if (!receipt) throw httpError(404, "영수증 정보를 찾을 수 없습니다.");
   if (session.account.role === "teacher" && (receipt.teacherUid !== session.uid || receipt.teacherId !== session.account.teacherId)) throw httpError(403, "본인의 영수증만 열람할 수 있습니다.");
   return receipt;
 }
 
 async function assertMonthEditable(month, session, env) {
-  const run = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `payrollRuns/${month}`, session.token);
+  const run = await getFirestoreDocument(env.FIREBASE_PROJECT_ID, `payrollRuns/${month}`, session.token, session.appCheckToken);
   if (run?.status === "published") throw httpError(409, "확정된 급여월의 영수증은 변경할 수 없습니다.");
 }
 
@@ -329,20 +332,20 @@ async function enforceUploadQuota(uid, sizeBytes, env) {
   await env.RECEIPT_KV.put(key, JSON.stringify({ count: current.count + 1, bytes: current.bytes + sizeBytes }), { expirationTtl: 172800 });
 }
 
-async function getFirestoreDocument(projectId, path, token) {
+async function getFirestoreDocument(projectId, path, token, appCheckToken) {
   const response = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${path}`, {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}`, "X-Firebase-AppCheck": appCheckToken }
   });
   if (response.status === 404) return null;
   if (!response.ok) throw httpError(response.status === 403 ? 403 : 502, "Firebase 권한 정보를 확인하지 못했습니다.");
   return decodeFirestoreFields((await response.json()).fields || {});
 }
 
-async function batchGetFirestoreDocuments(projectId, paths, token) {
+async function batchGetFirestoreDocuments(projectId, paths, token, appCheckToken) {
   const prefix = `projects/${projectId}/databases/(default)/documents/`;
   const response = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:batchGet`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}`, "X-Firebase-AppCheck": appCheckToken, "Content-Type": "application/json" },
     body: JSON.stringify({ documents: paths.map((path) => `${prefix}${path}`) })
   });
   if (!response.ok) throw httpError(response.status === 403 ? 403 : 502, "Firebase 급여 확정 정보를 확인하지 못했습니다.");
@@ -509,7 +512,7 @@ function corsResponse(request, env, response) {
   const origin = request.headers.get("Origin");
   if (origin && origin === env.APP_ORIGIN) headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Vary", "Origin");
-  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Firebase-AppCheck");
   headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   headers.set("X-Content-Type-Options", "nosniff");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });

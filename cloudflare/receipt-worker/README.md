@@ -3,6 +3,7 @@
 교통비·주차비 영수증 파일을 학원 관리자 Google Drive에 비공개로 저장하는 Cloudflare Worker입니다.
 
 - Firebase ID token 서명과 `users/{uid}` 역할을 확인합니다.
+- 포털의 `X-Firebase-AppCheck` 인증값을 모든 Firestore 단건·일괄 조회에 전달합니다. Firestore App Check 강제 적용을 유지하고, Firestore가 인증값을 검증한 뒤에만 Drive·Gmail 작업을 허용합니다.
 - Google OAuth 범위는 Drive 보관에 `drive.file`, 관리자별 안내 발송에 `gmail.send`만 사용합니다.
 - 갱신 토큰은 `RECEIPT_KV`에 AES-GCM 암호화해 저장합니다.
 - 파일은 `Academy Payroll Receipts / YYYY-MM / teacherId` 폴더에 무작위 이름으로 저장합니다.

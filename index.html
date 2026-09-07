@@ -64,30 +64,32 @@
         <aside class="sidebar">
           <div class="sidebar-brand">
             <img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="알파학원" width="2728" height="638" />
-            <div><strong>학원 급여 포털</strong><span id="sidebar-academy-name" class="sr-only">알파학원 급여 관리</span></div>
+            <span id="sidebar-academy-name" class="sr-only">알파학원 급여 관리</span>
           </div>
-          <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
-          <div id="assistant-entry" class="sidebar-assistant" hidden>
-            <button id="help-nav-button" class="nav-button sidebar-help-button" type="button" data-view="help">
-              <i data-lucide="book-open-text" aria-hidden="true"></i>
-              <span>사용 설명서</span>
-            </button>
-            <button id="assistant-toggle" class="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
-              <i data-lucide="message-circle-question" aria-hidden="true"></i>
-              <span><strong>AI 도움말</strong><small>사용법·세무 질문</small></span>
-              <i data-lucide="chevron-right" aria-hidden="true"></i>
-            </button>
-          </div>
-          <nav class="sidebar-legal-links" aria-label="서비스 정책">
-            <a href="./privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
-            <a href="./terms.html" target="_blank" rel="noopener">이용약관</a>
-          </nav>
-          <div class="sidebar-user">
-            <span id="user-avatar" class="avatar">관</span>
-            <div><strong id="user-name">관리자</strong><span id="user-role">관리자</span></div>
-            <button id="logout-button" class="icon-button" type="button" title="로그아웃" aria-label="로그아웃">
-              <i data-lucide="log-out" aria-hidden="true"></i>
-            </button>
+          <div class="sidebar-scroll">
+            <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
+            <div id="assistant-entry" class="sidebar-assistant" hidden>
+              <button id="help-nav-button" class="nav-button sidebar-help-button" type="button" data-view="help">
+                <i data-lucide="book-open-text" aria-hidden="true"></i>
+                <span>사용 설명서</span>
+              </button>
+              <button id="assistant-toggle" class="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
+                <i data-lucide="message-circle-question" aria-hidden="true"></i>
+                <span><strong>AI 도움말</strong><small>사용법·세무 질문</small></span>
+                <i data-lucide="chevron-right" aria-hidden="true"></i>
+              </button>
+            </div>
+            <nav class="sidebar-legal-links" aria-label="서비스 정책">
+              <a href="./privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
+              <a href="./terms.html" target="_blank" rel="noopener">이용약관</a>
+            </nav>
+            <div class="sidebar-user">
+              <span id="user-avatar" class="avatar">관</span>
+              <div><strong id="user-name">관리자</strong><span id="user-role">관리자</span></div>
+              <button id="logout-button" class="icon-button" type="button" title="로그아웃" aria-label="로그아웃">
+                <i data-lucide="log-out" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
         </aside>
 

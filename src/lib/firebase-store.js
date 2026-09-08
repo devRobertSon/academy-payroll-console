@@ -348,6 +348,7 @@ export async function createFirebaseStore(config) {
       month: input.month,
       employeeWorkHours: input.employeeWorkHours,
       businessHours: input.businessHours,
+      tuitionInput: input.tuitionInput ?? firestoreSdk.deleteField(),
       submittedAt,
       updatedAt: submittedAt,
       updatedBy: auth.currentUser.uid
@@ -462,6 +463,7 @@ export async function createFirebaseStore(config) {
         month: monthlyInput.month,
         employeeWorkHours: monthlyInput.employeeWorkHours,
         businessHours: monthlyInput.businessHours,
+        tuitionInput: monthlyInput.tuitionInput ?? firestoreSdk.deleteField(),
         submittedAt: updatedAt,
         updatedAt,
         updatedBy: auth.currentUser.uid

@@ -1,3 +1,5 @@
+import { applicableBusinessWorkLines, isTuitionShare, tuitionBasis } from "./payroll.js";
+
 export const MAX_MONTHLY_WORK_HOURS = 744;
 
 export function monthlyWorkInputId(month, teacherId) {
@@ -11,7 +13,7 @@ export function normalizeMonthlyHours(value) {
 }
 
 export function buildBusinessHours(rates, values = {}) {
-  return Object.fromEntries((rates || []).map((rate) => [
+  return Object.fromEntries((rates || []).filter((rate) => !isTuitionShare(rate)).map((rate) => [
     rate.id,
     normalizeMonthlyHours(values[rate.id])
   ]));
@@ -26,13 +28,24 @@ export function mergeMonthlyWorkInput(rates, payrollOverride = {}, monthlyInput 
   if (!monthlyInput) return payrollOverride;
 
   const approvedRateIds = new Set((rates || []).map((rate) => rate.id));
-  const adminOnlyLines = (payrollOverride.businessWorkLines || [])
+  const adminOnlyLines = applicableBusinessWorkLines(rates || [], payrollOverride.businessWorkLines || [])
     .filter((line) => !line.rateId || !approvedRateIds.has(line.rateId));
-  const businessWorkLines = (rates || []).map((rate) => ({
-    ...rate,
-    rateId: rate.id,
-    hours: normalizeMonthlyHours(monthlyInput.businessHours?.[rate.id])
-  }));
+  const businessWorkLines = (rates || []).map((rate) => {
+    if (!isTuitionShare(rate)) return {
+      ...rate, rateId: rate.id, hours: normalizeMonthlyHours(monthlyInput.businessHours?.[rate.id])
+    };
+    const saved = (payrollOverride.businessWorkLines || []).find((line) => line.rateId === rate.id);
+    const savedBasis = tuitionBasis(saved || {});
+    const submitted = monthlyInput.tuitionInput?.rateId === rate.id ? monthlyInput.tuitionInput : null;
+    // An administrator's completed tuition entry wins over later teacher submissions.
+    const basis = savedBasis.tuitionPending && submitted
+      ? tuitionBasis({ tuitionGroups: submitted.groups }) : savedBasis;
+    return {
+      ...rate, rateId: rate.id, ...basis,
+      tuitionShareRate: saved?.tuitionShareRate ?? rate.tuitionShareRate,
+      hours: 0
+    };
+  });
 
   return {
     ...payrollOverride,

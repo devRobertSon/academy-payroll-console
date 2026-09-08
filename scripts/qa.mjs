@@ -524,11 +524,16 @@ async function checkTeacherSelfService() {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (!teacherUpdateRule.includes(`'${selfField}'`)) failures.push(`Teacher self-update rule is missing the allowed field: ${selfField}`);
   }
-  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidBusinessRates", "hasValidSelfIncomeComposition"]) {
+  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidBusinessRates", "hasValidSelfIncomeComposition", "hasValidTuitionSubmission", "ownsTuitionRate", "validTuitionGroupAt"]) {
     if (!rules.includes(safeguard)) failures.push(`Teacher self-reported pay setting safeguard is missing: ${safeguard}`);
   }
-  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "시급 1개 사용", "여러 시급 사용", "businessRateLabel(index)"]) {
+  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "강사료 계산 방식", "data-combined-tuition", "담당 학생 학원비 비율 포함", "businessRateLabel(index)"]) {
     if (!app.includes(onboardingSurface)) failures.push(`Teacher self-onboarding surface is missing: ${onboardingSurface}`);
+  }
+  if (!app.includes("tuitionPending") || !app.includes("data-use-submitted-tuition")
+    || !store.includes("tuitionInput: input.tuitionInput ?? firestoreSdk.deleteField()")
+    || !store.includes("tuitionInput: monthlyInput.tuitionInput ?? firestoreSdk.deleteField()")) {
+    failures.push("Tuition submission, administrator review, and missing-tuition safeguards are required.");
   }
   for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject"]) {
     if (app.includes(removedSurface)) failures.push(`Subject-based hourly-rate input must be removed: ${removedSurface}`);

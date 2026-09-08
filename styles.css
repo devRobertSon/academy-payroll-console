@@ -411,7 +411,8 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .income-composition-option input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: -3px; }
 .business-rate-mode { margin: 0; padding: 0; border: 0; }
 .business-rate-mode > legend { padding: 0; font-size: 11px; font-weight: 700; }
-.business-rate-mode .income-composition-options { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+.business-rate-mode .income-composition-options { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
+.business-rate-mode > .checkbox-row { margin-bottom: 14px; }
 .business-rate-mode > .form-field { max-width: 420px; }
 .income-composition-empty { padding: 18px; border: 1px dashed var(--line-strong); color: var(--muted); background: var(--surface-subtle); text-align: center; font-size: 10px; }
 .income-composition-empty[hidden], .conditional-form-section[hidden] { display: none; }
@@ -456,6 +457,24 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .business-line-row { display: grid; align-items: center; gap: 8px; }
 .business-line-row.rate-row { grid-template-columns: minmax(90px, .55fr) minmax(160px, 1fr) 36px; }
 .business-line-row.work-row { grid-template-columns: minmax(90px, .55fr) minmax(130px, 1fr) minmax(105px, .8fr) 90px 36px; }
+.business-line-row.tuition-share-row { display: block; padding: 18px 0; border-top: 1px solid var(--line); }
+.tuition-share-row .form-field { min-width: 0; }
+.tuition-groups-editor { min-width: 0; width: 100%; }
+.tuition-groups-editor .editor-heading { flex-wrap: wrap; }
+.tuition-groups-editor .editor-heading .button { flex-shrink: 0; white-space: nowrap; }
+.teacher-tuition-input { border: 0; border-top: 1px solid var(--line); margin: 12px 0 0; padding: 20px; min-width: 0; }
+.teacher-tuition-input legend { font-size: 13px; font-weight: 700; }
+.tuition-submission { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tuition-submission .button { justify-self: start; }
+.tuition-group-row { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(160px, 1.2fr) minmax(100px, .8fr) 32px; align-items: end; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tuition-group-row .form-field { min-width: 0; margin: 0; }
+.tuition-group-row > strong { padding-bottom: 10px; text-align: right; overflow-wrap: anywhere; }
+.tuition-group-row .icon-button { margin-bottom: 4px; }
+.tuition-total, .tuition-legacy { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; }
+.tuition-total strong { color: var(--brand); overflow-wrap: anywhere; text-align: right; }
+.tuition-share-result { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr); gap: 20px; align-items: end; }
+.tuition-share-result > div { text-align: right; }
+.tuition-share-result .business-line-amount { display: block; margin-top: 8px; overflow-wrap: anywhere; }
 .business-line-row > input, .business-line-row .input-suffix { min-width: 0; }
 .business-rate-label { color: var(--text); font-size: 11px; font-weight: 700; }
 .business-line-row .icon-button { width: 36px; height: 36px; color: var(--muted); }
@@ -583,6 +602,15 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .receipt-review-summary > div + div { border-top: 1px solid var(--line); border-left: 0; }
   .form-field.full { grid-column: auto; }
   .business-line-row.rate-row, .business-line-row.work-row { grid-template-columns: 1fr 36px; }
+  .business-line-row.tuition-share-row { grid-template-columns: minmax(0, 1fr); }
+  .tuition-group-row { grid-template-columns: minmax(0, 1fr) 32px; gap: 10px; }
+  .tuition-group-row .form-field { grid-column: 1 / -1; }
+  .tuition-group-row > strong { text-align: left; padding-bottom: 4px; }
+  .tuition-share-result { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .tuition-share-result > div { text-align: left; }
+  .tuition-total, .tuition-legacy { flex-wrap: wrap; }
+  .business-editor-field .editor-heading { flex-wrap: wrap; }
+  .business-editor-field .editor-heading .button { flex-shrink: 0; white-space: nowrap; }
   .business-line-row > input, .business-line-row .input-suffix, .business-line-row .business-line-amount { grid-column: 1; }
   .business-line-row .icon-button { grid-column: 2; grid-row: 1; }
   .business-line-amount { text-align: left; }

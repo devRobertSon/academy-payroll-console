@@ -23,6 +23,59 @@ export function businessRateLabel(index = 0) {
   return `시급 ${normalizedIndex + 1}`;
 }
 
+export function isTuitionShare(rate = {}) {
+  return rate.tuitionShareRate != null;
+}
+
+export function normalizeTuitionGroups(groups) {
+  if (!Array.isArray(groups) || groups.length > 10) throw new Error("담당 학생 학원비는 최대 10개 항목으로 입력해 주세요.");
+  const normalized = groups.map((group) => {
+    if (!group || !Number.isInteger(group.studentCount) || group.studentCount < 0 || group.studentCount > 1000
+      || !Number.isInteger(group.tuitionPerStudent) || group.tuitionPerStudent < 0 || group.tuitionPerStudent > 10000000) {
+      throw new Error("학생 수는 0~1,000명, 1인당 월 학원비는 0~1,000만 원의 정수로 입력해 주세요.");
+    }
+    return { studentCount: group.studentCount, tuitionPerStudent: group.tuitionPerStudent };
+  });
+  if (normalized.reduce((sum, group) => sum + group.studentCount * group.tuitionPerStudent, 0) > 10000000000) {
+    throw new Error("담당 학생 학원비 합계는 100억 원 이하여야 합니다.");
+  }
+  return normalized;
+}
+
+export function tuitionBasis(line = {}) {
+  if (Object.hasOwn(line, "tuitionGroups")) {
+    const tuitionGroups = normalizeTuitionGroups(line.tuitionGroups);
+    return {
+      tuitionGroups,
+      tuitionAmount: tuitionGroups.reduce((sum, group) => sum + group.studentCount * group.tuitionPerStudent, 0),
+      tuitionPending: tuitionGroups.length === 0
+    };
+  }
+  // Preserve earlier total-only entries without inventing a student count.
+  return line.tuitionAmount == null
+    ? { tuitionGroups: [], tuitionAmount: 0, tuitionPending: true }
+    : { tuitionAmount: Number(line.tuitionAmount), tuitionPending: false };
+}
+
+export function applicableBusinessWorkLines(rates, lines = []) {
+  const shareContract = rates.some(isTuitionShare);
+  const hourlyContract = rates.some((rate) => !isTuitionShare(rate)) || rates.length === 0;
+  // Keep explicit monthly extras, but do not carry a replaced contract's other pay method forward.
+  return lines.filter((line) => !line.rateId || (isTuitionShare(line) ? shareContract : hourlyContract));
+}
+
+export function calculateTuitionShare(tuitionAmount, percentage) {
+  const amount = Number(tuitionAmount);
+  const rate = Number(percentage);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 10000000000
+    || !Number.isInteger(amount)) throw new Error("담당 학생 학원비 합계는 0원 이상 100억 원 이하의 정수로 입력해 주세요.");
+  if (!Number.isFinite(rate) || rate <= 0 || rate > 100
+    || Math.abs(rate * 100 - Math.round(rate * 100)) > 0.000001) {
+    throw new Error("약정 비율은 0보다 크고 100 이하로, 소수점 둘째 자리까지 입력해 주세요.");
+  }
+  return Math.round(amount * Math.round(rate * 100) / 10000);
+}
+
 const INCOME_COMPOSITIONS = new Set(Object.keys(INCOME_COMPOSITION_LABELS));
 
 const won = (value) => Math.round(Number(value) || 0);
@@ -34,6 +87,7 @@ const floorToUnit = (value, unit = 1) => {
 };
 
 export function calculateEarning(entry) {
+  if (isTuitionShare(entry)) return calculateTuitionShare(tuitionBasis(entry).tuitionAmount, entry.tuitionShareRate);
   return won(Number(entry.hours || 0) * Number(entry.hourlyRate || 0));
 }
 
@@ -69,7 +123,7 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
   let source;
 
   if (Array.isArray(override.businessWorkLines)) {
-    businessWorkLines = normalizeBusinessWorkLines(override.businessWorkLines);
+    businessWorkLines = normalizeBusinessWorkLines(applicableBusinessWorkLines(settings.businessRates, override.businessWorkLines));
     employeeGrossPay = override.employeeGrossPay == null
       ? settings.defaultEmployeePay
       : Math.max(0, won(override.employeeGrossPay));
@@ -86,6 +140,7 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
       ...rate,
       rateId: rate.id,
       hours: 0,
+      ...(isTuitionShare(rate) ? { tuitionAmount: 0, tuitionGroups: [], tuitionPending: true } : {}),
       amount: 0
     }));
     source = "teacher-default";
@@ -127,6 +182,8 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     businessGrossPay,
     businessHours,
     businessWorkLines,
+    tuitionPending: settings.businessRates.some(isTuitionShare)
+      && (!businessWorkLines.some(isTuitionShare) || businessWorkLines.some((line) => isTuitionShare(line) && line.tuitionPending)),
     transportTrips,
     transportUnitAmount,
     manualTransportAmount,
@@ -172,20 +229,28 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
     });
   }
   if (amounts.businessWorkLines.length) {
-    amounts.businessWorkLines.filter((line) => line.amount > 0).forEach((line, index) => lines.push({
-      id: `${month}_${teacher.id}_business-${line.id || index + 1}`,
-      month,
-      teacherId: teacher.id,
-      kind: "hourly-business",
-      subjectName: businessRateLabel(index),
-      earningCategory: "lectureFee",
-      hours: line.hours,
-      hourlyRate: line.hourlyRate,
-      treatment: "business",
-      insuranceCovered: false,
-      note: override.grossPayNote || null,
-      source: amounts.source
-    }));
+    let hourlyIndex = 0;
+    amounts.businessWorkLines.forEach((line, index) => {
+      const subjectName = isTuitionShare(line) ? "학원비 비율 강사료" : businessRateLabel(hourlyIndex++);
+      if (line.amount <= 0) return;
+      lines.push({
+        id: `${month}_${teacher.id}_business-${line.id || index + 1}`,
+        month,
+        teacherId: teacher.id,
+        kind: isTuitionShare(line) ? "tuition-share-business" : "hourly-business",
+        subjectName,
+        earningCategory: "lectureFee",
+        hours: line.hours,
+        ...(isTuitionShare(line)
+          ? { tuitionAmount: line.tuitionAmount, tuitionShareRate: line.tuitionShareRate,
+            ...(line.tuitionGroups ? { tuitionGroups: line.tuitionGroups.map((group) => ({ ...group })) } : {}) }
+          : { hourlyRate: line.hourlyRate }),
+        treatment: "business",
+        insuranceCovered: false,
+        note: override.grossPayNote || null,
+        source: amounts.source
+      });
+    });
   }
 
   if (amounts.manualTransportAmount > 0) {
@@ -304,14 +369,30 @@ function normalizeAdditionalEarnings(lines) {
 }
 
 function normalizeBusinessRates(rates) {
-  return (Array.isArray(rates) ? rates : []).map((rate, index) => ({
-    id: String(rate.id || `business-rate-${index + 1}`),
-    hourlyRate: Math.max(0, won(rate.hourlyRate))
-  })).filter((rate) => rate.hourlyRate > 0);
+  if (Array.isArray(rates) && (rates.length > 10 || rates.filter(isTuitionShare).length > 1)) {
+    throw new Error("지급 기준은 최대 10개이며 학원비 약정 비율은 한 개만 등록할 수 있습니다.");
+  }
+  return (Array.isArray(rates) ? rates : []).map((rate, index) => {
+    const id = String(rate.id || `business-rate-${index + 1}`);
+    if (isTuitionShare(rate)) {
+      calculateTuitionShare(0, rate.tuitionShareRate);
+      return { id, tuitionShareRate: Number(rate.tuitionShareRate) };
+    }
+    return { id, hourlyRate: Math.max(0, won(rate.hourlyRate)) };
+  }).filter((rate) => isTuitionShare(rate) || rate.hourlyRate > 0)
+    .sort((a, b) => Number(isTuitionShare(a)) - Number(isTuitionShare(b)));
 }
 
 function normalizeBusinessWorkLines(lines) {
   return (Array.isArray(lines) ? lines : []).map((line, index) => {
+    if (isTuitionShare(line)) return {
+      id: String(line.id || `business-work-${index + 1}`),
+      rateId: line.rateId ? String(line.rateId) : null,
+      ...tuitionBasis(line),
+      tuitionShareRate: Number(line.tuitionShareRate),
+      hours: 0,
+      amount: calculateTuitionShare(tuitionBasis(line).tuitionAmount, line.tuitionShareRate)
+    };
     const hours = Math.max(0, Number(line.hours) || 0);
     const hourlyRate = Math.max(0, won(line.hourlyRate));
     return {
@@ -321,7 +402,7 @@ function normalizeBusinessWorkLines(lines) {
       hourlyRate,
       amount: won(hours * hourlyRate)
     };
-  }).filter((line) => line.hourlyRate > 0);
+  }).filter((line) => isTuitionShare(line) || line.hourlyRate > 0);
 }
 
 export function createMonthlyEarningLine(teacher, month, override = {}) {

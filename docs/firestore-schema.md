@@ -9,7 +9,7 @@
 | `users` | 전체 관리 | 본인 문서 조회 |
 | `accessRequests` | 승인 요청 조회·처리·삭제 | 미등록 본인 요청 생성·조회 |
 | `teachers` | 관리·기록 없는 오등록 문서 삭제 | 연결된 본인 조회, 기본 정보·보험 가입 여부·시급 수정 |
-| `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간 조회·수정 |
+| `teacherMonthlyInputs` | 전체 조회·수정 | 본인의 미확정 월 수업시간·담당 학생 수·학원비 제출 |
 | `expenseReceipts` | 전체 조회, 미확정 월 승인·반려 | 본인의 제출 내역 조회, 미확정 월 대기 건 생성·삭제 |
 | `adminNotifications` | 전체 조회, 읽음 처리 | 본인 수업시간·영수증 제출 알림 생성 |
 | `taxPolicies` | 조회·새 버전 생성 | 차단 |
@@ -117,7 +117,13 @@
 
 선생님 본인은 `name`, `phone`, `birthDateCode`, `genderCode`, 보험 가입 여부, 한 개/여러 개 시급과 그에 따른 소득 구성을 수정할 수 있습니다. 이름은 한글 또는 영문과 단어 사이 공백만, 휴대전화와 생년월일 식별값은 숫자 형식만 규칙에서 허용합니다. 여러 시급 목록은 최대 10개이며 ID와 시급 형식을 규칙에서 검사합니다. `email`, `authUid`, `status`, 보험 신고 기준액·적용 기간, 근로소득 월급, 교통비 기준, 지급일과 원천징수 정보는 관리자만 수정할 수 있습니다. 관리자 생성·수정도 동일한 현재 스키마 검사를 통과해야 합니다.
 
+학원비 비율제 계약은 `teachers.businessRates`에 `{ "id": "share-a", "tuitionShareRate": 40 }`으로 저장합니다. 한 항목에는 `hourlyRate`와 `tuitionShareRate` 중 하나만 허용합니다. 기존 시급제 형식은 변경하지 않습니다. 약정 비율은 0 초과 100 이하, 소수점 둘째 자리까지 규칙에서 검사합니다. 비율제 항목에는 선생님의 `businessHours`를 저장하거나 계산에 사용하지 않습니다. 선생님은 기존 `businessRates` 수정 권한으로 약정 비율을 입력하며 담당 학생 수·학원비는 아래 월별 제출 문서에 별도로 저장합니다.
+
+약정 비율 항목은 한 개만 허용하며 시급 항목과 함께 저장할 수 있습니다. 혼합에서 비율을 포함한 계약 예시는 `[{ "id": "hourly-a", "hourlyRate": 50000 }, { "id": "share-a", "tuitionShareRate": 40 }]`입니다. 지급 기준은 합계 최대 10개이므로 병행 계약은 시급을 최대 9개까지 등록합니다. `시급 / 비율 / 혼합` 선택과 비율 포함 체크 상태는 이 배열에서 계산하며 별도 중복 필드를 저장하지 않습니다. 화면은 시급 항목을 먼저, 비율 항목을 마지막에 정렬합니다. 비율 행은 시급 번호와 수업 시수에 포함하지 않습니다.
+
 ### `teacherMonthlyInputs/{yyyy-mm_teacherId}`
+
+선생님은 자신의 미확정 월에 선택 필드 `tuitionInput`으로 `{ "rateId": "share-a", "groups": [{ "studentCount": 10, "tuitionPerStudent": 300000 }, { "studentCount": 5, "tuitionPerStudent": 400000 }] }`를 제출할 수 있습니다. `rateId`는 본인 계약의 비율 항목이어야 합니다. `groups`는 최대 10개이며 학생 수는 0~1,000명, 1인당 학원비는 0~1,000만 원의 정수, 전체 합계는 100억 원 이하입니다. 학생 이름이나 비율·급여액은 제출할 수 없습니다. 빈 배열은 관리자 보완 대기이며 `null` 또는 필드 없음은 이전 시급 전용 문서와 호환됩니다. 미확정 월 제한과 본인 계정 검증은 유지합니다.
 
 ```json
 {
@@ -244,6 +250,10 @@
 ```
 
 `businessWorkLines`의 각 금액은 `hourlyRate × hours`로 계산하며 확정 명세서에는 당시 시급·시수와 화면 표시명(`시급 1`, `시급 2`)이 계산 스냅샷으로 보존됩니다. 교통비·주차료·기타 지급의 `treatment`가 `pending`이면 미리보기에는 포함되지만 급여 확정은 차단됩니다. 세무사 확인 후 `business`, `employee`, `exempt`, `other` 중 하나를 선택합니다. 보험별 기준액은 서로 다르게 입력할 수 있습니다.
+
+비율제의 월별 관리 입력은 `payrollOverrides.businessWorkLines`의 `{ "id": "share-a", "rateId": "share-a", "tuitionShareRate": 40, "tuitionGroups": [{ "studentCount": 10, "tuitionPerStudent": 300000 }, { "studentCount": 5, "tuitionPerStudent": 400000 }], "tuitionAmount": 5000000, "hours": 0 }`입니다. 계산의 기준은 해당 선생님 담당 학생의 인원별 합계이며 학원 전체 매출이 아닙니다. `tuitionGroups`가 있으면 `tuitionAmount`를 신뢰하지 않고 인원·단가에서 다시 계산합니다. 과거 합계만 있는 항목은 그대로 지원하며 학생 수를 임의 생성하지 않습니다. 비율 계산식은 `Math.round(tuitionAmount * Math.round(tuitionShareRate * 100) / 10000)`입니다. 명세서에는 `kind: "tuition-share-business"`, 인원별 내역·합계·적용 비율을 복사해 보존하고 기존 `lectureFee` 사업소득 공제를 적용합니다.
+
+관리자 입력이 없거나 빈 인원 배열이면 본인 비율 항목에 해당하는 선생님 제출값으로 미리 계산합니다. 관리자가 인원별 내역 또는 기존 합계를 저장한 이후에는 선생님 재제출로 이를 덮어쓰지 않습니다. 관리자는 제출값과 비교하고 선택적으로 반영합니다. 인원 배열이 비어 있고 제출도 없으면 입력 대기로 확정을 차단하며, `studentCount: 0, tuitionPerStudent: 0`은 명시적 0원 정산입니다. 시급제/비율제 전환 시 이전 방식의 계약 ID가 있는 항목은 미확정 계산에서 제외하되 원본 문서나 확정 스냅샷은 삭제하지 않습니다. `rateId`가 없는 관리자 추가 시급은 명시적인 월별 추가 지급으로 유지합니다. 변경 후 미확정 월을 다시 검토해야 합니다.
 
 ### `payrollRuns/{yyyy-mm}`
 

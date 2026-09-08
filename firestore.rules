@@ -121,15 +121,26 @@ service cloud.firestore {
     function validBusinessRateAt(rates, index) {
       return rates.size() <= index ? true : (
         rates[index] is map
-        && rates[index].keys().hasOnly(['id', 'hourlyRate'])
-        && rates[index].keys().hasAll(['id', 'hourlyRate'])
+        && rates[index].keys().hasAll(['id'])
         && rates[index].id is string
         && rates[index].id.size() > 0
         && rates[index].id.size() <= 100
-        && rates[index].hourlyRate is number
-        && rates[index].hourlyRate > 0
-        && rates[index].hourlyRate <= 10000000
+        && ((rates[index].keys().hasOnly(['id', 'hourlyRate'])
+          && rates[index].keys().hasAll(['hourlyRate'])
+          && rates[index].hourlyRate is number
+          && rates[index].hourlyRate > 0
+          && rates[index].hourlyRate <= 10000000)
+        || (rates[index].keys().hasOnly(['id', 'tuitionShareRate'])
+          && rates[index].keys().hasAll(['tuitionShareRate'])
+          && rates[index].tuitionShareRate is number
+          && rates[index].tuitionShareRate > 0
+          && rates[index].tuitionShareRate <= 100
+          && math.abs(rates[index].tuitionShareRate * 100 - math.round(rates[index].tuitionShareRate * 100)) <= 0.000001))
       );
+    }
+
+    function tuitionShareCountAt(rates, index) {
+      return rates.size() <= index ? 0 : (rates[index].keys().hasAny(['tuitionShareRate']) ? 1 : 0);
     }
 
     function hasValidBusinessRates(data) {
@@ -144,7 +155,17 @@ service cloud.firestore {
         && validBusinessRateAt(data.businessRates, 6)
         && validBusinessRateAt(data.businessRates, 7)
         && validBusinessRateAt(data.businessRates, 8)
-        && validBusinessRateAt(data.businessRates, 9);
+        && validBusinessRateAt(data.businessRates, 9)
+        && tuitionShareCountAt(data.businessRates, 0)
+          + tuitionShareCountAt(data.businessRates, 1)
+          + tuitionShareCountAt(data.businessRates, 2)
+          + tuitionShareCountAt(data.businessRates, 3)
+          + tuitionShareCountAt(data.businessRates, 4)
+          + tuitionShareCountAt(data.businessRates, 5)
+          + tuitionShareCountAt(data.businessRates, 6)
+          + tuitionShareCountAt(data.businessRates, 7)
+          + tuitionShareCountAt(data.businessRates, 8)
+          + tuitionShareCountAt(data.businessRates, 9) <= 1;
     }
 
     function hasValidSelfIncomeComposition(data) {
@@ -420,6 +441,76 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function validTuitionGroupAt(groups, index) {
+      return groups.size() <= index ? true : (
+        groups[index] is map
+        && groups[index].keys().hasOnly(['studentCount', 'tuitionPerStudent'])
+        && groups[index].keys().hasAll(['studentCount', 'tuitionPerStudent'])
+        && groups[index].studentCount is int
+        && groups[index].studentCount >= 0
+        && groups[index].studentCount <= 1000
+        && groups[index].tuitionPerStudent is int
+        && groups[index].tuitionPerStudent >= 0
+        && groups[index].tuitionPerStudent <= 10000000
+      );
+    }
+
+    function tuitionGroupAmountAt(groups, index) {
+      return groups.size() <= index ? 0 : groups[index].studentCount * groups[index].tuitionPerStudent;
+    }
+
+    function matchesTuitionRateAt(rates, rateId, index) {
+      return rates.size() > index
+        && rates[index].keys().hasAny(['tuitionShareRate'])
+        && rates[index].id == rateId;
+    }
+
+    function ownsTuitionRate(teacherId, rateId) {
+      let rates = get(/databases/$(database)/documents/teachers/$(teacherId)).data.businessRates;
+      return matchesTuitionRateAt(rates, rateId, 0)
+        || matchesTuitionRateAt(rates, rateId, 1)
+        || matchesTuitionRateAt(rates, rateId, 2)
+        || matchesTuitionRateAt(rates, rateId, 3)
+        || matchesTuitionRateAt(rates, rateId, 4)
+        || matchesTuitionRateAt(rates, rateId, 5)
+        || matchesTuitionRateAt(rates, rateId, 6)
+        || matchesTuitionRateAt(rates, rateId, 7)
+        || matchesTuitionRateAt(rates, rateId, 8)
+        || matchesTuitionRateAt(rates, rateId, 9);
+    }
+
+    function hasValidTuitionSubmission(data) {
+      return !data.keys().hasAny(['tuitionInput']) || data.tuitionInput == null || (
+        data.tuitionInput is map
+        && data.tuitionInput.keys().hasOnly(['rateId', 'groups'])
+        && data.tuitionInput.keys().hasAll(['rateId', 'groups'])
+        && data.tuitionInput.rateId is string
+        && ownsTuitionRate(data.teacherId, data.tuitionInput.rateId)
+        && data.tuitionInput.groups is list
+        && data.tuitionInput.groups.size() <= 10
+        && validTuitionGroupAt(data.tuitionInput.groups, 0)
+        && validTuitionGroupAt(data.tuitionInput.groups, 1)
+        && validTuitionGroupAt(data.tuitionInput.groups, 2)
+        && validTuitionGroupAt(data.tuitionInput.groups, 3)
+        && validTuitionGroupAt(data.tuitionInput.groups, 4)
+        && validTuitionGroupAt(data.tuitionInput.groups, 5)
+        && validTuitionGroupAt(data.tuitionInput.groups, 6)
+        && validTuitionGroupAt(data.tuitionInput.groups, 7)
+        && validTuitionGroupAt(data.tuitionInput.groups, 8)
+        && validTuitionGroupAt(data.tuitionInput.groups, 9)
+        && tuitionGroupAmountAt(data.tuitionInput.groups, 0)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 1)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 2)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 3)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 4)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 5)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 6)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 7)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 8)
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 9) <= 10000000000
+      );
+    }
+
     match /teacherMonthlyInputs/{inputId} {
       allow read: if isAdmin()
         || (activeAccount()
@@ -432,7 +523,7 @@ service cloud.firestore {
           && inputId == request.resource.data.month + '_' + account().teacherId
           && request.resource.data.keys().hasOnly([
             'teacherId', 'teacherUid', 'month', 'employeeWorkHours',
-            'businessHours', 'submittedAt', 'updatedAt', 'updatedBy'
+            'businessHours', 'tuitionInput', 'submittedAt', 'updatedAt', 'updatedBy'
           ])
           && request.resource.data.teacherId == account().teacherId
           && request.resource.data.teacherUid == request.auth.uid
@@ -442,6 +533,7 @@ service cloud.firestore {
           && request.resource.data.employeeWorkHours <= 744
           && request.resource.data.businessHours is map
           && request.resource.data.businessHours.size() <= 10
+          && hasValidTuitionSubmission(request.resource.data)
           && request.resource.data.submittedAt == request.time
           && request.resource.data.updatedAt == request.time
           && request.resource.data.updatedBy == request.auth.uid

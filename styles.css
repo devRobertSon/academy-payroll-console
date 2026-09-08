@@ -152,6 +152,7 @@ button { color: inherit; }
 .metric { min-width: 0; padding: 8px 20px; border-right: 1px solid var(--line); }
 .metric:first-child { padding-left: 0; }
 .metric:last-child { border-right: 0; }
+.metrics[aria-label="급여 요약"] { grid-template-columns: minmax(112px, .5fr) repeat(2, minmax(0, 1fr)); }
 .metrics[aria-label="급여 요약"] .metric:last-child { border-left: 3px solid var(--brand-sky); }
 .metrics[aria-label="급여 요약"] .metric:last-child strong { color: var(--brand); }
 .metric-label { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; color: var(--muted); font-size: 11px; font-weight: 600; }
@@ -497,7 +498,13 @@ body:has(.modal-backdrop) { overflow: hidden; }
   .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .metric { padding: 16px; }
   .metric:first-child { padding-left: 16px; }
-  .metrics[aria-label="급여 요약"] .metric:last-child { border-left: 0; }
+  .metrics[aria-label="급여 요약"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics[aria-label="급여 요약"] .metric { border-bottom: 0; }
+  .metrics[aria-label="급여 요약"] .metric:first-child { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  .metrics[aria-label="급여 요약"] .metric:first-child .metric-label { margin-bottom: 0; }
+  .metrics[aria-label="급여 요약"] .metric:first-child small { margin-top: 0; margin-left: auto; }
+  .metrics[aria-label="급여 요약"] .metric:nth-child(2) { padding-left: 0; border-right: 1px solid var(--line); }
+  .metrics[aria-label="급여 요약"] .metric:last-child { padding-right: 0; border-left: 0; }
   .split-layout, .payslip-layout { grid-template-columns: minmax(0, 1fr); }
   .payslip-list { display: grid; grid-template-columns: repeat(3, 1fr); }
   .payslip-list-header { grid-column: 1 / -1; }
@@ -557,6 +564,9 @@ body:has(.modal-backdrop) { overflow: hidden; }
 
 @media (max-width: 520px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics[aria-label="급여 요약"] { grid-template-columns: minmax(0, 1fr); }
+  .metrics[aria-label="급여 요약"] .metric:nth-child(n+2) { padding: 14px 0; border-right: 0; }
+  .metrics[aria-label="급여 요약"] .metric:nth-child(2) { border-bottom: 1px solid var(--line); }
   .metric strong { font-size: 20px; }
   .metric-label { font-size: 10px; }
   .demo-actions, .form-grid { grid-template-columns: 1fr; }

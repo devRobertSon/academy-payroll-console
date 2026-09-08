@@ -468,9 +468,8 @@ function renderDashboard() {
       <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="선생님 검색" aria-label="선생님 검색" data-control="search" /></div>
     </div>
     <section class="metrics" aria-label="급여 요약">
-      ${metric("users-round", "대상 선생님", `${payrolls.length}명`, `활성 선생님 ${activeTeachers().length}명`)}
+      ${metric("users-round", "선생님 수", `${payrolls.length}명`, `활성 선생님 ${activeTeachers().length}명`)}
       ${metric("circle-dollar-sign", "총 지급액", formatWon(summary.gross), "공제 전 금액")}
-      ${metric("receipt-text", "총 공제액", formatWon(summary.deductions), `보험 적용 기준 ${formatWon(summary.insuredBase)}`)}
       ${metric("wallet-cards", "실 지급액", formatWon(summary.net), "선생님 지급 예정 합계")}
     </section>
     <section class="content-section">

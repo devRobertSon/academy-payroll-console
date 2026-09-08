@@ -15,6 +15,7 @@ import {
   officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
+import { linkedTeacherForUser } from "./lib/teacher-account.js";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
@@ -78,6 +79,7 @@ import {
 
 const state = {
   user: null,
+  workspaceMode: "admin",
   view: "dashboard",
   month: currentCalendarMonth(),
   search: "",
@@ -201,7 +203,7 @@ function bindStaticEvents() {
   document.querySelector("#mobile-menu").addEventListener("click", () => elements.workspace.classList.toggle("menu-open"));
   elements.assistantToggle.addEventListener("click", openAssistant);
   elements.helpNavButton.addEventListener("click", () => {
-    if (state.user?.role !== "admin") return;
+    if (!isAdminWorkspace()) return;
     state.view = "help";
     elements.workspace.classList.remove("menu-open");
     render();
@@ -216,6 +218,11 @@ function bindStaticEvents() {
     elements.assistantForm.requestSubmit();
   });
   elements.nav.addEventListener("click", (event) => {
+    const modeButton = event.target.closest("[data-workspace-mode]");
+    if (modeButton) {
+      switchWorkspaceMode(modeButton.dataset.workspaceMode);
+      return;
+    }
     const button = event.target.closest("[data-view]");
     if (!button) return;
     state.view = button.dataset.view;
@@ -251,7 +258,8 @@ function loadDemoData() {
 
 async function openWorkspace(user) {
   if (!user) return;
-  state.user = user;
+  state.user = { ...user };
+  state.workspaceMode = user.role === "teacher" ? "teacher" : "admin";
   state.view = user.role === "teacher" ? "workHours" : "dashboard";
   state.selectedTeacherId = user.teacherId || state.data.teachers[0]?.id || null;
   if (!appConfig.demoMode) {
@@ -323,10 +331,13 @@ async function logout() {
 }
 
 function render() {
-  const allowedViews = state.user?.role === "admin" ? adminViews : teacherViews;
+  if (state.user?.role === "admin" && !ownActiveTeacher()) state.workspaceMode = "admin";
+  const allowedViews = isAdminWorkspace() ? adminViews : teacherViews;
   if (!allowedViews.has(state.view)) {
-    state.view = state.user?.role === "admin" ? "dashboard" : "workHours";
+    state.view = isAdminWorkspace() ? "dashboard" : "workHours";
   }
+  elements.assistantEntry.hidden = !isAdminWorkspace();
+  if (!isAdminWorkspace()) closeAssistant();
   renderNav();
   const renderers = {
     dashboard: renderDashboard,
@@ -346,21 +357,68 @@ function render() {
 }
 
 function renderNav() {
-  const items = state.user.role === "teacher" ? teacherNav : adminNav;
+  const items = isTeacherWorkspace() ? teacherNav : adminNav;
   let section = null;
-  elements.nav.innerHTML = items.map(([group, view, icon, label]) => {
+  const switcher = state.user.role === "admin" && ownActiveTeacher()
+    ? `<div class="workspace-mode-switch" role="group" aria-label="업무 화면 선택">
+        <button type="button" data-workspace-mode="admin" aria-pressed="${isAdminWorkspace()}">관리 업무</button>
+        <button type="button" data-workspace-mode="teacher" aria-pressed="${isTeacherWorkspace()}">내 급여</button>
+      </div>` : "";
+  elements.nav.innerHTML = switcher + items.map(([group, view, icon, label]) => {
     const sectionMarkup = group !== section ? `<div class="nav-section-label">${e(group)}</div>` : "";
     section = group;
     return `${sectionMarkup}<button class="nav-button ${state.view === view || (view === "payslips" && state.view === "adminPayslip") ? "active" : ""}" type="button" data-view="${view}"><i data-lucide="${icon}" aria-hidden="true"></i>${e(label)}</button>`;
   }).join("");
   elements.helpNavButton.classList.toggle("active", state.view === "help");
+  document.querySelector("#user-role").textContent = state.user.role === "admin" && ownActiveTeacher()
+    ? "관리자 · 선생님" : roleLabel(state.user.role);
+}
+
+function ownActiveTeacher() {
+  return linkedTeacherForUser(state.user, state.data.teachers, { activeOnly: true });
+}
+
+function isTeacherWorkspace() {
+  return state.user?.role === "teacher"
+    || (state.user?.role === "admin" && state.workspaceMode === "teacher" && !!ownActiveTeacher());
+}
+
+function isAdminWorkspace() {
+  return state.user?.role === "admin" && !isTeacherWorkspace();
+}
+
+async function switchWorkspaceMode(mode) {
+  if (state.user?.role !== "admin" || !["admin", "teacher"].includes(mode)) return;
+  try {
+    if (state.store) {
+      const currentUser = await state.store.restoreSession();
+      if (!currentUser) return logout();
+      state.user = currentUser;
+      hydrateFirebaseData(await state.store.loadWorkspace(currentUser));
+    }
+    if (state.user.role !== "admin") return openWorkspace(state.user);
+    if (mode === "teacher" && !ownActiveTeacher()) throw new Error("활성 상태의 본인 급여 정보를 먼저 연결해 주세요.");
+    state.workspaceMode = mode;
+    state.view = mode === "admin" ? "dashboard" : ownActiveTeacher().profileCompleted === false ? "profile" : "workHours";
+    state.search = "";
+    state.selectedPayslipType = null;
+    state.selectedPayslipMonth = state.month;
+    if (mode === "teacher") state.selectedTeacherId = state.user.teacherId;
+    closeModal();
+    closeAssistant();
+    elements.workspace.classList.remove("menu-open");
+    render();
+    window.scrollTo({ top: 0, left: 0 });
+  } catch (error) {
+    showError(error, "화면을 전환하지 못했습니다.");
+  }
 }
 
 function setPage(title, eyebrow, actions = "") {
   elements.pageTitle.textContent = title;
   elements.pageEyebrow.textContent = eyebrow;
   const unreadCount = unreadAdminNotificationItems().length;
-  const notificationAction = state.user?.role === "admin"
+  const notificationAction = isAdminWorkspace()
     ? `<button class="icon-button notification-button" type="button" title="업무 알림" aria-label="업무 알림${unreadCount ? ` ${unreadCount}건` : ""}" data-action="open-notifications"><i data-lucide="bell"></i>${unreadCount ? `<span class="notification-badge">${unreadCount > 99 ? "99+" : unreadCount}</span>` : ""}</button>`
     : "";
   elements.topbarActions.innerHTML = `${actions}${notificationAction}`;
@@ -541,7 +599,7 @@ function renderPayrollInputs() {
 }
 
 function renderTeachers() {
-  setPage("선생님 관리", "인사 · 접근 권한", `<button class="button button-secondary" type="button" data-action="copy-portal"><i data-lucide="link"></i><span>포털 링크 복사</span></button><button class="button button-primary" type="button" data-action="add-teacher"><i data-lucide="user-plus"></i><span>선생님 등록</span></button>`);
+  setPage("선생님 관리", "인사 · 접근 권한", `<button class="button button-secondary" type="button" data-action="link-my-payroll" title="${state.user.teacherId ? "내 급여 등록 정보" : "내 급여 등록"}"><i data-lucide="contact-round"></i><span>${state.user.teacherId ? "내 급여 등록 정보" : "내 급여 등록"}</span></button><button class="button button-secondary" type="button" data-action="copy-portal"><i data-lucide="link"></i><span>포털 링크 복사</span></button><button class="button button-primary" type="button" data-action="add-teacher"><i data-lucide="user-plus"></i><span>선생님 등록</span></button>`);
   const selected = teacherById(state.selectedTeacherId) || state.data.teachers[0];
   if (selected) state.selectedTeacherId = selected.id;
   const filtered = state.data.teachers.filter((teacher) => teacher.name.includes(state.search));
@@ -573,6 +631,7 @@ function renderTeachers() {
     </div>
   `;
   bindCommonControls();
+  elements.topbarActions.querySelector("[data-action='link-my-payroll']").addEventListener("click", openAdminTeacherLinkModal);
   elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
   elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
@@ -795,7 +854,7 @@ function renderWorkHours() {
 }
 
 function renderReceipts() {
-  if (state.user.role === "teacher") renderTeacherReceipts();
+  if (isTeacherWorkspace()) renderTeacherReceipts();
   else renderAdminReceipts();
 }
 
@@ -952,7 +1011,7 @@ function bindReceiptFileActions() {
 }
 
 async function openReceiptFile(receipt) {
-  if (state.user.role === "teacher" && receipt.status === "approved") {
+  if (isTeacherWorkspace() && receipt.status === "approved") {
     showError("승인된 영수증 파일은 관리자만 보관·열람합니다.");
     return;
   }
@@ -1089,10 +1148,10 @@ function lastDayOfMonth(month) {
 }
 
 function renderPayslips() {
-  const teacherId = state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId;
+  const teacherId = isTeacherWorkspace() ? state.user.teacherId : state.selectedTeacherId;
   const teacher = teacherById(teacherId);
   const months = availablePayslipMonths(teacherId);
-  if (state.user.role === "admin" && !months.includes(state.month)
+  if (isAdminWorkspace() && !months.includes(state.month)
     && payrollForTeacher(teacherId, state.month)) {
     months.push(state.month);
     months.sort().reverse();
@@ -1113,16 +1172,16 @@ function renderPayslips() {
       : [];
   });
   const run = { ...runForMonth(state.selectedPayslipMonth), status: payslipStatus(teacherId, state.selectedPayslipMonth) };
-  const isAdmin = state.user.role === "admin";
+  const isAdmin = isAdminWorkspace();
   const delivery = selectedDocument
     ? deliveryFor(teacherId, state.selectedPayslipMonth, selectedDocument.payslipId)
     : null;
-  setPage(state.user.role === "teacher" ? "급여명세서" : `${teacher?.name || "선생님"} 급여명세서`, "발행된 월별 내역", `
+  setPage(isTeacherWorkspace() ? "급여명세서" : `${teacher?.name || "선생님"} 급여명세서`, "발행된 월별 내역", `
     <button class="button button-secondary" type="button" title="PDF 다운로드" aria-label="급여명세서 PDF 다운로드" data-action="download-payslip" ${selectedDocument ? "" : "disabled"}><i data-lucide="download"></i><span>PDF 다운로드</span></button>
     <button class="button button-secondary" type="button" title="인쇄" aria-label="급여명세서 인쇄" data-action="print-payslip" ${selectedDocument ? "" : "disabled"}><i data-lucide="printer"></i><span>인쇄</span></button>
     ${isAdmin ? `<button class="button button-primary" type="button" title="이메일 발송" aria-label="급여명세서 이메일 발송" data-action="email-payslip" ${selectedDocument && run.status === "published" ? "" : "disabled"}><i data-lucide="mail-plus"></i><span>이메일 발송</span></button>` : ""}
   `);
-  const notice = state.user.role === "teacher"
+  const notice = isTeacherWorkspace()
     ? "본인에게 발행된 급여명세서만 표시됩니다. 파일을 내려받은 공용 기기에서는 사용 후 삭제해 주세요."
     : run.status !== "published"
       ? "관리자 미리보기입니다. 이메일 첨부 발송은 급여 확정 후 사용할 수 있습니다."
@@ -1146,7 +1205,7 @@ function renderPayslips() {
     state.selectedPayslipType = button.dataset.payslipType;
     renderPayslips();
   }));
-  if (state.user.role === "teacher" && selectedDocument && run.status === "published") {
+  if (isTeacherWorkspace() && selectedDocument && run.status === "published") {
     recordPayslipViewed(teacherId, state.selectedPayslipMonth, selectedDocument.payslipId);
   }
 }
@@ -1184,7 +1243,7 @@ function initializeAssistant() {
 }
 
 function openAssistant() {
-  if (state.user?.role !== "admin") return;
+  if (!isAdminWorkspace()) return;
   initializeAssistant();
   elements.assistantPanel.hidden = false;
   elements.assistantToggle.setAttribute("aria-expanded", "true");
@@ -1199,7 +1258,7 @@ function closeAssistant() {
 
 async function submitAssistantQuestion(event) {
   event.preventDefault();
-  if (state.assistantBusy || state.user?.role !== "admin") return;
+  if (state.assistantBusy || !isAdminWorkspace()) return;
   const question = elements.assistantInput.value.trim();
   if (!question) return;
   elements.assistantInput.value = "";
@@ -1271,11 +1330,13 @@ function payrollsForMonth(month) {
 }
 
 function payrollForTeacher(teacherId, month) {
-  if (!appConfig.demoMode && state.data.payslips.length) {
+  if (isTeacherWorkspace() && teacherId !== state.user.teacherId) return null;
+  if (!appConfig.demoMode) {
     const saved = state.data.payslips.find((item) => item.id === payslipId(month, teacherId));
     if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
-    if (state.user?.role === "teacher") return null;
+    if (isTeacherWorkspace()) return null;
   }
+  if (isTeacherWorkspace() && runForMonth(month).status !== "published") return null;
   const teacher = teacherById(teacherId);
   if (!teacher) return null;
   const settings = teacherPaySettings(teacher);
@@ -1400,13 +1461,13 @@ function mergeBuiltInInsurancePolicies(policies) {
 function availablePayslipMonths(teacherId) {
   if (!appConfig.demoMode && state.data.payslips.length) {
     return [...new Set(state.data.payslips
-      .filter((item) => item.teacherId === teacherId && (state.user.role === "admin" || item.status === "published"))
+      .filter((item) => item.teacherId === teacherId && (isAdminWorkspace() || item.status === "published"))
       .map((item) => item.month))]
       .sort()
       .reverse();
   }
   return [...new Set(state.data.payrollRuns.map((run) => run.month))]
-    .filter((month) => state.user.role !== "teacher" || runForMonth(month).status === "published")
+    .filter((month) => !isTeacherWorkspace() || runForMonth(month).status === "published")
     .sort().reverse();
 }
 
@@ -2330,6 +2391,53 @@ function openTeacherSelfProfileModal(teacher) {
   bindBusinessPayRateEditor(form, "self", "#self-business-rates");
 }
 
+function openAdminTeacherLinkModal() {
+  if (!isAdminWorkspace()) return;
+  const linked = linkedTeacherForUser(state.user, state.data.teachers);
+  if (linked) {
+    state.selectedTeacherId = linked.id;
+    openTeacherEditModal(linked);
+    return;
+  }
+  if (state.user.teacherId) {
+    showError("기존 본인 급여 연결을 확인할 수 없습니다. 새로고침 후 연결 상태를 확인해 주세요.");
+    return;
+  }
+  const matches = state.data.teachers.filter((teacher) => normalizeEmail(teacher.email) === normalizeEmail(state.user.email));
+  const candidates = matches.filter((teacher) => teacher.status === "active" && (!teacher.authUid || teacher.authUid === state.user.uid));
+  if (matches.length && !candidates.length) {
+    showError("같은 이메일의 선생님이 비활성이거나 다른 계정과 연결되어 있습니다. 기존 선생님 정보를 먼저 확인해 주세요.");
+    return;
+  }
+  const createTeacher = matches.length === 0;
+  const provisional = provisionalTeacherForAccessRequest({ uid: state.user.uid, email: state.user.email, displayName: state.user.name });
+  openModal("내 급여 등록", `
+    <dl class="definition-list approval-summary"><div><dt>관리자 계정</dt><dd>${e(state.user.email)}</dd></div><div><dt>관리 권한</dt><dd>유지</dd></div></dl>
+    <form id="admin-teacher-link-form" class="form-grid">
+      ${createTeacher
+        ? `<div class="form-field full"><label for="admin-teacher-name">급여 대상 이름</label><input id="admin-teacher-name" name="name" value="${e(provisional.name)}" maxlength="100" data-person-name required /></div>`
+        : `<div class="form-field full"><label for="admin-teacher-id">연결할 선생님</label><select id="admin-teacher-id" name="teacherId">${candidates.map((teacher) => `<option value="${e(teacher.id)}">${e(teacher.name)} · ${e(teacher.email)}</option>`).join("")}</select></div>`}
+    </form>
+  `, createTeacher ? "등록하고 연결" : "연결", async () => {
+    const form = elements.modalRoot.querySelector("#admin-teacher-link-form");
+    if (!form.reportValidity()) return false;
+    const data = new FormData(form);
+    const teacher = createTeacher ? { ...provisional, name: normalizePersonName(data.get("name")) }
+      : candidates.find((item) => item.id === data.get("teacherId"));
+    if (!teacher) throw new Error("연결할 선생님을 선택해 주세요.");
+    const saved = state.store ? await state.store.linkAdminTeacher(teacher, { createTeacher })
+      : { ...teacher, authUid: state.user.uid };
+    if (createTeacher) state.data.teachers.push(saved);
+    else Object.assign(teacher, saved);
+    state.user.teacherId = saved.id;
+    state.selectedTeacherId = saved.id;
+    state.search = "";
+    showToast("관리자 권한을 유지하고 본인 급여 정보를 연결했습니다.");
+    render();
+  });
+  bindPersonNameInput(elements.modalRoot.querySelector("#admin-teacher-link-form"));
+}
+
 function openTeacherModal() {
   openModal("선생님 등록", `
     <form id="teacher-form" class="form-grid">
@@ -2490,7 +2598,7 @@ function openTeacherDeletionModal(teacher) {
   }
 
   openModal("선생님 삭제", `
-    <div class="notice warning"><i data-lucide="triangle-alert"></i><span>선생님 기본 정보와 포털 접근 권한을 삭제합니다. 삭제한 정보는 복구할 수 없습니다.</span></div>
+    <div class="notice warning"><i data-lucide="triangle-alert"></i><span>선생님 기본 정보와 선생님 접근 연결을 삭제합니다. 관리자 계정의 관리 권한은 유지됩니다. 삭제한 정보는 복구할 수 없습니다.</span></div>
     <dl class="definition-list approval-summary"><div><dt>선생님</dt><dd>${e(teacher.name)}</dd></div><div><dt>Google 이메일</dt><dd>${e(teacher.email)}</dd></div></dl>
     <form id="teacher-delete-form" class="form-grid" style="margin-top:18px">
       <div class="form-field full"><label for="teacher-delete-email">삭제 확인 이메일</label><input id="teacher-delete-email" name="confirmationEmail" type="email" autocomplete="off" spellcheck="false" placeholder="위 Google 이메일을 입력하세요" required /><span class="form-help">등록된 Google 이메일과 일치해야 삭제할 수 있습니다.</span></div>
@@ -2502,6 +2610,7 @@ function openTeacherDeletionModal(teacher) {
     validateTeacherDeletion(teacher, confirmationEmail, state.data);
     const cleanupReferences = teacherDeletionCleanupReferences(state.data, teacher.id);
     if (state.store) await state.store.deleteTeacher(teacher, cleanupReferences);
+    if (state.user.teacherId === teacher.id) delete state.user.teacherId;
     state.data.teachers = state.data.teachers.filter((item) => item.id !== teacher.id);
     state.data.monthlyWorkInputs = Object.fromEntries(Object.entries(state.data.monthlyWorkInputs)
       .filter(([, item]) => item.teacherId !== teacher.id));
@@ -2513,7 +2622,7 @@ function openTeacherDeletionModal(teacher) {
     ));
     state.selectedTeacherId = state.data.teachers[0]?.id || null;
     showToast(`${teacher.name} 선생님을 삭제했습니다.`);
-    renderTeachers();
+    render();
   });
 
   const form = elements.modalRoot.querySelector("#teacher-delete-form");
@@ -2533,7 +2642,7 @@ function openTeacherEditModal(teacher) {
   const paySettings = teacherPaySettings(teacher);
   const incomeComposition = resolveIncomeComposition(teacher);
   openModal("선생님 정보 수정", `
-    <div class="notice"><i data-lucide="user-cog"></i><span>비활성화하면 다음 로그인부터 접근이 차단되며 과거 급여 자료는 삭제되지 않습니다.</span></div>
+    <div class="notice"><i data-lucide="user-cog"></i><span>비활성화하면 선생님 업무 접근이 중단되며 과거 급여 자료는 보존됩니다. 관리자를 겸하는 계정은 관리 업무를 계속 사용할 수 있습니다.</span></div>
     <form id="teacher-edit-form" class="form-grid">
       <div class="form-field full form-section-heading form-section-heading-first"><strong>개인정보</strong><span class="form-help">선생님 식별과 Google 계정 연결에 필요한 기본 정보입니다.</span></div>
       <div class="form-field"><label for="teacher-edit-name">이름</label><input id="teacher-edit-name" name="name" autocomplete="name" maxlength="100" pattern="[A-Za-z가-힣]+( [A-Za-z가-힣]+)*" value="${e(teacher.name)}" data-person-name required /><span class="form-help">한글 또는 영문으로 입력하세요.</span></div>
@@ -2564,7 +2673,7 @@ function openTeacherEditModal(teacher) {
       <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
       <div class="form-field"><label for="teacher-edit-payday">지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
-      <div class="form-field"><label for="teacher-edit-status">계정 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select></div>
+      <div class="form-field"><label for="teacher-edit-status">선생님 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select><span class="form-help">관리자를 겸하는 계정의 관리 권한은 유지됩니다.</span></div>
     </form>
   `, "저장", async () => {
     const form = elements.modalRoot.querySelector("#teacher-edit-form");
@@ -2607,7 +2716,7 @@ function openTeacherEditModal(teacher) {
     if (state.store) await state.store.updateTeacher(updated);
     Object.assign(teacher, updated);
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
-    renderTeachers();
+    render();
   });
   const form = elements.modalRoot.querySelector("#teacher-edit-form");
   bindPersonNameInput(form);
@@ -3196,7 +3305,7 @@ async function downloadCurrentPayslip(event) {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const teacher = teacherById(state.user.role === "teacher" ? state.user.teacherId : state.selectedTeacherId);
+    const teacher = teacherById(isTeacherWorkspace() ? state.user.teacherId : state.selectedTeacherId);
     const payslipDocument = selectedPayslipDocument(teacher);
     const file = await createCurrentPayslipPdf(teacher, payslipDocument);
     downloadFile(file);

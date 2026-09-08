@@ -363,7 +363,10 @@ async function checkLifecycleSecurity() {
     || !rules.includes("resource.data.status == 'pending'")
     || !store.includes('action: "TEACHER_DELETED"')
     || !store.includes('new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"])')
-    || !store.includes('batch.delete(firestoreSdk.doc(db, "users", teacher.authUid))')) {
+    || !store.includes('batch.delete(userReference)')
+    || !store.includes('account?.role === "admin"')
+    || !store.includes('teacherId: firestoreSdk.deleteField()')
+    || !rules.includes("allow delete: if isAdmin() && resource.data.role != 'admin'")) {
     failures.push("Teacher deletion must remove the teacher portal account under admin-only rules and retain an audit log.");
   }
 }

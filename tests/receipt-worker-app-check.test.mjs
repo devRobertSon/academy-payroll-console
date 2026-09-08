@@ -120,6 +120,16 @@ const actions = [
   { name: "automatic notice", request: noticeRequest, options: { published: true }, path: "batchGet", status: 200 }
 ];
 
+test("a payroll-linked administrator can upload own receipts without losing Gmail access", async (t) => {
+  const { env, values } = fixture(t, { role: "admin" });
+  const upload = await worker.fetch(uploadRequest(), env);
+  assert.equal(upload.status, 201, await upload.clone().text());
+  const status = await worker.fetch(request("/integration/status"), env);
+  assert.equal(status.status, 200);
+  assert.equal((await status.json()).gmailSenderEmail, "admin@example.invalid");
+  assert.ok(values.has(`gmail_connection:${UID}`));
+});
+
 test("CORS allows App Check for the portal but not arbitrary origins", async (t) => {
   const { env, firestoreCalls } = fixture(t);
   const response = await worker.fetch(request("/receipts", { method: "OPTIONS" }, ""), env);

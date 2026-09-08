@@ -1,6 +1,7 @@
 import { GMAIL_SEND_SCOPE } from "./gmail.js";
 import { WORK_HOURS_NOTIFICATION_TYPE, workHoursNotificationId } from "./admin-notifications.js";
 import { EXPENSE_RECEIPT_NOTIFICATION_TYPE, expenseReceiptNotificationId } from "./expense-receipts.js";
+import { assertTeacherAccountLink, teacherAccountUpdate } from "./teacher-account.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -210,44 +211,89 @@ export async function createFirebaseStore(config) {
   }
 
   async function approveTeacherAccess(request, teacher, { createTeacher = false } = {}) {
-    const batch = firestoreSdk.writeBatch(db);
-    const reviewedAt = firestoreSdk.serverTimestamp();
-    batch.set(firestoreSdk.doc(db, "users", request.uid), {
-      displayName: teacher.name,
-      email: request.email,
-      role: "teacher",
-      status: "active",
-      teacherId: teacher.id,
-      updatedAt: reviewedAt,
-      updatedBy: auth.currentUser.uid
+    return firestoreSdk.runTransaction(db, async (batch) => {
+      const userReference = firestoreSdk.doc(db, "users", request.uid);
+      const teacherReference = firestoreSdk.doc(db, "teachers", teacher.id);
+      const requestReference = firestoreSdk.doc(db, "accessRequests", request.uid);
+      const userSnap = await batch.get(userReference);
+      const teacherSnap = await batch.get(teacherReference);
+      const requestSnap = await batch.get(requestReference);
+      if (!requestSnap.exists() || requestSnap.data().status !== "pending") {
+        throw new Error("이미 처리된 승인 요청입니다. 새로고침해 주세요.");
+      }
+      if (createTeacher ? teacherSnap.exists() : !teacherSnap.exists()) {
+        throw new Error("선생님 등록 상태가 변경됐습니다. 새로고침해 주세요.");
+      }
+      const currentTeacher = createTeacher ? teacher : { id: teacher.id, ...teacherSnap.data() };
+      if (currentTeacher.status !== "active"
+        || currentTeacher.email.trim().toLowerCase() !== requestSnap.data().email.trim().toLowerCase()) {
+        throw new Error("활성 선생님의 Google 이메일과 승인 요청이 일치해야 합니다.");
+      }
+      const reviewedAt = firestoreSdk.serverTimestamp();
+      batch.set(userReference, {
+        ...teacherAccountUpdate(userSnap.exists() ? userSnap.data() : null, currentTeacher, request.uid),
+        updatedAt: reviewedAt,
+        updatedBy: auth.currentUser.uid
+      }, { merge: true });
+      const linkedTeacher = {
+        ...teacher,
+        authUid: request.uid,
+        updatedAt: reviewedAt,
+        updatedBy: auth.currentUser.uid
+      };
+      if (createTeacher) batch.set(teacherReference, linkedTeacher);
+      else batch.update(teacherReference, {
+        authUid: request.uid,
+        updatedAt: reviewedAt,
+        updatedBy: auth.currentUser.uid
+      });
+      batch.update(firestoreSdk.doc(db, "accessRequests", request.uid), {
+        status: "approved",
+        teacherId: teacher.id,
+        reviewedAt,
+        reviewedBy: auth.currentUser.uid
+      });
+      batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+        action: "TEACHER_ACCESS_APPROVED",
+        teacherId: teacher.id,
+        subjectUid: request.uid,
+        actorUid: auth.currentUser.uid,
+        createdAt: reviewedAt
+      });
     });
-    const teacherReference = firestoreSdk.doc(db, "teachers", teacher.id);
-    const linkedTeacher = {
-      ...teacher,
-      authUid: request.uid,
-      updatedAt: reviewedAt,
-      updatedBy: auth.currentUser.uid
-    };
-    if (createTeacher) batch.set(teacherReference, linkedTeacher);
-    else batch.update(teacherReference, {
-      authUid: request.uid,
-      updatedAt: reviewedAt,
-      updatedBy: auth.currentUser.uid
+  }
+
+  async function linkAdminTeacher(teacher, { createTeacher = false } = {}) {
+    return firestoreSdk.runTransaction(db, async (transaction) => {
+      const uid = auth.currentUser.uid;
+      const userReference = firestoreSdk.doc(db, "users", uid);
+      const teacherReference = firestoreSdk.doc(db, "teachers", teacher.id);
+      const userSnap = await transaction.get(userReference);
+      const teacherSnap = await transaction.get(teacherReference);
+      const account = userSnap.exists() ? userSnap.data() : null;
+      if (account?.role !== "admin" || account.status !== "active") {
+        throw new Error("활성 관리자 계정으로 다시 로그인해 주세요.");
+      }
+      if (createTeacher ? teacherSnap.exists() : !teacherSnap.exists()) {
+        throw new Error("선생님 등록 상태가 변경됐습니다. 새로고침 후 다시 연결해 주세요.");
+      }
+      const currentTeacher = createTeacher ? teacher : { id: teacher.id, ...teacherSnap.data() };
+      assertTeacherAccountLink(account, currentTeacher, uid);
+      if (currentTeacher.status !== "active"
+        || currentTeacher.email.trim().toLowerCase() !== String(auth.currentUser.email).trim().toLowerCase()) {
+        throw new Error("본인 Google 이메일의 활성 선생님 정보만 연결할 수 있습니다.");
+      }
+      const common = { updatedAt: firestoreSdk.serverTimestamp(), updatedBy: uid };
+      const linked = { ...currentTeacher, authUid: uid, ...common };
+      if (createTeacher) transaction.set(teacherReference, linked);
+      else transaction.update(teacherReference, { authUid: uid, ...common });
+      transaction.update(userReference, { teacherId: teacher.id, ...common });
+      transaction.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+        action: "ADMIN_TEACHER_LINKED", teacherId: teacher.id, subjectUid: uid,
+        actorUid: uid, createdAt: common.updatedAt
+      });
+      return linked;
     });
-    batch.update(firestoreSdk.doc(db, "accessRequests", request.uid), {
-      status: "approved",
-      teacherId: teacher.id,
-      reviewedAt,
-      reviewedBy: auth.currentUser.uid
-    });
-    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
-      action: "TEACHER_ACCESS_APPROVED",
-      teacherId: teacher.id,
-      subjectUid: request.uid,
-      actorUid: auth.currentUser.uid,
-      createdAt: reviewedAt
-    });
-    await batch.commit();
   }
 
   async function rejectTeacherAccess(request) {
@@ -268,59 +314,78 @@ export async function createFirebaseStore(config) {
   }
 
   async function updateTeacher(teacher) {
-    const batch = firestoreSdk.writeBatch(db);
-    const updatedAt = firestoreSdk.serverTimestamp();
-    batch.set(firestoreSdk.doc(db, "teachers", teacher.id), {
-      ...teacher,
-      updatedAt,
-      updatedBy: auth.currentUser.uid
-    }, { merge: true });
-    if (teacher.authUid) {
-      batch.set(firestoreSdk.doc(db, "users", teacher.authUid), {
-        displayName: teacher.name,
-        email: teacher.email,
-        role: "teacher",
-        status: teacher.status,
-        teacherId: teacher.id,
+    return firestoreSdk.runTransaction(db, async (batch) => {
+      const teacherReference = firestoreSdk.doc(db, "teachers", teacher.id);
+      const current = await batch.get(teacherReference);
+      if (!current.exists() || (current.data().authUid || null) !== (teacher.authUid || null)) {
+        throw new Error("선생님 연결 상태가 변경됐습니다. 새로고침해 주세요.");
+      }
+      const account = teacher.authUid
+        ? await batch.get(firestoreSdk.doc(db, "users", teacher.authUid)) : null;
+      const accountUpdate = teacher.authUid
+        ? teacherAccountUpdate(account?.exists() ? account.data() : null, teacher, teacher.authUid) : null;
+      const updatedAt = firestoreSdk.serverTimestamp();
+      batch.set(firestoreSdk.doc(db, "teachers", teacher.id), {
+        ...teacher,
         updatedAt,
         updatedBy: auth.currentUser.uid
       }, { merge: true });
-    }
-    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
-      action: "TEACHER_UPDATED",
-      teacherId: teacher.id,
-      status: teacher.status,
-      actorUid: auth.currentUser.uid,
-      createdAt: updatedAt
+      if (teacher.authUid) {
+        batch.set(firestoreSdk.doc(db, "users", teacher.authUid), {
+          ...accountUpdate,
+          updatedAt,
+          updatedBy: auth.currentUser.uid
+        }, { merge: true });
+      }
+      batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+        action: "TEACHER_UPDATED",
+        teacherId: teacher.id,
+        status: teacher.status,
+        actorUid: auth.currentUser.uid,
+        createdAt: updatedAt
+      });
     });
-    await batch.commit();
   }
 
   async function deleteTeacher(teacher, cleanupReferences = []) {
     if (!teacher?.id) throw new Error("삭제할 선생님 정보를 확인할 수 없습니다.");
     if (cleanupReferences.length > 490) throw new Error("정리할 미확정 기록이 너무 많습니다. 관리자에게 문의해 주세요.");
-    const batch = firestoreSdk.writeBatch(db);
-    const deletedAt = firestoreSdk.serverTimestamp();
-    const allowedCleanupCollections = new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"]);
-    cleanupReferences.forEach(({ collection, id }) => {
-      if (allowedCleanupCollections.has(collection) && id) {
-        batch.delete(firestoreSdk.doc(db, collection, id));
+    return firestoreSdk.runTransaction(db, async (batch) => {
+      const current = await batch.get(firestoreSdk.doc(db, "teachers", teacher.id));
+      if (!current.exists() || (current.data().authUid || null) !== (teacher.authUid || null)) {
+        throw new Error("선생님 연결 상태가 변경됐습니다. 새로고침해 주세요.");
       }
+      const userReference = teacher.authUid ? firestoreSdk.doc(db, "users", teacher.authUid) : null;
+      const accountSnap = userReference ? await batch.get(userReference) : null;
+      const account = accountSnap?.exists() ? accountSnap.data() : null;
+      if (teacher.authUid) assertTeacherAccountLink(account, teacher, teacher.authUid);
+      const deletedAt = firestoreSdk.serverTimestamp();
+      const allowedCleanupCollections = new Set(["teacherMonthlyInputs", "payrollOverrides", "adminNotifications"]);
+      cleanupReferences.forEach(({ collection, id }) => {
+        if (allowedCleanupCollections.has(collection) && id) {
+          batch.delete(firestoreSdk.doc(db, collection, id));
+        }
+      });
+      batch.delete(firestoreSdk.doc(db, "teachers", teacher.id));
+      if (teacher.authUid) {
+        if (account?.role === "admin") {
+          batch.update(userReference, {
+            teacherId: firestoreSdk.deleteField(), updatedAt: deletedAt, updatedBy: auth.currentUser.uid
+          });
+        } else {
+          batch.delete(userReference);
+          batch.delete(firestoreSdk.doc(db, "accessRequests", teacher.authUid));
+        }
+      }
+      batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
+        action: "TEACHER_DELETED",
+        teacherId: teacher.id,
+        subjectUid: teacher.authUid || null,
+        removedDraftReferenceCount: cleanupReferences.length,
+        actorUid: auth.currentUser.uid,
+        createdAt: deletedAt
+      });
     });
-    batch.delete(firestoreSdk.doc(db, "teachers", teacher.id));
-    if (teacher.authUid) {
-      batch.delete(firestoreSdk.doc(db, "users", teacher.authUid));
-      batch.delete(firestoreSdk.doc(db, "accessRequests", teacher.authUid));
-    }
-    batch.set(firestoreSdk.doc(db, "auditLogs", crypto.randomUUID()), {
-      action: "TEACHER_DELETED",
-      teacherId: teacher.id,
-      subjectUid: teacher.authUid || null,
-      removedDraftReferenceCount: cleanupReferences.length,
-      actorUid: auth.currentUser.uid,
-      createdAt: deletedAt
-    });
-    await batch.commit();
   }
 
   async function saveTeacherProfile(teacherId, profile) {
@@ -634,6 +699,7 @@ export async function createFirebaseStore(config) {
     loadWorkspace,
     saveDocument,
     approveTeacherAccess,
+    linkAdminTeacher,
     rejectTeacherAccess,
     updateTeacher,
     deleteTeacher,

@@ -22,6 +22,14 @@ service cloud.firestore {
       return hasRole('admin');
     }
 
+    function canSubmitOwnTeacherData() {
+      return activeAccount()
+        && account().role in ['teacher', 'admin']
+        && account().get('teacherId', null) is string
+        && get(/databases/$(database)/documents/teachers/$(account().teacherId)).data.authUid == request.auth.uid
+        && get(/databases/$(database)/documents/teachers/$(account().teacherId)).data.status == 'active';
+    }
+
     function isOwnTeacher(teacherId) {
       return activeAccount()
         && account().role == 'teacher'
@@ -271,8 +279,7 @@ service cloud.firestore {
     }
 
     function validTeacherWorkHoursNotification(notificationId) {
-      return activeAccount()
-        && account().role == 'teacher'
+      return canSubmitOwnTeacherData()
         && notificationId == 'work-hours_' + request.resource.data.month + '_' + account().teacherId
         && request.resource.data.keys().hasOnly([
           'type', 'teacherId', 'teacherUid', 'month', 'status',
@@ -334,8 +341,7 @@ service cloud.firestore {
     }
 
     function validTeacherExpenseReceiptNotification(notificationId) {
-      return activeAccount()
-        && account().role == 'teacher'
+      return canSubmitOwnTeacherData()
         && notificationId == 'expense-receipt_' + request.resource.data.receiptId
         && request.resource.data.keys().hasOnly([
           'type', 'receiptId', 'teacherId', 'teacherUid', 'month', 'category', 'amount',
@@ -360,8 +366,12 @@ service cloud.firestore {
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin()
+      allow create: if isAdmin();
+      allow delete: if isAdmin() && resource.data.role != 'admin';
+      allow update: if (isAdmin()
+          && (resource.data.role != 'admin'
+            || (request.resource.data.role == 'admin'
+              && request.resource.data.status == resource.data.status)))
         || (request.auth.uid == uid
           && hasRole('teacher')
           && hasValidPersonName(request.resource.data.displayName)
@@ -547,8 +557,7 @@ service cloud.firestore {
           && account().role == 'teacher'
           && resource.data.teacherUid == request.auth.uid
           && resource.data.teacherId == account().teacherId);
-      allow create: if activeAccount()
-        && account().role == 'teacher'
+      allow create: if canSubmitOwnTeacherData()
         && hasValidExpenseReceipt(request.resource.data, receiptId)
         && request.resource.data.teacherUid == request.auth.uid
         && request.resource.data.teacherId == account().teacherId
@@ -583,8 +592,7 @@ service cloud.firestore {
           'reviewedAt', 'reviewedBy', 'updatedAt', 'updatedBy'
         ])
         && monthIsEditable(resource.data.month);
-      allow delete: if (activeAccount()
-          && account().role == 'teacher'
+      allow delete: if (canSubmitOwnTeacherData()
           && resource.data.teacherUid == request.auth.uid
           && resource.data.teacherId == account().teacherId
           && resource.data.status == 'pending'
@@ -609,8 +617,7 @@ service cloud.firestore {
             'status', 'readAt', 'readBy'
           ]));
       allow delete: if (isAdmin() && monthHasNoApprovedPayroll(resource.data.month))
-        || (activeAccount()
-          && account().role == 'teacher'
+        || (canSubmitOwnTeacherData()
           && resource.data.type == 'expense_receipt_submitted'
           && notificationId == 'expense-receipt_' + resource.data.receiptId
           && resource.data.teacherUid == request.auth.uid
@@ -717,8 +724,7 @@ service cloud.firestore {
         || (activeAccount()
           && account().role == 'teacher'
           && resource.data.teacherUid == request.auth.uid);
-      allow create: if activeAccount()
-        && account().role == 'teacher'
+      allow create: if canSubmitOwnTeacherData()
         && request.resource.data.teacherUid == request.auth.uid
         && request.resource.data.teacherId == account().teacherId
         && request.resource.data.revision is int

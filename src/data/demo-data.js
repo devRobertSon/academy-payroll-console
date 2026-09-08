@@ -17,6 +17,7 @@ export const demoUsers = {
     uid: "demo-admin",
     name: "운영 관리자",
     email: "admin@example.invalid",
+    status: "active",
     role: "admin"
   },
   teacher: {
@@ -98,6 +99,7 @@ export const demoTeachers = [
     authUid: "demo-teacher-03",
     name: "이강사",
     email: "teacher03@example.invalid",
+    status: "active",
     phone: "01000000003",
     birthDateCode: "920303",
     genderCode: "1",

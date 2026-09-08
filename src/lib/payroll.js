@@ -43,6 +43,7 @@ export function normalizeTuitionGroups(groups) {
 }
 
 export function tuitionBasis(line = {}) {
+  // Keep the calculation basis of previously saved student-group records.
   if (Object.hasOwn(line, "tuitionGroups")) {
     const tuitionGroups = normalizeTuitionGroups(line.tuitionGroups);
     return {
@@ -51,9 +52,8 @@ export function tuitionBasis(line = {}) {
       tuitionPending: tuitionGroups.length === 0
     };
   }
-  // Preserve earlier total-only entries without inventing a student count.
   return line.tuitionAmount == null
-    ? { tuitionGroups: [], tuitionAmount: 0, tuitionPending: true }
+    ? { tuitionAmount: null, tuitionPending: true }
     : { tuitionAmount: Number(line.tuitionAmount), tuitionPending: false };
 }
 
@@ -68,7 +68,7 @@ export function calculateTuitionShare(tuitionAmount, percentage) {
   const amount = Number(tuitionAmount);
   const rate = Number(percentage);
   if (!Number.isFinite(amount) || amount < 0 || amount > 10000000000
-    || !Number.isInteger(amount)) throw new Error("담당 학생 학원비 합계는 0원 이상 100억 원 이하의 정수로 입력해 주세요.");
+    || !Number.isInteger(amount)) throw new Error("해당 수업 전체 학원비는 0원 이상 100억 원 이하의 정수로 입력해 주세요.");
   if (!Number.isFinite(rate) || rate <= 0 || rate > 100
     || Math.abs(rate * 100 - Math.round(rate * 100)) > 0.000001) {
     throw new Error("약정 비율은 0보다 크고 100 이하로, 소수점 둘째 자리까지 입력해 주세요.");
@@ -140,7 +140,7 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
       ...rate,
       rateId: rate.id,
       hours: 0,
-      ...(isTuitionShare(rate) ? { tuitionAmount: 0, tuitionGroups: [], tuitionPending: true } : {}),
+      ...(isTuitionShare(rate) ? { tuitionAmount: null, tuitionPending: true } : {}),
       amount: 0
     }));
     source = "teacher-default";

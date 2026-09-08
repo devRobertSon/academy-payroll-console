@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 import { helpArticles } from "../src/data/help-content.js";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "../src/lib/help-assistant.js";
 
+test("관리자 본인 급여 질문은 계정 연결과 화면 전환 안내를 먼저 제시한다", () => {
+  const question = "관리자도 같은 계정으로 내 급여를 등록하려면?";
+  const [result] = searchHelpArticles(question, helpArticles);
+  assert.equal(result.id, "admin-own-payroll");
+  const answer = buildLocalHelpAnswer(question, helpArticles);
+  assert.match(answer, /선생님 관리에서 내 급여 등록/);
+  assert.match(answer, /관리 업무/);
+  assert.match(answer, /별도 Google 계정이나 UID 입력은 필요하지 않습니다/);
+});
+
+test("혼합 안내는 소득 구분과 강사료 계산 방식을 구별한다", () => {
+  const article = helpArticles.find((item) => item.id === "teacher-pay-configuration");
+  const text = article.steps.join(" ");
+  assert.match(text, /수업 전체 학원비 비율 포함/);
+  assert.match(text, /최대 9개 시급/);
+  assert.match(text, /근로소득 \+ 사업소득/);
+  assert.match(text, /서로 다른 설정/);
+});
+
 test("학원비 비율제 질문은 약정 비율과 관리자 월 학원비 입력 안내를 찾는다", () => {
   const results = searchHelpArticles("학원비 비율 월 급여 입력", helpArticles);
   assert.ok(results.some((article) => article.id === "monthly-pay-input"));
@@ -10,13 +29,15 @@ test("학원비 비율제 질문은 약정 비율과 관리자 월 학원비 입
   assert.match(answer, /학원비/);
 });
 
-test("담당 학생 수 질문은 인원별 학원비와 관리자 보완 안내를 찾는다", () => {
-  const results = searchHelpArticles("담당 학생 수 1인당 학원비 입력", helpArticles);
+test("수업 전체 학원비 질문은 총액 입력과 관리자 보완 안내를 찾는다", () => {
+  const results = searchHelpArticles("해당 수업 전체 학원비 총액 입력", helpArticles);
   assert.ok(results.some((article) => article.id === "monthly-pay-input"));
   const article = helpArticles.find((item) => item.id === "monthly-pay-input");
   assert.match(article.steps.join(" "), /학원 전체 매출은 입력하지 않습니다/);
   assert.match(article.steps.join(" "), /입력 대기/);
   assert.match(article.steps.join(" "), /선생님 제출값 반영/);
+  assert.match(article.steps.join(" "), /해당 수업 전체 학원비 × 약정 비율/);
+  assert.doesNotMatch(article.steps.join(" "), /학생 수 × 1인당/);
 });
 
 test("명세서 이메일 질문에는 개인 명세서 전달 안내를 우선 제시한다", () => {

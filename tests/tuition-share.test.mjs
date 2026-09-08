@@ -4,7 +4,7 @@ import {
   calculateTuitionShare, calculatePayroll, createMonthlyEarningLines,
   getMonthlyPayAmounts, getTeacherPaySettings, splitPayrollByIncome, normalizeTuitionGroups, tuitionBasis
 } from "../src/lib/payroll.js";
-import { buildBusinessHours, mergeMonthlyWorkInput } from "../src/lib/teacher-self-service.js";
+import { buildBusinessHours, mergeMonthlyWorkInput, submittedTuitionBasis } from "../src/lib/teacher-self-service.js";
 import { demoPolicy } from "../src/data/demo-data.js";
 
 const rate = { id: "share", tuitionShareRate: 40 };
@@ -174,7 +174,7 @@ const tuitionGroups = [
   { studentCount: 5, tuitionPerStudent: 400000 }
 ];
 
-test("담당 학생 수와 다른 학원비들을 합산하고 제공된 전체 매출값은 사용하지 않는다", () => {
+test("기존 인원별 입력은 당시 산정 기준과 합계를 유지한다", () => {
   const input = { businessWorkLines: [{ ...rate, rateId: rate.id, tuitionGroups, tuitionAmount: 99999999 }] };
   const amounts = getMonthlyPayAmounts(teacher, input);
   assert.equal(amounts.businessWorkLines[0].tuitionAmount, 5000000);
@@ -185,7 +185,7 @@ test("담당 학생 수와 다른 학원비들을 합산하고 제공된 전체 
   assert.equal(payroll.gross, 2000000);
 });
 
-test("학생 수·학원비 내역을 명세서 산정 근거로 복사해 보존한다", () => {
+test("기존 학생 수·학원비 내역을 명세서 산정 근거로 복사해 보존한다", () => {
   const groups = structuredClone(tuitionGroups);
   const input = { businessWorkLines: [{ ...rate, rateId: rate.id, tuitionGroups: groups }] };
   const entries = createMonthlyEarningLines(teacher, "2026-09", input);
@@ -252,4 +252,72 @@ test("혼합형에서 담당 학원비와 시급을 합산하고 시간 재제�
   assert.equal(amounts.businessGrossPay, 2500000);
   assert.equal(amounts.businessHours, 10);
   assert.deepEqual(amounts.businessWorkLines.find((line) => line.rateId === rate.id).tuitionGroups, tuitionGroups);
+});
+
+test("선생님이 수업 전체 학원비만 제출하면 약정 비율을 적용한다", () => {
+  const tuitionInput = { rateId: rate.id, tuitionAmount: 5000000 };
+  const submission = { businessHours: {}, tuitionInput };
+  const merged = mergeMonthlyWorkInput([rate], {}, submission);
+  const amounts = getMonthlyPayAmounts(teacher, merged);
+  assert.equal(amounts.businessGrossPay, 2000000);
+  assert.equal(amounts.tuitionPending, false);
+  assert.equal(amounts.businessHours, 0);
+  assert.equal("tuitionGroups" in amounts.businessWorkLines[0], false);
+  assert.deepEqual(submission.tuitionInput, tuitionInput);
+  const entries = createMonthlyEarningLines(teacher, "2026-09", merged);
+  assert.equal(entries[0].tuitionAmount, 5000000);
+  assert.equal(entries[0].tuitionShareRate, 40);
+  assert.equal("tuitionGroups" in entries[0], false);
+});
+
+test("총액의 미입력과 0원 정산은 저장·재계산 후에도 구분한다", () => {
+  for (const tuitionAmount of [null, 0, 5000000]) {
+    const submission = { businessHours: {}, tuitionInput: { rateId: rate.id, tuitionAmount } };
+    const merged = mergeMonthlyWorkInput([rate], {}, submission);
+    const amounts = getMonthlyPayAmounts(teacher, merged);
+    assert.equal(amounts.tuitionPending, tuitionAmount === null);
+    assert.equal(amounts.businessGrossPay, (tuitionAmount ?? 0) * 0.4);
+    const saved = JSON.parse(JSON.stringify({ businessWorkLines: amounts.businessWorkLines }));
+    assert.equal(getMonthlyPayAmounts(teacher, saved).tuitionPending, tuitionAmount === null);
+    assert.equal(tuitionBasis(saved.businessWorkLines[0]).tuitionAmount, tuitionAmount);
+  }
+});
+
+test("관리자가 확정한 총액·월별 비율·0원은 재제출로 덮어쓰지 않는다", () => {
+  for (const tuitionAmount of [0, 5000000]) {
+    const saved = { businessWorkLines: [{ ...rate, rateId: rate.id, tuitionShareRate: 35, tuitionAmount }] };
+    for (const submittedAmount of [null, 0, 6000000]) {
+      const submission = { businessHours: {}, tuitionInput: { rateId: rate.id, tuitionAmount: submittedAmount } };
+      const merged = mergeMonthlyWorkInput([rate], saved, submission);
+      assert.equal(merged.businessWorkLines[0].tuitionAmount, tuitionAmount);
+      assert.equal(merged.businessWorkLines[0].tuitionShareRate, 35);
+      assert.equal(getMonthlyPayAmounts(teacher, merged).businessGrossPay, tuitionAmount * 0.35);
+    }
+  }
+});
+
+test("새 총액 제출도 본인 비율 항목만 적용하고 비율 위조값은 사용하지 않는다", () => {
+  const input = { businessHours: {}, tuitionInput: { rateId: "other", tuitionAmount: 9000000 } };
+  assert.equal(getMonthlyPayAmounts(teacher, mergeMonthlyWorkInput([rate], {}, input)).tuitionPending, true);
+  input.tuitionInput = { rateId: rate.id, tuitionAmount: 5000000, tuitionShareRate: 100 };
+  assert.equal(getMonthlyPayAmounts(teacher, mergeMonthlyWorkInput([rate], {}, input)).businessGrossPay, 2000000);
+});
+
+test("총액 제출과 여러 시급의 혼합을 계산하고 이전 인원별 제출도 읽는다", () => {
+  const hourly = [{ id: "h1", hourlyRate: 50000 }, { id: "h2", hourlyRate: 70000 }];
+  const combined = { ...teacher, businessRates: [...hourly, rate] };
+  const input = { businessHours: { h1: 10, h2: 2 }, tuitionInput: { rateId: rate.id, tuitionAmount: 5000000 } };
+  assert.equal(getMonthlyPayAmounts(combined, mergeMonthlyWorkInput(combined.businessRates, {}, input)).businessGrossPay, 2640000);
+  assert.equal(submittedTuitionBasis({ rateId: rate.id, groups: tuitionGroups }).tuitionAmount, 5000000);
+  assert.equal(submittedTuitionBasis({ rateId: rate.id, groups: [] }).tuitionPending, true);
+  assert.equal(submittedTuitionBasis(null).tuitionPending, true);
+});
+
+test("잘못된 총액 제출은 계산 전에 거부하고 최대 한도는 허용한다", () => {
+  for (const tuitionAmount of [-1, 0.5, 10000000001, NaN, Infinity, "bad"]) {
+    const input = { tuitionInput: { rateId: rate.id, tuitionAmount } };
+    assert.throws(() => getMonthlyPayAmounts(teacher, mergeMonthlyWorkInput([rate], {}, input)));
+  }
+  const input = { tuitionInput: { rateId: rate.id, tuitionAmount: 10000000000 } };
+  assert.equal(getMonthlyPayAmounts(teacher, mergeMonthlyWorkInput([rate], {}, input)).businessGrossPay, 4000000000);
 });

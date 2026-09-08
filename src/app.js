@@ -44,7 +44,6 @@ import {
   INCOME_COMPOSITION_LABELS,
   INSURANCE_LABELS,
   isTuitionShare,
-  normalizeTuitionGroups,
   tuitionBasis,
   parseEmploymentTaxTableRows,
   resolveIncomeComposition,
@@ -74,7 +73,8 @@ import {
   buildBusinessHours,
   businessHoursFromWorkLines,
   mergeMonthlyWorkInput,
-  monthlyWorkInputId
+  monthlyWorkInputId,
+  submittedTuitionBasis
 } from "./lib/teacher-self-service.js";
 
 const state = {
@@ -721,7 +721,7 @@ function renderHelp() {
     <button class="button button-primary" type="button" title="AI 도움말 열기" aria-label="AI 도움말 열기" data-action="open-assistant"><i data-lucide="message-circle-question"></i><span>AI 도움말</span></button>
   `);
   elements.content.innerHTML = `
-    <div class="notice"><i data-lucide="book-check"></i><span>관리자 업무 순서와 화면별 사용법입니다. 실제 개인정보를 넣기 전에 테스트 계정과 가상 급여로 전체 절차를 확인하세요.</span></div>
+    <div class="notice"><i data-lucide="book-check"></i><span>선생님 등록부터 시급·비율·혼합 급여, 관리자 본인 급여와 명세서 발행까지의 사용법입니다. 화면의 이름과 금액은 가상 예시입니다.</span></div>
     <div class="help-toolbar">
       <div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.helpSearch)}" placeholder="설명서 검색" aria-label="사용 설명서 검색" data-help-search /></div>
       <span>${visibleArticles.length}개 항목</span>
@@ -732,9 +732,9 @@ function renderHelp() {
         ${helpArticles.map((article, index) => `<button type="button" data-help-jump="${e(article.id)}"><span>${index + 1}</span>${e(article.title)}</button>`).join("")}
       </aside>
       <section class="help-content" aria-label="사용 설명서 내용">
-        ${visibleArticles.map((article, index) => `
+        ${visibleArticles.map((article) => `
           <article id="help-${e(article.id)}" class="help-article">
-            <header><span>${String(index + 1).padStart(2, "0")}</span><div><h2>${e(article.title)}</h2><p>${e(article.summary)}</p></div></header>
+            <header><span>${String(helpArticles.indexOf(article) + 1).padStart(2, "0")}</span><div><h2>${e(article.title)}</h2><p>${e(article.summary)}</p></div></header>
             <ol>${article.steps.map((step) => `<li>${e(step)}</li>`).join("")}</ol>
             ${article.screenshots?.length ? `<div class="help-screenshots">${article.screenshots.map((screenshot) => `
               <figure class="help-screenshot">
@@ -796,15 +796,15 @@ function renderWorkHours() {
       <input class="month-control" type="month" value="${e(state.month)}" aria-label="수업 월" data-control="month" />
       <span class="status-chip ${e(run.status)}">${locked ? "입력 마감" : current ? "제출 완료" : "입력 전"}</span>
     </div>
-    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? `${formatMonth(state.month)} 급여가 확정되어 수업 내역을 수정할 수 없습니다.` : "월급, 담당 학생 학원비, 보험 신고 기준액과 세금 정보는 관리자가 최종 검토합니다."}</span></div>
+    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? `${formatMonth(state.month)} 급여가 확정되어 수업 내역을 수정할 수 없습니다.` : "월급, 해당 수업 전체 학원비, 보험 신고 기준액과 세금 정보는 관리자가 최종 검토합니다."}</span></div>
     <section class="content-section">
       <div class="section-heading"><div><h2>${formatMonth(state.month)} 수업 내역</h2></div>${current?.submittedAt ? `<span class="cell-subtext">최근 저장 ${e(formatDateTime(current.submittedAt))}</span>` : ""}</div>
       ${hasWorkTypes ? `<form id="teacher-work-hours-form" class="data-surface teacher-work-hours-form">
         ${canEnterEmployeeHours ? `<div class="teacher-work-hour-row"><div><strong>근로소득 수업</strong><span>월급과 별도로 수업시간만 기록됩니다.</span></div><div class="input-suffix"><input name="employeeWorkHours" type="number" min="0" max="744" step="0.5" value="${e(employeeWorkHours)}" ${locked ? "disabled" : ""} aria-label="근로소득 수업시간" /><span>시간</span></div></div>` : ""}
         ${hourlyRates.map((rate, index) => `<div class="teacher-work-hour-row"><div><strong>${e(businessRateLabel(index))}</strong><span>사업소득 수업</span></div><div class="input-suffix"><input type="number" min="0" max="744" step="0.5" value="${e(businessHours[rate.id] || 0)}" data-business-hour="${e(rate.id)}" ${locked ? "disabled" : ""} aria-label="${e(businessRateLabel(index))} 수업시간" /><span>시간</span></div></div>`).join("")}
         ${shareRate ? `<fieldset class="teacher-tuition-input" ${locked ? "disabled" : ""}>
-          <legend>비율제 수업</legend><p class="cell-subtext">본인이 담당하는 비율제 수업의 학생만 포함합니다. 학원비 미입력 시 관리자가 보완합니다.</p>
-          ${tuitionGroupsEditorHtml({ tuitionGroups: submittedTuition?.groups || [] })}
+          <legend>비율제 수업</legend>
+          ${tuitionAmountEditorHtml(submittedTuitionBasis(submittedTuition))}
           <dl class="definition-list"><div><dt>약정 비율</dt><dd>${e(shareRate.tuitionShareRate)}%</dd></div></dl>
         </fieldset>` : ""}
       </form>` : shareRate ? "" : `<div class="empty-state">등록 정보에서 보험 가입 여부 또는 사업소득 지급 방식을 먼저 입력해 주세요.</div>`}
@@ -839,7 +839,7 @@ function renderWorkHours() {
     try {
       input.tuitionInput = shareRate ? {
         rateId: shareRate.id,
-        groups: readTuitionEditor(form.querySelector("[data-tuition-editor]")).tuitionGroups
+        tuitionAmount: readTuitionEditor(form.querySelector("[data-tuition-editor]")).tuitionAmount
       } : null;
       if (state.store) await state.store.saveTeacherMonthlyInput(input);
       state.data.monthlyWorkInputs[`${state.month}:${teacher.id}`] = input;
@@ -1547,7 +1547,7 @@ function earningBasisLabel(line) {
   if (isTuitionShare(line)) {
     const basis = tuitionBasis(line);
     const detail = basis.tuitionGroups?.map((group) => `${group.studentCount}명 × ${formatNumber(group.tuitionPerStudent)}원`).join(" + ");
-    return `${detail ? `(${detail})` : `담당 학생 학원비 ${formatNumber(basis.tuitionAmount)}원`} × ${line.tuitionShareRate}%`;
+    return `${detail ? `(${detail})` : `해당 수업 전체 학원비 ${formatNumber(basis.tuitionAmount)}원`} × ${line.tuitionShareRate}%`;
   }
   if (line.kind === "unit") return `${formatNumber(line.hours)}회 × ${formatNumber(line.hourlyRate)}원`;
   if (line.kind === "monthly" && Number(line.workHours) > 0) return `월 지급액 · 수업 ${formatHours(line.workHours)}`;
@@ -2050,7 +2050,7 @@ function businessPayRateEditorHtml(settings, prefix, containerId) {
       <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="tuition-share" ${shareRate && !useCombinedRates ? "checked" : ""} /><span><strong>비율</strong></span></label>
       <label class="income-composition-option"><input type="radio" name="${e(prefix)}-business-rate-mode" value="combined" ${useCombinedRates ? "checked" : ""} /><span><strong>혼합</strong></span></label>
     </div>
-    <label class="checkbox-row" data-combined-tuition-option ${useCombinedRates ? "" : "hidden"}><input type="checkbox" data-combined-tuition ${shareRate ? "checked" : ""} /> 담당 학생 학원비 비율 포함</label>
+    <label class="checkbox-row" data-combined-tuition-option ${useCombinedRates ? "" : "hidden"}><input type="checkbox" data-combined-tuition ${shareRate ? "checked" : ""} /> 수업 전체 학원비 비율 포함</label>
     <div class="form-field" data-tuition-share-rate ${shareRate ? "" : "hidden"}><label for="${e(prefix)}-tuition-share-rate">약정 비율</label><div class="input-suffix"><input id="${e(prefix)}-tuition-share-rate" name="${e(prefix)}-tuition-share-rate" type="number" min="0.01" max="100" step="0.01" value="${e(shareRate?.tuitionShareRate ?? "")}" required /><span>%</span></div></div>
     <div class="form-field" data-default-business-rate ${useCombinedRates || shareRate ? "hidden" : ""}><label for="${e(prefix)}-default-business-rate">시급 1</label><div class="input-suffix"><input id="${e(prefix)}-default-business-rate" name="${e(prefix)}-default-business-rate" type="number" min="0" step="1" value="${e(singleRate.hourlyRate)}" /><span>원/시간</span></div></div>
     <div data-multiple-business-rates ${useCombinedRates ? "" : "hidden"}>${businessRateEditorHtml(hourlyRates.length ? hourlyRates : [singleRate], containerId)}</div>
@@ -2140,52 +2140,25 @@ function businessWorkEditorHtml(lines, containerId) {
   </div>`;
 }
 
-function tuitionGroupRowHtml(group = {}, index = 0) {
-  return `<div class="tuition-group-row" data-tuition-group>
-    <label class="form-field"><span>학생 수</span><div class="input-suffix"><input type="number" min="0" max="1000" step="1" value="${e(group.studentCount ?? "")}" aria-label="학원비 항목 ${index + 1} 학생 수" data-student-count /><span>명</span></div></label>
-    <label class="form-field"><span>1인당 월 학원비</span><div class="input-suffix"><input type="number" min="0" max="10000000" step="1" value="${e(group.tuitionPerStudent ?? "")}" aria-label="학원비 항목 ${index + 1} 1인당 월 학원비" data-student-tuition /><span>원</span></div></label>
-    <strong data-tuition-group-amount>미입력</strong>
-    <button class="icon-button" type="button" title="학원비 항목 삭제" aria-label="학원비 항목 ${index + 1} 삭제" data-remove-tuition-group><i data-lucide="trash-2"></i></button>
-  </div>`;
-}
-
-function tuitionGroupsEditorHtml(line = {}) {
-  const groups = line.tuitionGroups || [];
-  const legacy = !Object.hasOwn(line, "tuitionGroups") && line.tuitionAmount != null && !line.tuitionPending;
-  return `<div class="tuition-groups-editor" data-tuition-editor ${legacy ? `data-legacy-tuition="${e(line.tuitionAmount)}"` : ""}>
-    <div class="editor-heading"><strong>담당 학생 학원비</strong><button class="button button-secondary button-compact" type="button" data-add-tuition-group><i data-lucide="plus"></i><span>학원비 항목 추가</span></button></div>
-    ${legacy ? `<div class="tuition-legacy" data-tuition-legacy><span>기존 입력 합계 ${formatWon(line.tuitionAmount)}</span><button class="icon-button" type="button" title="기존 합계 지우기" aria-label="기존 합계 지우기" data-clear-tuition-legacy><i data-lucide="x"></i></button></div>` : ""}
-    <div data-tuition-groups>${(groups.length ? groups : [{}]).map(tuitionGroupRowHtml).join("")}</div>
-    <div class="tuition-total"><span>담당 학생 학원비 합계</span><strong data-tuition-total>입력 대기</strong></div>
+function tuitionAmountEditorHtml(line = {}) {
+  const basis = tuitionBasis(line);
+  return `<div class="tuition-amount-editor" data-tuition-editor>
+    <label class="form-field"><span>해당 수업 전체 학원비</span><div class="input-suffix"><input type="number" min="0" max="10000000000" step="1" value="${e(basis.tuitionPending ? "" : basis.tuitionAmount)}" aria-label="해당 수업 전체 학원비" data-tuition-amount /><span>원</span></div></label>
+    <div class="tuition-total"><span>정산 대상 학원비</span><strong data-tuition-total>입력 대기</strong></div>
   </div>`;
 }
 
 function readTuitionEditor(editor) {
-  const groups = [...editor.querySelectorAll("[data-tuition-group]")].flatMap((row) => {
-    const count = row.querySelector("[data-student-count]").value;
-    const fee = row.querySelector("[data-student-tuition]").value;
-    if (count === "" && fee === "") return [];
-    if (count === "" || fee === "") throw new Error("학생 수와 1인당 월 학원비를 함께 입력해 주세요. 나중에 입력할 항목은 두 칸 모두 비워 주세요.");
-    return [{ studentCount: Number(count), tuitionPerStudent: Number(fee) }];
-  });
-  if (!groups.length && editor.hasAttribute("data-legacy-tuition")) {
-    return tuitionBasis({ tuitionAmount: Number(editor.dataset.legacyTuition) });
-  }
-  return tuitionBasis({ tuitionGroups: normalizeTuitionGroups(groups) });
+  const input = editor.querySelector("[data-tuition-amount]");
+  if (!input.validity.valid) throw new Error("해당 수업 전체 학원비는 0원 이상 100억 원 이하의 정수로 입력해 주세요.");
+  const basis = tuitionBasis({ tuitionAmount: input.value === "" ? null : Number(input.value) });
+  calculateTuitionShare(basis.tuitionAmount, 100);
+  return basis;
 }
 
 function bindTuitionEditors(root, onChange = () => {}) {
   root.querySelectorAll("[data-tuition-editor]").forEach((editor) => {
     const update = () => {
-      const rows = [...editor.querySelectorAll("[data-tuition-group]")];
-      rows.forEach((row, index) => {
-        const count = row.querySelector("[data-student-count]");
-        const fee = row.querySelector("[data-student-tuition]");
-        count.setAttribute("aria-label", `학원비 항목 ${index + 1} 학생 수`);
-        fee.setAttribute("aria-label", `학원비 항목 ${index + 1} 1인당 월 학원비`);
-        row.querySelector("[data-remove-tuition-group]").setAttribute("aria-label", `학원비 항목 ${index + 1} 삭제`);
-        row.querySelector("[data-tuition-group-amount]").textContent = count.value === "" || fee.value === "" ? "미입력" : formatWon(Number(count.value) * Number(fee.value));
-      });
       try {
         const basis = readTuitionEditor(editor);
         editor.querySelector("[data-tuition-total]").textContent = basis.tuitionPending ? "입력 대기" : formatWon(basis.tuitionAmount);
@@ -2195,27 +2168,13 @@ function bindTuitionEditors(root, onChange = () => {}) {
       onChange();
     };
     editor.addEventListener("input", update);
-    editor.addEventListener("click", (event) => {
-      if (event.target.closest("[data-add-tuition-group]")) {
-        const count = editor.querySelectorAll("[data-tuition-group]").length;
-        if (count >= 10) { showError("담당 학생 학원비는 최대 10개 항목으로 입력해 주세요."); return; }
-        editor.querySelector("[data-tuition-groups]").insertAdjacentHTML("beforeend", tuitionGroupRowHtml({}, count));
-      } else if (event.target.closest("[data-remove-tuition-group]")) {
-        event.target.closest("[data-tuition-group]").remove();
-      } else if (event.target.closest("[data-clear-tuition-legacy]")) {
-        delete editor.dataset.legacyTuition;
-        editor.querySelector("[data-tuition-legacy]").remove();
-      } else return;
-      update();
-      refreshIcons();
-    });
     update();
   });
 }
 
 function businessWorkRowHtml(line = {}, index = 0) {
   if (isTuitionShare(line)) return `<div class="business-line-row work-row tuition-share-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}" data-tuition-share>
-    ${tuitionGroupsEditorHtml(line)}
+    ${tuitionAmountEditorHtml(line)}
     <div class="tuition-share-result"><label class="form-field"><span>약정 비율</span><div class="input-suffix"><input type="number" min="0.01" max="100" step="0.01" value="${e(line.tuitionShareRate)}" aria-label="약정 비율" data-work-share required /><span>%</span></div></label>
     <div><span>비율 강사료</span><strong class="business-line-amount" data-work-amount>입력 대기</strong></div></div>
   </div>`;
@@ -2759,9 +2718,10 @@ function openMonthlyPayModal(teacher) {
   const workLines = mergeBusinessWorkLines(settings.businessRates, amounts.businessWorkLines);
   const submittedTuition = monthlyWorkInput(teacher.id)?.tuitionInput;
   const shareLine = workLines.find(isTuitionShare);
-  const tuitionSubmission = shareLine && submittedTuition?.rateId === shareLine.rateId && submittedTuition.groups.length
-    ? submittedTuition : null;
-  const tuitionDiffers = tuitionSubmission && JSON.stringify(tuitionSubmission.groups) !== JSON.stringify(shareLine.tuitionGroups);
+  const submittedBasis = submittedTuitionBasis(submittedTuition);
+  const tuitionSubmission = shareLine && submittedTuition?.rateId === shareLine.rateId && !submittedBasis.tuitionPending
+    ? submittedBasis : null;
+  const tuitionDiffers = tuitionSubmission && (tuitionBasis(shareLine).tuitionPending || tuitionSubmission.tuitionAmount !== tuitionBasis(shareLine).tuitionAmount);
   openModal(`${teacher.name} 월 지급액`, `
     <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비·주차료·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
     <form id="monthly-pay-form" class="form-grid">
@@ -2769,7 +2729,7 @@ function openMonthlyPayModal(teacher) {
       <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
       <div class="form-field"><label for="monthly-employee-hours">근로 수업시간</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>시간</span></div></div>
       ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
-      ${tuitionSubmission ? `<div class="form-field full tuition-submission"><strong>선생님 제출 학원비</strong><span>${e(tuitionSubmission.groups.map((group) => `${group.studentCount}명 × ${formatWon(group.tuitionPerStudent)}`).join(" + "))}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
+      ${tuitionSubmission ? `<div class="form-field full tuition-submission"><strong>선생님 제출 학원비</strong><span>해당 수업 전체 학원비 ${formatWon(tuitionSubmission.tuitionAmount)}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
       ${businessWorkEditorHtml(workLines, "monthly-business-work")}
       <div class="form-field full form-section-heading"><strong>교통비</strong><span class="form-help">대중교통 이용 횟수와 1회 금액을 곱해 교통비를 계산합니다.</span></div>
       <div class="form-field"><label for="monthly-transport-trips">대중교통 이용 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
@@ -2831,7 +2791,7 @@ function openMonthlyPayModal(teacher) {
   bindBusinessWorkEditor("#monthly-business-work");
   elements.modalRoot.querySelector("[data-use-submitted-tuition]")?.addEventListener("click", (event) => {
     const row = elements.modalRoot.querySelector("[data-tuition-share]");
-    row.querySelector("[data-tuition-editor]").outerHTML = tuitionGroupsEditorHtml({ tuitionGroups: tuitionSubmission.groups });
+    row.querySelector("[data-tuition-editor]").outerHTML = tuitionAmountEditorHtml({ tuitionAmount: tuitionSubmission.tuitionAmount });
     bindTuitionEditors(row, () => updateBusinessWorkSummary("#monthly-business-work"));
     event.currentTarget.disabled = true;
     refreshIcons();
@@ -3125,7 +3085,7 @@ function openPublishModal() {
     });
     if (missingInsuredSalary.length) throw new Error(`근로소득 월급이 입력되지 않은 보험 가입 선생님이 있습니다: ${missingInsuredSalary.map((teacher) => teacher.name).join(", ")}`);
     const missingTuition = activeTeachers().filter((teacher) => monthlyPayAmounts(teacher, state.month).tuitionPending);
-    if (missingTuition.length) throw new Error(`담당 학생 학원비를 확인해 주세요: ${missingTuition.map((teacher) => teacher.name).join(", ")}. 수강생이 없는 달은 학생 수 0명과 1인당 학원비 0원을 입력해 주세요.`);
+    if (missingTuition.length) throw new Error(`해당 수업 전체 학원비를 확인해 주세요: ${missingTuition.map((teacher) => teacher.name).join(", ")}. 정산 대상 학원비가 없는 달은 0원을 입력해 주세요.`);
     const payrolls = payrollsForMonth(state.month);
     if (!payrolls.length) throw new Error("이번 달 지급액이 입력된 선생님이 없습니다.");
     const unconfirmedItems = payrolls.flatMap(({ teacher, payroll }) => payroll.unconfirmedEarningLines.map((line) => `${teacher.name} ${line.subjectName}`));

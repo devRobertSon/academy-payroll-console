@@ -24,6 +24,12 @@ export function businessHoursFromWorkLines(rates, workLines = []) {
   return buildBusinessHours(rates, Object.fromEntries(byRate));
 }
 
+export function submittedTuitionBasis(input = null) {
+  return tuitionBasis(input && Object.hasOwn(input, "groups")
+    ? { tuitionGroups: input.groups }
+    : { tuitionAmount: input?.tuitionAmount });
+}
+
 export function mergeMonthlyWorkInput(rates, payrollOverride = {}, monthlyInput = null) {
   if (!monthlyInput) return payrollOverride;
 
@@ -39,7 +45,7 @@ export function mergeMonthlyWorkInput(rates, payrollOverride = {}, monthlyInput 
     const submitted = monthlyInput.tuitionInput?.rateId === rate.id ? monthlyInput.tuitionInput : null;
     // An administrator's completed tuition entry wins over later teacher submissions.
     const basis = savedBasis.tuitionPending && submitted
-      ? tuitionBasis({ tuitionGroups: submitted.groups }) : savedBasis;
+      ? submittedTuitionBasis(submitted) : savedBasis;
     return {
       ...rate, rateId: rate.id, ...basis,
       tuitionShareRate: saved?.tuitionShareRate ?? rate.tuitionShareRate,

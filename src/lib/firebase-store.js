@@ -407,7 +407,7 @@ export async function createFirebaseStore(config) {
   async function saveTeacherMonthlyInput(input) {
     const batch = firestoreSdk.writeBatch(db);
     const submittedAt = firestoreSdk.serverTimestamp();
-    batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", input.id), {
+    const monthlyData = {
       teacherId: input.teacherId,
       teacherUid: input.teacherUid,
       month: input.month,
@@ -417,7 +417,9 @@ export async function createFirebaseStore(config) {
       submittedAt,
       updatedAt: submittedAt,
       updatedBy: auth.currentUser.uid
-    }, { merge: true });
+    };
+    // Replace nested tuition data so a new total does not retain legacy groups.
+    batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", input.id), monthlyData, { mergeFields: Object.keys(monthlyData) });
     batch.set(firestoreSdk.doc(db, "adminNotifications", workHoursNotificationId(input.month, input.teacherId)), {
       type: WORK_HOURS_NOTIFICATION_TYPE,
       teacherId: input.teacherId,
@@ -522,7 +524,7 @@ export async function createFirebaseStore(config) {
       updatedBy: auth.currentUser.uid
     }, { merge: true });
     if (monthlyInput) {
-      batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", monthlyInput.id), {
+      const monthlyData = {
         teacherId: monthlyInput.teacherId,
         teacherUid: monthlyInput.teacherUid,
         month: monthlyInput.month,
@@ -532,7 +534,8 @@ export async function createFirebaseStore(config) {
         submittedAt: updatedAt,
         updatedAt,
         updatedBy: auth.currentUser.uid
-      }, { merge: true });
+      };
+      batch.set(firestoreSdk.doc(db, "teacherMonthlyInputs", monthlyInput.id), monthlyData, { mergeFields: Object.keys(monthlyData) });
     }
     await batch.commit();
   }

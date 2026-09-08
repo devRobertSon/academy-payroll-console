@@ -492,10 +492,27 @@ service cloud.firestore {
     function hasValidTuitionSubmission(data) {
       return !data.keys().hasAny(['tuitionInput']) || data.tuitionInput == null || (
         data.tuitionInput is map
-        && data.tuitionInput.keys().hasOnly(['rateId', 'groups'])
-        && data.tuitionInput.keys().hasAll(['rateId', 'groups'])
+        && data.tuitionInput.keys().hasAll(['rateId'])
         && data.tuitionInput.rateId is string
         && ownsTuitionRate(data.teacherId, data.tuitionInput.rateId)
+        && (validTuitionTotal(data.tuitionInput) || validLegacyTuitionSubmission(data))
+      );
+    }
+
+    function validTuitionTotal(input) {
+      return input.keys().hasOnly(['rateId', 'tuitionAmount'])
+        && input.keys().hasAll(['rateId', 'tuitionAmount'])
+        && (input.tuitionAmount == null || (
+          input.tuitionAmount is int
+          && input.tuitionAmount >= 0
+          && input.tuitionAmount <= 10000000000
+        ));
+    }
+
+    // Retain support for existing student-group submissions during rollout.
+    function validLegacyTuitionSubmission(data) {
+      return data.tuitionInput.keys().hasOnly(['rateId', 'groups'])
+        && data.tuitionInput.keys().hasAll(['rateId', 'groups'])
         && data.tuitionInput.groups is list
         && data.tuitionInput.groups.size() <= 10
         && validTuitionGroupAt(data.tuitionInput.groups, 0)
@@ -517,8 +534,7 @@ service cloud.firestore {
           + tuitionGroupAmountAt(data.tuitionInput.groups, 6)
           + tuitionGroupAmountAt(data.tuitionInput.groups, 7)
           + tuitionGroupAmountAt(data.tuitionInput.groups, 8)
-          + tuitionGroupAmountAt(data.tuitionInput.groups, 9) <= 10000000000
-      );
+          + tuitionGroupAmountAt(data.tuitionInput.groups, 9) <= 10000000000;
     }
 
     match /teacherMonthlyInputs/{inputId} {

@@ -462,8 +462,9 @@ async function checkTeacherMonthlyPayroll() {
     || app.includes("<th>연락처</th>")) {
     failures.push("Teacher mobile-phone inputs must fix the 010 prefix and store only 11 digits in Firestore.");
   }
-  if ((app.match(/data-person-name/g) || []).length !== 4
+  if ((app.match(/data-person-name/g) || []).length !== 5
     || (app.match(/normalizePersonName\(data\.name\)/g) || []).length !== 3
+    || !app.includes('normalizePersonName(data.get("name"))')
     || !app.includes("function bindPersonNameInput")
     || !app.includes("focusNextFormControl(form, input)")
     || !personName.includes("PERSON_NAME_PATTERN")
@@ -527,10 +528,10 @@ async function checkTeacherSelfService() {
     const teacherUpdateRule = rules.match(/\|\| \(isOwnTeacher\(teacherId\)([\s\S]*?)\)\);/)?.[1] || "";
     if (!teacherUpdateRule.includes(`'${selfField}'`)) failures.push(`Teacher self-update rule is missing the allowed field: ${selfField}`);
   }
-  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidBusinessRates", "hasValidSelfIncomeComposition", "hasValidTuitionSubmission", "ownsTuitionRate", "validTuitionGroupAt"]) {
+  for (const safeguard of ["preservesInsuranceAdministrationFields", "validBusinessRateAt", "hasValidBusinessRates", "hasValidSelfIncomeComposition", "hasValidTuitionSubmission", "ownsTuitionRate", "validTuitionTotal", "validLegacyTuitionSubmission", "validTuitionGroupAt"]) {
     if (!rules.includes(safeguard)) failures.push(`Teacher self-reported pay setting safeguard is missing: ${safeguard}`);
   }
-  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "강사료 계산 방식", "data-combined-tuition", "담당 학생 학원비 비율 포함", "businessRateLabel(index)"]) {
+  for (const onboardingSurface of ["provisionalTeacherForAccessRequest", "신규 선생님 계정 생성", "businessPayRateEditorHtml", "강사료 계산 방식", "data-combined-tuition", "수업 전체 학원비 비율 포함", "data-tuition-amount", "businessRateLabel(index)"]) {
     if (!app.includes(onboardingSurface)) failures.push(`Teacher self-onboarding surface is missing: ${onboardingSurface}`);
   }
   if (!app.includes("tuitionPending") || !app.includes("data-use-submitted-tuition")
@@ -538,7 +539,7 @@ async function checkTeacherSelfService() {
     || !store.includes("tuitionInput: monthlyInput.tuitionInput ?? firestoreSdk.deleteField()")) {
     failures.push("Tuition submission, administrator review, and missing-tuition safeguards are required.");
   }
-  for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject"]) {
+  for (const removedSurface of ["teacher-subjects", "teacher-edit-subjects", "data-rate-subject", "data-student-count", "data-student-tuition"]) {
     if (app.includes(removedSurface)) failures.push(`Subject-based hourly-rate input must be removed: ${removedSurface}`);
   }
   for (const legacyField of ["insuranceEnrolled", "defaultBusinessHourlyRate", "usesMultipleRates", "contractSummary", "policyVersion"]) {
@@ -554,7 +555,7 @@ async function checkTeacherSelfService() {
       failures.push(`Unused legacy collection must be removed: ${legacyCollection}`);
     }
   }
-  if (!guide.includes("선생님 정보와 수업시간 직접 입력")) {
+  if (!guide.includes("선생님 정보와 수업 내역 직접 입력")) {
     failures.push("User guide is missing the teacher self-service workflow.");
   }
 }

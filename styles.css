@@ -304,7 +304,7 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .payslip-title .brand-logo { flex: 0 0 auto; width: 132px; align-self: flex-start; }
 .payslip-sheet th { background: var(--surface-subtle); }
 .payslip-sheet td { height: 54px; padding: 8px 14px; }
-.payslip-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin: 24px 0; border: 1px solid var(--line); }
+.payslip-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 24px 0; border: 1px solid var(--line); }
 .payslip-summary > div { padding: 15px; }
 .payslip-summary > div + div { border-left: 1px solid var(--line); }
 .payslip-summary span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; }

@@ -187,14 +187,32 @@ service cloud.firestore {
 
     function hasValidTransportPolicy(data) {
       return data.transportPolicy is map
-        && data.transportPolicy.keys().hasOnly(['regionLabel', 'unitAmount', 'treatment'])
+        && data.transportPolicy.keys().hasOnly(['regionLabel', 'unitAmount', 'treatment', 'paymentDay'])
         && data.transportPolicy.keys().hasAll(['regionLabel', 'unitAmount', 'treatment'])
         && data.transportPolicy.regionLabel is string
         && data.transportPolicy.regionLabel.size() <= 100
         && data.transportPolicy.unitAmount is number
         && data.transportPolicy.unitAmount >= 0
         && data.transportPolicy.unitAmount <= 1000000
-        && data.transportPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending'];
+        && data.transportPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
+        && (!data.transportPolicy.keys().hasAny(['paymentDay']) || (
+          data.transportPolicy.paymentDay is int
+          && data.transportPolicy.paymentDay >= 1
+          && data.transportPolicy.paymentDay <= 31
+        ));
+    }
+
+    function hasValidOtherPaymentPolicy(data) {
+      return !data.keys().hasAny(['otherPaymentPolicy']) || (
+        data.otherPaymentPolicy is map
+        && data.otherPaymentPolicy.keys().hasOnly(['amount', 'treatment', 'insuranceCovered'])
+        && data.otherPaymentPolicy.keys().hasAll(['amount', 'treatment', 'insuranceCovered'])
+        && data.otherPaymentPolicy.amount is int
+        && data.otherPaymentPolicy.amount >= 0
+        && data.otherPaymentPolicy.amount <= 100000000
+        && data.otherPaymentPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
+        && data.otherPaymentPolicy.insuranceCovered is bool
+      );
     }
 
     function hasValidTaxProfile(data) {
@@ -240,7 +258,7 @@ service cloud.firestore {
           'id', 'name', 'email', 'phone', 'birthDateCode', 'genderCode',
           'status', 'authUid', 'profileCompleted', 'incomeComposition',
           'insuranceSettings', 'defaultEmployeePay', 'businessRates',
-          'transportPolicy', 'paymentDay', 'taxProfile', 'updatedAt', 'updatedBy'
+          'transportPolicy', 'otherPaymentPolicy', 'paymentDay', 'taxProfile', 'updatedAt', 'updatedBy'
         ])
         && data.id == teacherId
         && hasValidPersonName(data.name)
@@ -260,6 +278,7 @@ service cloud.firestore {
         && hasValidBusinessRates(data)
         && hasConsistentIncomeComposition(data)
         && hasValidTransportPolicy(data)
+        && hasValidOtherPaymentPolicy(data)
         && data.paymentDay is int
         && data.paymentDay >= 1
         && data.paymentDay <= 31

@@ -110,7 +110,8 @@ export function getTeacherPaySettings(teacher = {}) {
     insuranceSettings,
     defaultEmployeePay: hasEmployeeIncome ? Math.max(0, won(teacher.defaultEmployeePay)) : 0,
     businessRates,
-    transportPolicy: normalizeTransportPolicy(teacher.transportPolicy)
+    transportPolicy: normalizeTransportPolicy(teacher.transportPolicy),
+    otherPaymentPolicy: normalizeOtherPaymentPolicy(teacher.otherPaymentPolicy)
   };
 }
 
@@ -171,7 +172,10 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     .reduce((sum, line) => sum + line.amount, 0);
   const transportAmount = manualTransportAmount + receiptTransportAmount;
   const parkingAmount = manualParkingAmount + receiptParkingAmount;
-  const additionalEarnings = normalizeAdditionalEarnings(direct.otherPaymentAmount == null ? override.additionalEarnings : [{
+  const defaultOther = settings.otherPaymentPolicy;
+  const additionalEarnings = normalizeAdditionalEarnings(direct.otherPaymentAmount == null ? (override.additionalEarnings ?? [{
+    id: "default-other", label: "기타 지급", ...defaultOther
+  }]) : [{
     id: "excel-other", label: "기타 지급 (엑셀)", amount: direct.otherPaymentAmount,
     treatment: direct.otherTreatment || "pending", insuranceCovered: direct.otherInsuranceCovered === true
   }]);
@@ -353,7 +357,16 @@ function normalizeTransportPolicy(policy = {}) {
   return {
     regionLabel: String(policy?.regionLabel || "").trim(),
     unitAmount: Math.max(0, won(policy?.unitAmount)),
-    treatment: normalizeTreatment(policy?.treatment)
+    treatment: normalizeTreatment(policy?.treatment),
+    paymentDay: Number.isInteger(policy?.paymentDay) && policy.paymentDay >= 1 && policy.paymentDay <= 31 ? policy.paymentDay : 5
+  };
+}
+
+function normalizeOtherPaymentPolicy(policy = {}) {
+  return {
+    amount: Math.max(0, won(policy?.amount)),
+    treatment: normalizeTreatment(policy?.treatment),
+    insuranceCovered: policy?.insuranceCovered === true
   };
 }
 

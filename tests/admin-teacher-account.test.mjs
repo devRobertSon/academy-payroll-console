@@ -87,6 +87,28 @@ test("일반 선생님의 비활성화는 기존대로 선생님 로그인을 �
   assert.equal(store.database["users/owner"].status, "inactive");
 });
 
+test("다른 관리자의 급여 정보를 수정해도 대상 관리자 권한과 수정자 기록을 보존한다", async () => {
+  const editor = { role: "admin", status: "active", email: "payroll-manager@example.invalid", teacherId: "teacher-editor" };
+  const store = operation("updateTeacher", {
+    "teachers/teacher-owner": teacher,
+    "users/owner": admin,
+    "users/payroll-manager": editor
+  }, "payroll-manager");
+  await store.run({ ...teacher, name: "급여 대상 관리자", defaultEmployeePay: 2000000, phone: "01000000000" });
+  const saved = store.database["teachers/teacher-owner"];
+  assert.equal(saved.name, "급여 대상 관리자");
+  assert.equal(saved.defaultEmployeePay, 2000000);
+  assert.equal(saved.authUid, "owner");
+  assert.equal(saved.updatedBy, "payroll-manager");
+  for (const key of ["role", "status", "displayName", "email", "teacherId", "custom"]) {
+    assert.equal(store.database["users/owner"][key], admin[key]);
+  }
+  assert.deepEqual(store.database["users/payroll-manager"], editor);
+  assert.equal(store.database["auditLogs/audit-id"].actorUid, "payroll-manager");
+  assert.equal(store.database["auditLogs/audit-id"].teacherId, teacher.id);
+  assert.equal(store.committed(), true);
+});
+
 test("선생님 삭제는 관리자 문서와 승인 요청을 보존하고 급여 연결만 제거한다", async () => {
   const store = operation("deleteTeacher", {
     "teachers/teacher-owner": teacher, "users/owner": admin,

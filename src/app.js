@@ -238,6 +238,15 @@ function bindStaticEvents() {
     if (!elements.assistantPanel.hidden) closeAssistant();
     else closeModal();
   });
+  bindNumberInputScrollGuard();
+}
+
+function bindNumberInputScrollGuard() {
+  // Blur before the browser's wheel step, while keeping normal page scrolling.
+  document.addEventListener("wheel", () => {
+    const input = document.activeElement;
+    if (input?.tagName === "INPUT" && input.type === "number") input.blur();
+  }, { capture: true, passive: true });
 }
 
 function loadDemoData() {
@@ -638,7 +647,6 @@ function renderTeachers() {
         <div class="detail-block"><h3>휴대전화·식별 정보</h3><dl class="definition-list"><div><dt>휴대전화</dt><dd>${e(formatMobilePhoneNumber(selected.phone) || "미등록")}</dd></div><div><dt>생년월일</dt><dd>${e(formatMaskedTeacherIdentity(selected) || "미등록")}</dd></div><div><dt>전체 주민등록번호</dt><dd>저장하지 않음</dd></div></dl></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
-        ${hasEmployeeIncome(resolveIncomeComposition(selected)) ? `<div class="detail-block"><div class="detail-title-row"><h3>근로소득 원천징수 정보</h3><button class="icon-button" type="button" title="원천징수 정보 수정" aria-label="${e(selected.name)} 원천징수 정보 수정" data-edit-tax-profile><i data-lucide="pencil"></i></button></div><dl class="definition-list"><div><dt>공제대상가족</dt><dd>${e(taxProfileForTeacher(selected).dependentCount)}명</dd></div><div><dt>8~20세 자녀</dt><dd>${e(taxProfileForTeacher(selected).children8To20)}명</dd></div><div><dt>원천징수 비율</dt><dd>${ratePercent(taxProfileForTeacher(selected).withholdingRatio)}</dd></div></dl></div>` : `<div class="detail-block"><h3>원천징수</h3><p class="form-help">사업소득 지급액에는 사업소득 원천징수 기준이 적용됩니다.</p></div>`}
       </aside>` : ""}
     </div>
   `;
@@ -648,7 +656,6 @@ function renderTeachers() {
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
   elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
   elements.content.querySelector("[data-delete-teacher]")?.addEventListener("click", () => openTeacherDeletionModal(selected));
-  elements.content.querySelector("[data-edit-tax-profile]")?.addEventListener("click", () => openTaxProfileModal(selected));
   elements.content.querySelectorAll("[data-approve-access]").forEach((button) => button.addEventListener("click", () => {
     const request = state.data.accessRequests.find((item) => (item.uid || item.id) === button.dataset.approveAccess);
     if (request) openAccessApprovalModal(request);
@@ -695,7 +702,7 @@ function renderSettings() {
     <div class="split-layout">
       <section class="detail-panel">
         <div class="detail-panel-header"><h2>${e(taxPolicy.name || "세금 기준")}</h2><p>${e(taxPolicy.version)} · ${e(taxPolicy.effectiveFrom)}부터 적용</p></div>
-        <div class="detail-block"><h3>근로소득</h3><dl class="definition-list"><div><dt>간이세액표</dt><dd>${e(taxPolicy.employment?.tableRevision)} 개정</dd></div><div><dt>급여 구간</dt><dd>${formatNumber(taxPolicy.employment?.tableRows?.length)}개</dd></div><div><dt>원천징수 선택</dt><dd>80% · 100% · 120%</dd></div><div><dt>8~20세 자녀 공제</dt><dd>인원별 적용</dd></div></dl></div>
+        <div class="detail-block"><h3>근로소득</h3><dl class="definition-list"><div><dt>간이세액표</dt><dd>${e(taxPolicy.employment?.tableRevision)} 개정</dd></div><div><dt>급여 구간</dt><dd>${formatNumber(taxPolicy.employment?.tableRows?.length)}개</dd></div></dl></div>
         <div class="detail-block"><h3>사업소득</h3><dl class="definition-list"><div><dt>소득세</dt><dd>${ratePercent(taxPolicy.business?.incomeTaxRate)}</dd></div><div><dt>지방소득세</dt><dd>소득세의 ${ratePercent(taxPolicy.business?.localIncomeTaxRateOfIncomeTax)}</dd></div><div><dt>합계 효과세율</dt><dd>${ratePercent(Number(taxPolicy.business?.incomeTaxRate || 0) * (1 + Number(taxPolicy.business?.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
         <div class="detail-block"><h3>일시적 강의 기타소득</h3><dl class="definition-list"><div><dt>필요경비율</dt><dd>${ratePercent(lectureRule.expenseRate)}</dd></div><div><dt>소득세율</dt><dd>${ratePercent(lectureRule.incomeTaxRate)}</dd></div><div><dt>과세최저한</dt><dd>건별 소득금액 ${formatWon(lectureRule.minimumTaxableIncomeAmount)} 이하</dd></div><div><dt>최저한 초과 효과세율</dt><dd>${ratePercent((1 - Number(lectureRule.expenseRate || 0)) * Number(lectureRule.incomeTaxRate || 0) * (1 + Number(lectureRule.localIncomeTaxRateOfIncomeTax || 0)))}</dd></div></dl></div>
         <div class="detail-block"><h3>공식 근거</h3><div class="source-list">${(taxPolicy.sources || []).map((source) => `<a href="${e(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>${e(source.title)}</a>`).join("")}</div></div>
@@ -1426,8 +1433,21 @@ function payrollCompositionLabel(payroll) {
   const label = payCompositionLabel(payroll?.grossByTreatment?.employee || 0, payroll?.grossByTreatment?.business || 0);
   return label === "금액 미설정" && payroll?.gross > 0 ? "추가 지급" : label;
 }
+function teacherInsuranceEstimate(teacher) {
+  const settings = teacherPaySettings(teacher);
+  return calculatePayroll(createMonthlyEarningLines(teacher, state.month), policyForMonth(state.month), {
+    insuranceSettings: settings.insuranceSettings
+  }, taxProfileForTeacher(teacher));
+}
+
 function teacherPayDetails(teacher) {
   const settings = teacherPaySettings(teacher);
+  const estimate = teacherInsuranceEstimate(teacher);
+  const insuranceAmounts = {
+    nationalPension: estimate.reporting.nationalPension,
+    healthInsurance: estimate.reporting.healthAndLongTermCare,
+    employmentInsurance: estimate.reporting.employmentInsurance
+  };
   const rates = settings.businessRates.length
     ? settings.businessRates.map((rate, index) => `<div><dt>${isTuitionShare(rate) ? "학원비 비율" : e(businessRateLabel(index))}</dt><dd>${isTuitionShare(rate) ? `${e(rate.tuitionShareRate)}%` : `${formatWon(rate.hourlyRate)}/시간`}</dd></div>`).join("")
     : `<div><dt>사업소득 지급 기준</dt><dd>미등록</dd></div>`;
@@ -1436,9 +1456,9 @@ function teacherPayDetails(teacher) {
     const period = item.effectiveFrom || item.effectiveTo
       ? `${item.effectiveFrom || "시작일 미정"} ~ ${item.effectiveTo || "계속"}`
       : "기간 미설정";
-    return `<div><dt>${e(label)}</dt><dd>${item.enrolled ? `가입 · ${item.defaultBaseAmount == null ? "기준액 미입력" : formatWon(item.defaultBaseAmount)}<span class="definition-subtext">${e(period)}</span>` : "미가입"}</dd></div>`;
+    return `<div><dt>${e(label)}</dt><dd>${item.enrolled ? `<strong>${formatWon(insuranceAmounts[key])}</strong><span class="definition-subtext">산정 기준 ${formatWon(estimate.insuranceBases[key])}</span><span class="definition-subtext">${e(period)}</span>` : "미가입"}</dd></div>`;
   }).join("");
-  return `<div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>기본 근로소득</dt><dd>${formatWon(settings.defaultEmployeePay)}</dd></div>${rates}<div><dt>교통비 기본값</dt><dd>${settings.transportPolicy.unitAmount ? `${formatWon(settings.transportPolicy.unitAmount)}/회 · ${e(TREATMENT_LABELS[settings.transportPolicy.treatment])}` : "미등록"}</dd></div><div><dt>계약 요약</dt><dd>${e(teacherContractLabel(teacher))}</dd></div><div><dt>지급 예정일</dt><dd>매월 ${e(teacher.paymentDay)}일</dd></div></dl></div><div class="detail-block"><h3>보험별 가입·신고 기준</h3><dl class="definition-list">${insuranceRows}</dl></div>`;
+  return `<div class="detail-block"><h3>급여 조건</h3><dl class="definition-list"><div><dt>기본 근로소득</dt><dd>${formatWon(settings.defaultEmployeePay)}</dd></div>${rates}<div><dt>기타 기본금액</dt><dd>${formatWon(settings.otherPaymentPolicy.amount)}${settings.otherPaymentPolicy.amount ? `<span class="definition-subtext">${e(TREATMENT_LABELS[settings.otherPaymentPolicy.treatment])}</span>` : ""}</dd></div><div><dt>교통비 기본값</dt><dd>${settings.transportPolicy.unitAmount ? `${formatWon(settings.transportPolicy.unitAmount)}/회 · ${e(TREATMENT_LABELS[settings.transportPolicy.treatment])}` : "미등록"}</dd></div><div><dt>교통비 지급일</dt><dd>매월 ${e(settings.transportPolicy.paymentDay)}일</dd></div><div><dt>계약 요약</dt><dd>${e(teacherContractLabel(teacher))}</dd></div><div><dt>급여 지급일</dt><dd>매월 ${e(teacher.paymentDay)}일</dd></div></dl></div><div class="detail-block"><h3>예상 보험료</h3><p class="form-help">${formatMonth(state.month)} · 기본 급여 기준</p><dl class="definition-list">${insuranceRows}<div><dt>보험료 합계</dt><dd><strong>${formatWon(estimate.reporting.insuranceTotal)}</strong></dd></div></dl></div>`;
 }
 function runForMonth(month) { return state.data.payrollRuns.find((run) => run.month === month) || { month, status: "draft", publishedAt: null }; }
 function cancellationsForMonth(month) {
@@ -1545,10 +1565,15 @@ function accountingReportFor(payroll) {
 
 function payslipSheet(teacher, payroll, month, run, incomeLabel = payrollCompositionLabel(payroll)) {
   const deductionRows = Object.entries(deductionLabels()).filter(([key]) => payroll.deductions[key] > 0);
+  const earningRows = payroll.earningLines.map((line) => ({
+    line,
+    basis: line.kind !== "monthly" || isTuitionShare(line) ? earningBasisLabel(line) : ""
+  }));
+  const showEarningBasis = earningRows.some(({ basis }) => basis);
   return `<article class="payslip-sheet">
-    <header class="payslip-title"><div><h2>${formatMonth(month)} ${e(incomeLabel)} 급여명세서</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="${e(appConfig.academyName)}" width="2728" height="638" /></header>
-    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>소득 구분</span><strong>${e(incomeLabel)} · 사회보험 ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "적용" : "미적용"}</strong></div><div><span>발행 상태</span><strong>${run.status === "published" ? `${artifactRevision(run)}차 발행 완료` : "미리보기"}</strong></div></div>
-    <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>지급 항목</th><th>소득 구분</th><th>산정 기준</th><th class="numeric">금액</th></tr></thead><tbody>${payroll.earningLines.map((line) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td><td>${e(earningBasisLabel(line))}</td><td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
+    <header class="payslip-title"><div><h2>${formatMonth(month)} ${e(incomeLabel)} 급여명세서${run.status === "published" ? "" : " (미리보기)"}</h2><p>${e(appConfig.academyName)} · 지급 예정일 매월 ${e(teacher.paymentDay)}일</p></div><img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="${e(appConfig.academyName)}" width="2728" height="638" /></header>
+    <div class="payslip-summary"><div><span>성명</span><strong>${e(teacher.name)}</strong></div><div><span>소득 구분</span><strong>${e(incomeLabel)} · 사회보험 ${Object.values(insuranceBasesFor(payroll)).some((amount) => amount > 0) ? "적용" : "미적용"}</strong></div></div>
+    <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>지급 항목</th><th>소득 구분</th>${showEarningBasis ? "<th>산정 기준</th>" : ""}<th class="numeric">금액</th></tr></thead><tbody>${earningRows.map(({ line, basis }) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td>${showEarningBasis ? `<td>${e(basis)}</td>` : ""}<td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
     <div class="payslip-totals"><div><span>총 지급액</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>총 공제액</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>실 지급액</span><strong>${formatWon(payroll.net)}</strong></div></div>
     <p class="payslip-footnote">본 명세서는 확정된 선생님별 월 지급액과 유형을 기준으로 작성되었습니다. 세금 기준 ${e(payroll.taxPolicyVersion)}, 사회보험 기준 ${e(payroll.insurancePolicyVersion)}. 세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요.</p>
@@ -1834,6 +1859,20 @@ function insuranceEditorHtml(settings, prefix) {
   </div>`;
 }
 
+function otherPaymentEditorHtml(policy = {}, prefix) {
+  return `<div class="form-field"><label for="${prefix}-other-amount">기타 기본금액</label><div class="input-suffix"><input id="${prefix}-other-amount" name="otherPaymentAmount" type="number" min="0" max="100000000" step="1" value="${e(policy.amount || 0)}" /><span>원</span></div></div>
+    <div class="form-field"><label for="${prefix}-other-treatment">기타금액 기본 처리</label><select id="${prefix}-other-treatment" name="otherPaymentTreatment">${treatmentOptions(policy.treatment)}</select></div>
+    <label class="checkbox-row form-field full"><input name="otherPaymentInsuranceCovered" type="checkbox" ${policy.insuranceCovered ? "checked" : ""} /> 기타금액을 보험 신고 기준에 포함</label>`;
+}
+
+function readOtherPaymentPolicy(form) {
+  return {
+    amount: Number(form.elements.otherPaymentAmount?.value || 0),
+    treatment: form.elements.otherPaymentTreatment?.value || "pending",
+    insuranceCovered: form.elements.otherPaymentInsuranceCovered?.checked === true
+  };
+}
+
 function readInsuranceSettings(form, prefix) {
   return Object.fromEntries(Object.keys(INSURANCE_LABELS).map((key) => {
     const enrolled = form.elements[`${prefix}-${key}-enrolled`]?.checked === true;
@@ -1852,7 +1891,7 @@ function readInsuranceSettings(form, prefix) {
   }));
 }
 
-function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
+function bindInsuranceEditorAutomation(form, prefix, payInputSelector, teacher = {}) {
   const payInput = form.querySelector(payInputSelector);
   const preview = form.querySelector(`[data-insurance-preview="${prefix}"]`);
   if (!payInput || !preview) return;
@@ -1864,14 +1903,20 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
     effectiveFrom: form.elements[`${prefix}-${key}-from`],
     effectiveTo: form.elements[`${prefix}-${key}-to`]
   }));
-  fields.forEach(({ base }) => { base.dataset.autoBase = "true"; });
+  const initialOther = readOtherPaymentPolicy(form);
+  const initialBase = Number(payInput.value) + (initialOther.treatment === "employee" && initialOther.insuranceCovered ? initialOther.amount : 0);
+  fields.forEach(({ base }) => {
+    base.dataset.autoBase = String(base.value === "" || Number(base.value) === initialBase);
+  });
 
   const update = (syncBases = false) => {
     const monthlyPay = Math.max(0, Math.round(Number(payInput.value) || 0));
+    const otherPaymentPolicy = readOtherPaymentPolicy(form);
+    const automaticBase = monthlyPay + (otherPaymentPolicy.treatment === "employee" && otherPaymentPolicy.insuranceCovered ? otherPaymentPolicy.amount : 0);
     if (syncBases) {
       fields.forEach(({ enrolled, base }) => {
-        if (enrolled.checked) {
-          base.value = String(monthlyPay);
+        if (enrolled.checked && base.dataset.autoBase === "true") {
+          base.value = String(automaticBase);
           base.dataset.autoBase = "true";
         }
       });
@@ -1882,19 +1927,10 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
       effectiveFrom: effectiveFrom.value || null,
       effectiveTo: effectiveTo.value || null
     }]));
-    const taxProfile = {
-      dependentCount: Math.max(1, Number(form.elements.dependentCount?.value) || 1),
-      children8To20: Math.max(0, Number(form.elements.children8To20?.value) || 0),
-      withholdingRatio: Number(form.elements.withholdingRatio?.value) || 1
-    };
-    const payroll = calculatePayroll([{
-      id: "insurance-preview",
-      month: state.month,
-      hours: 1,
-      hourlyRate: monthlyPay,
-      treatment: "employee",
-      insuranceCovered: true
-    }], policyForMonth(state.month), { insuranceSettings }, taxProfile);
+    const payroll = teacherInsuranceEstimate({
+      ...teacher, incomeComposition: "employee", defaultEmployeePay: monthlyPay, insuranceSettings, businessRates: [],
+      otherPaymentPolicy
+    });
     const estimates = {
       nationalPension: payroll.reporting.nationalPension,
       healthInsurance: payroll.reporting.healthAndLongTermCare,
@@ -1918,10 +1954,12 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector) {
     effectiveFrom.addEventListener("change", () => update());
     effectiveTo.addEventListener("change", () => update());
   });
-  [form.elements.dependentCount, form.elements.children8To20, form.elements.withholdingRatio]
-    .filter(Boolean)
-    .forEach((field) => field.addEventListener("input", () => update()));
-  update(true);
+  [form.elements.otherPaymentAmount, form.elements.otherPaymentTreatment, form.elements.otherPaymentInsuranceCovered]
+    .filter(Boolean).forEach((field) => {
+      field.addEventListener("input", () => update(true));
+      field.addEventListener("change", () => update(true));
+    });
+  update();
 }
 
 function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
@@ -2425,24 +2463,23 @@ function openTeacherModal() {
       </fieldset>
       <div class="form-field full income-composition-empty" data-income-empty>계약 요약을 선택하면 필요한 급여·보험 입력란이 표시됩니다.</div>
       <section class="conditional-form-section full" data-income-section="employee" hidden>
-        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입 기간과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액과 보험별 가입 기간을 입력합니다.</span></div>
         <div class="form-grid">
           <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(getTeacherPaySettings({ incomeComposition: "employee" }).insuranceSettings, "teacher")}
-          <div class="form-field"><label for="teacher-dependents">공제대상가족 수</label><input id="teacher-dependents" name="dependentCount" type="number" min="1" step="1" value="1" required /></div>
-          <div class="form-field"><label for="teacher-children">8~20세 자녀 수</label><input id="teacher-children" name="children8To20" type="number" min="0" step="1" value="0" required /></div>
-          <div class="form-field full"><label for="teacher-tax-ratio">원천징수 비율</label><select id="teacher-tax-ratio" name="withholdingRatio"><option value="0.8">80%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></div>
         </div>
       </section>
       <section class="conditional-form-section full" data-income-section="business" hidden>
         <div class="conditional-section-heading"><strong>사업소득 설정</strong></div>
         <div class="form-grid">${businessPayRateEditorHtml(getTeacherPaySettings({ incomeComposition: "business" }), "teacher", "teacher-business-rates")}</div>
       </section>
-      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준과 지급일은 모든 계약 유형에 적용됩니다.</span></div>
+      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">기타금액은 매월 기본으로 적용되며 해당 월 입력에서 변경할 수 있습니다.</span></div>
+      ${otherPaymentEditorHtml({}, "teacher")}
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="0" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-transport-treatment">교통비 기본 처리</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
-      <div class="form-field"><label for="teacher-payday">지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" required /></div>
+      <div class="form-field"><label for="teacher-transport-payday">교통비 지급일</label><div class="input-suffix"><input id="teacher-transport-payday" name="transportPaymentDay" type="number" min="1" max="31" step="1" value="5" required /><span>일</span></div></div>
+      <div class="form-field"><label for="teacher-payday">급여 지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" required /></div>
       <p class="form-help full">실제 계정 연결은 사용자가 처음 로그인한 뒤 관리자 승인 절차에서 UID를 확인하도록 운영하세요.</p>
     </form>`, "등록", async () => {
     const form = elements.modalRoot.querySelector("#teacher-form");
@@ -2470,18 +2507,18 @@ function openTeacherModal() {
       insuranceSettings,
       defaultEmployeePay: employeeIncome ? Number(data.defaultEmployeePay) : 0,
       ...businessPaySettings,
+      otherPaymentPolicy: readOtherPaymentPolicy(form),
       transportPolicy: {
         regionLabel: data.transportRegionLabel.trim(),
         unitAmount: Number(data.transportUnitAmount || 0),
-        treatment: data.transportTreatment
+        treatment: data.transportTreatment,
+        paymentDay: Number(data.transportPaymentDay)
       },
       paymentDay: Number(data.paymentDay),
       status: "active",
       authUid: null,
       profileCompleted: Boolean(identity.birthDateCode && identity.genderCode),
-      taxProfile: employeeIncome
-        ? { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
-        : { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
+      taxProfile: taxProfileForTeacher({})
     };
       state.data.teachers.push(teacher);
       if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
@@ -2610,7 +2647,6 @@ function openTeacherDeletionModal(teacher) {
 }
 
 function openTeacherEditModal(teacher) {
-  const profile = taxProfileForTeacher(teacher);
   const paySettings = teacherPaySettings(teacher);
   const incomeComposition = resolveIncomeComposition(teacher);
   openModal("선생님 정보 수정", `
@@ -2627,24 +2663,23 @@ function openTeacherEditModal(teacher) {
         <span class="form-help">계약 유형을 바꾸면 선택한 유형에 필요한 항목만 저장되고 급여 계산에 사용됩니다.</span>
       </fieldset>
       <section class="conditional-form-section full" data-income-section="employee" hidden>
-        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액, 보험별 가입 기간과 근로소득 원천징수 정보를 입력합니다.</span></div>
+        <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액과 보험별 가입 기간을 입력합니다.</span></div>
         <div class="form-grid">
           <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험의 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
-          <div class="form-field"><label for="teacher-edit-dependents">공제대상가족 수</label><input id="teacher-edit-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
-          <div class="form-field"><label for="teacher-edit-children">8~20세 자녀 수</label><input id="teacher-edit-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
-          <div class="form-field full"><label for="teacher-edit-ratio">원천징수 비율</label><select id="teacher-edit-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select></div>
         </div>
       </section>
       <section class="conditional-form-section full" data-income-section="business" hidden>
         <div class="conditional-section-heading"><strong>사업소득 설정</strong></div>
         <div class="form-grid">${businessPayRateEditorHtml(paySettings, "teacher-edit", "teacher-business-rates")}</div>
       </section>
-      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">교통비 기준, 지급일과 계정 상태는 모든 계약 유형에 적용됩니다.</span></div>
+      <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">기타금액은 매월 기본으로 적용되며 해당 월 입력에서 변경할 수 있습니다.</span></div>
+      ${otherPaymentEditorHtml(paySettings.otherPaymentPolicy, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
       <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
-      <div class="form-field"><label for="teacher-edit-payday">지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
+      <div class="form-field"><label for="teacher-edit-transport-payday">교통비 지급일</label><div class="input-suffix"><input id="teacher-edit-transport-payday" name="transportPaymentDay" type="number" min="1" max="31" step="1" value="${e(paySettings.transportPolicy.paymentDay)}" required /><span>일</span></div></div>
+      <div class="form-field"><label for="teacher-edit-payday">급여 지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
       <div class="form-field"><label for="teacher-edit-status">선생님 상태</label><select id="teacher-edit-status" name="status"><option value="active" ${teacher.status === "active" ? "selected" : ""}>활성</option><option value="inactive" ${teacher.status === "inactive" ? "selected" : ""}>비활성</option></select><span class="form-help">관리자를 겸하는 계정의 관리 권한은 유지됩니다.</span></div>
     </form>
   `, "저장", async () => {
@@ -2673,17 +2708,17 @@ function openTeacherEditModal(teacher) {
       insuranceSettings,
       defaultEmployeePay: employeeIncome ? Number(data.defaultEmployeePay) : 0,
       ...businessPaySettings,
+      otherPaymentPolicy: readOtherPaymentPolicy(form),
       transportPolicy: {
         regionLabel: data.transportRegionLabel.trim(),
         unitAmount: Number(data.transportUnitAmount || 0),
-        treatment: data.transportTreatment
+        treatment: data.transportTreatment,
+        paymentDay: Number(data.transportPaymentDay)
       },
       paymentDay: Number(data.paymentDay),
       status: data.status,
       profileCompleted: teacher.profileCompleted || Boolean(identity.birthDateCode && identity.genderCode),
-      taxProfile: employeeIncome
-        ? { dependentCount: Number(data.dependentCount), children8To20: Number(data.children8To20), withholdingRatio: Number(data.withholdingRatio) }
-        : { dependentCount: 1, children8To20: 0, withholdingRatio: 1 }
+      taxProfile: taxProfileForTeacher(teacher)
     };
     if (state.store) await state.store.updateTeacher(updated);
     Object.assign(teacher, updated);
@@ -2693,34 +2728,10 @@ function openTeacherEditModal(teacher) {
   const form = elements.modalRoot.querySelector("#teacher-edit-form");
   bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
-  bindInsuranceEditorAutomation(form, "teacher-edit", "#teacher-edit-employee-pay");
+  bindInsuranceEditorAutomation(form, "teacher-edit", "#teacher-edit-employee-pay", teacher);
   bindTeacherIdentityInput(form);
   bindMobilePhoneInput(form);
   bindBusinessPayRateEditor(form, "teacher-edit", "#teacher-business-rates");
-}
-
-function openTaxProfileModal(teacher) {
-  const profile = taxProfileForTeacher(teacher);
-  openModal("근로소득 원천징수 정보", `
-    <div class="notice"><i data-lucide="calculator"></i><span>공제대상가족에는 근로자 본인이 포함됩니다. 8~20세 자녀 수는 간이세액표 세액에서 자녀 공제를 적용할 때 사용합니다.</span></div>
-    <form id="tax-profile-form" class="form-grid">
-      <div class="form-field"><label for="profile-dependents">공제대상가족 수</label><input id="profile-dependents" name="dependentCount" type="number" min="1" step="1" value="${e(profile.dependentCount)}" required /></div>
-      <div class="form-field"><label for="profile-children">8~20세 자녀 수</label><input id="profile-children" name="children8To20" type="number" min="0" step="1" value="${e(profile.children8To20)}" required /></div>
-      <div class="form-field full"><label for="profile-ratio">원천징수 비율</label><select id="profile-ratio" name="withholdingRatio"><option value="0.8" ${profile.withholdingRatio === 0.8 ? "selected" : ""}>80%</option><option value="1" ${profile.withholdingRatio === 1 ? "selected" : ""}>100%</option><option value="1.2" ${profile.withholdingRatio === 1.2 ? "selected" : ""}>120%</option></select><span class="form-help">신청하지 않은 경우 100%입니다. 변경 신청한 비율은 해당 과세기간 종료일까지 적용합니다.</span></div>
-    </form>
-  `, "저장", async () => {
-    const form = elements.modalRoot.querySelector("#tax-profile-form");
-    if (!form.reportValidity()) return false;
-    const data = Object.fromEntries(new FormData(form));
-    teacher.taxProfile = {
-      dependentCount: Number(data.dependentCount),
-      children8To20: Number(data.children8To20),
-      withholdingRatio: Number(data.withholdingRatio)
-    };
-    if (state.store) await state.store.saveDocument("teachers", teacher.id, teacher);
-    showToast("원천징수 정보를 저장했습니다.");
-    renderTeachers();
-  });
 }
 
 function excelEffectiveOverride(teacher, month) {
@@ -2867,8 +2878,8 @@ function openPayrollExcelPreview(month, sheet) {
     record.element.innerHTML = `<div class="excel-import-row-header"><label class="checkbox-row"><input type="checkbox" data-excel-selected ${record.selected ? "checked" : ""} /> ${record.row.number}행 ${e(record.row.name)}</label><select aria-label="${e(record.row.name)} 연결할 선생님" data-excel-teacher><option value="">선생님 선택</option>${options}</select></div>
       ${teacher ? `<div class="form-grid excel-allocation">
         ${teacher.incomeComposition === "mixed" && (record.row.values.basePay != null || record.row.values.hours != null) ? `${record.row.values.basePay != null ? `<label class="form-field">G 강사료 ${formatWon(record.row.values.basePay)} 중 근로소득<input type="number" data-choice="employeeGrossPay" min="0" step="1" value="${record.choices.employeeGrossPay}" /></label>` : ""}${record.row.values.hours != null ? `<label class="form-field">F ${record.row.values.hours}시간 중 근로 수업시간<input type="number" data-choice="employeeWorkHours" min="0" step="0.01" value="${record.choices.employeeWorkHours}" /></label>` : ""}<label class="checkbox-row full"><input type="checkbox" data-choice="allocationConfirmed" /> 나머지는 사업소득 금액·시간으로 배분</label>` : ""}
-        ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>` : ""}
-        ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label><label class="checkbox-row"><input type="checkbox" data-choice="otherInsuranceCovered" ${record.choices.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label><p class="form-help">K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}
+        ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>${!record.row.parkingInOther ? `<p class="form-help">J 교통비에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함 · 주차비 금액과 소득 구분 유지</p>` : ""}` : ""}
+        ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label><label class="checkbox-row"><input type="checkbox" data-choice="otherInsuranceCovered" ${record.choices.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label>${record.row.parkingInOther ? `<p class="form-help">이전 내보내기 양식: K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}` : ""}
         ${teacher.incomeComposition === "mixed" && record.row.values.additionalTax != null ? `<label class="form-field">L 추가 원천징수 공제 명세서<select data-choice="additionalIncomeType"><option value="business">사업소득 명세서</option><option value="employee">근로소득 명세서</option></select></label>` : ""}
       </div>` : ""}<div data-excel-result></div>`;
     record.element.querySelector("[data-excel-selected]").addEventListener("change", (event) => { record.selected = event.target.checked; updateSelection(); });
@@ -3105,9 +3116,6 @@ function openTaxPolicyModal() {
       <div class="form-field"><label for="other-expense">일시적 강의 필요경비율 (%)</label><input id="other-expense" name="otherExpenseRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.expenseRate) * 100)}" required /></div>
       <div class="form-field"><label for="other-rate">기타소득 소득세율 (%)</label><input id="other-rate" name="otherIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.incomeTaxRate) * 100)}" required /></div>
       <div class="form-field"><label for="other-minimum">기타소득 과세최저한</label><input id="other-minimum" name="otherMinimumTaxableIncome" type="number" min="0" step="1" value="${e(current.other.categories.temporaryLecture.minimumTaxableIncomeAmount)}" required /><span class="form-help">필요경비 차감 후 건별 소득금액</span></div>
-      <div class="form-field"><label for="child-one">자녀 1명 공제액</label><input id="child-one" name="childCreditOne" type="number" min="0" step="1" value="${e(current.employment.childCredits.one)}" required /></div>
-      <div class="form-field"><label for="child-two">자녀 2명 공제액</label><input id="child-two" name="childCreditTwo" type="number" min="0" step="1" value="${e(current.employment.childCredits.two)}" required /></div>
-      <div class="form-field"><label for="child-more">2명 초과 1명당 공제액</label><input id="child-more" name="childCreditAdditional" type="number" min="0" step="1" value="${e(current.employment.childCredits.additional)}" required /></div>
       <div class="form-field full"><label for="tax-table-file">근로소득 간이세액표 CSV</label><input id="tax-table-file" name="tableFile" type="file" accept=".csv,text/csv" /><span class="form-help">비워 두면 현재 표를 복사합니다. 상단의 CSV를 내려받아 새 공식 표 값으로 수정한 뒤 업로드할 수 있습니다.</span></div>
       <div class="form-field full"><label for="high-income-rules">월 1천만원 초과 산식 JSON</label><textarea id="high-income-rules" name="highIncomeRules" spellcheck="false" required>${e(JSON.stringify(current.employment.highIncomeBrackets, null, 2))}</textarea><span class="form-help">소득세법 시행령 별표 2의 고액 급여 구간, 가산액, 초과금액 비율과 세율입니다.</span></div>
     </form>
@@ -3146,11 +3154,6 @@ function openTaxPolicyModal() {
         ...structuredClone(current.employment),
         ...table,
         tableRevision: data.tableRevision,
-        childCredits: {
-          one: Number(data.childCreditOne),
-          two: Number(data.childCreditTwo),
-          additional: Number(data.childCreditAdditional)
-        },
         localIncomeTaxRateOfIncomeTax: localRatio,
         highIncomeBrackets
       },

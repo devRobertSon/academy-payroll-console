@@ -109,7 +109,13 @@
   "transportPolicy": {
     "regionLabel": "서울 시내",
     "unitAmount": 1500,
-    "treatment": "pending | business | employee | exempt | other"
+    "treatment": "pending | business | employee | exempt | other",
+    "paymentDay": 5
+  },
+  "otherPaymentPolicy": {
+    "amount": 100000,
+    "treatment": "pending | business | employee | exempt | other",
+    "insuranceCovered": false
   },
   "paymentDay": 10,
   "profileCompleted": true,
@@ -120,6 +126,10 @@
   }
 }
 ```
+
+`otherPaymentPolicy`는 선택 필드이며 없으면 기타 기본금액은 0원입니다. 월별 `additionalEarnings`가 있으면 빈 배열(명시적 0원)도 기본값보다 우선하고, `excelPay.otherPaymentAmount`가 최우선입니다. `transportPolicy.paymentDay`도 선택 필드이며 없으면 매월 5일을 사용합니다. 기존 급여 지급일인 최상위 `paymentDay`는 변경하지 않습니다. 두 신규 설정은 관리자만 저장할 수 있고 기존 문서나 확정본을 일괄 수정하지 않습니다. 포털 배포 전에 최신 `firestore.rules`를 게시해야 하며 Worker·Storage·App Check 설정은 유지합니다.
+
+개인별 `taxProfile` 입력·수정·상세 표시는 화면에서 제거했습니다. 기존 값과 계산 정책은 유지하고 신규 등록은 `{ "dependentCount": 1, "children8To20": 0, "withholdingRatio": 1 }`을 저장합니다. 다른 선생님 정보 수정으로 기존 원천징수 조건을 초기화하지 않습니다.
 
 계좌, 전체 주민등록번호, 주소는 현재 앱에 저장하지 않습니다. 회계 확인에는 `birthDateCode` 6자리와 `genderCode` 1자리만 사용합니다. 이 두 필드도 개인정보이므로 관리자와 본인 외에는 읽을 수 없도록 Firestore 규칙을 유지하고, CSV는 안전한 채널로 전달합니다. Firestore 규칙은 신규 선생님 문서에서 두 필드의 형식을 검사하며 `residentRegistrationNumber`, `residentNumber`, `rrn`, `socialSecurityNumber` 같은 전체 번호 필드의 저장을 거부합니다.
 

@@ -59,6 +59,8 @@ export function readPayrollWorkbook(workbook) {
     if (!Object.entries(headers).every(([col, label]) => String(sheet.getCell(`${col}4`).text).replace(/\s/g, "") === label)) continue;
     if (!["국민연금", "고용보험", "보험료총합"].every((label, i) => String(sheet.getCell(`${["V", "W", "X"][i]}3`).text).replace(/\s/g, "").replace("보혐료", "보험료") === label)) continue;
     if (sheet.rowCount > 5000) throw new Error("급여 시트는 5,000행 이하로 줄여 주세요.");
+    // Previously exported files grouped parking in K instead of J.
+    const parkingInOther = String(sheet.getCell("A2").text).includes("K 기타 = 주차비 + 기타 지급");
     const rows = [];
     for (let number = 5; number <= sheet.rowCount; number++) {
       const name = textCell(sheet.getCell(`A${number}`));
@@ -73,7 +75,7 @@ export function readPayrollWorkbook(workbook) {
         catch (error) { values[field] = null; errors.push(error.message); }
       }
       const hasInputs = Object.entries(values).some(([key, value]) => value != null && !SUMMARY_FIELDS.has(key));
-      rows.push({ number, name, phone, values, errors, hasInputs });
+      rows.push({ number, name, phone, values, errors, hasInputs, parkingInOther });
       if (rows.length > 300) throw new Error("한 번에 최대 300명까지 불러올 수 있습니다.");
     }
     sheets.push({ name: sheet.name, title: textCell(sheet.getCell("A1"), 200), rows });
@@ -120,13 +122,15 @@ export function buildExcelPay(row, teacher, override, choices = {}) {
     if (v.transport == null && next.transportAmount == null) next.transportAmount = before.manualTransportAmount;
   }
   if (v.transport != null) {
-    if (v.transport < before.receiptTransportAmount) throw new Error("교통비가 이미 승인된 영수증 합계보다 작습니다.");
-    next.transportAmount = v.transport - before.receiptTransportAmount;
+    const preservedAmount = before.receiptTransportAmount + (row.parkingInOther ? 0 : before.parkingAmount);
+    if (v.transport < preservedAmount) throw new Error("J열 교통비가 승인된 교통비 영수증과 기존 주차비 합계보다 작습니다. 금액을 확인해 주세요.");
+    next.transportAmount = v.transport - preservedAmount;
     next.transportTreatment = choices.transportTreatment || before.transportTreatment;
   }
   if (v.other != null) {
-    if (v.other < before.parkingAmount) throw new Error("기타 금액이 기존 주차비보다 작습니다. 주차비를 먼저 검토해 주세요.");
-    next.otherPaymentAmount = v.other - before.parkingAmount;
+    const preservedParking = row.parkingInOther ? before.parkingAmount : 0;
+    if (v.other < preservedParking) throw new Error("기타 금액이 기존 주차비보다 작습니다. 주차비를 먼저 검토해 주세요.");
+    next.otherPaymentAmount = v.other - preservedParking;
     next.otherTreatment = choices.otherTreatment || "pending";
     next.otherInsuranceCovered = choices.otherInsuranceCovered === true;
   }
@@ -162,7 +166,7 @@ export function createPayrollWorkbook(ExcelJS, month, rows) {
   sheet.getCell("A1").value = `${month.slice(0, 4)}년 ${Number(month.slice(5))}월 강사료`;
   sheet.mergeCells("A1:P1");
   sheet.getCell("A1").font = { name: "맑은 고딕", size: 14, bold: true };
-  sheet.getCell("A2").value = "단위: 원 · G 강사료 = 근로소득 + 사업소득 · K 기타 = 주차비 + 기타 지급";
+  sheet.getCell("A2").value = "단위: 원 · G 강사료 = 근로소득 + 사업소득 · J 교통비 = 교통비 + 주차비 · K 기타 = 기타비";
   sheet.mergeCells("A2:P2");
   sheet.mergeCells("T1:X1");
   sheet.mergeCells("T3:U3");
@@ -194,8 +198,8 @@ export function createPayrollWorkbook(ExcelJS, month, rows) {
     const d = payroll.deductions;
     const salary = payroll.earningLines.filter((line) => ["employeeSalary", "lectureFee"].includes(line.earningCategory)).reduce((sum, line) => sum + line.amount, 0);
     const data = { A: teacher.name, B: teacher.phone || "", F: item.classHours ?? report.classHours, G: salary,
-      H: report.lectureWithholding, I: item.transportTrips ?? report.transportTrips, J: report.transportAmount,
-      K: report.parkingAmount + report.otherPaymentAmount, L: report.additionalPaymentWithholding,
+      H: report.lectureWithholding, I: item.transportTrips ?? report.transportTrips, J: report.transportAmount + report.parkingAmount,
+      K: report.otherPaymentAmount, L: report.additionalPaymentWithholding,
       R: d.employeeIncomeTax, S: d.employeeLocalTax, T: d.healthInsurance, U: d.longTermCare,
       V: d.nationalPension, W: d.employmentInsurance };
     for (const [col, value] of Object.entries(data)) sheet.getCell(`${col}${r}`).value = value;

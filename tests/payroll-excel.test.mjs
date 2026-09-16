@@ -96,14 +96,97 @@ test("단일 소득 명세서도 직접 입력된 공제를 누락하지 않는�
 });
 
 test("영수증과 주차비를 중복 합산하지 않는다", () => {
-  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt", approvedReceiptEarnings: [{ id: "r", category: "transport", amount: 20000, treatment: "exempt" }] };
+  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt", approvedReceiptEarnings: [
+    { id: "r", category: "transport", amount: 20000, treatment: "exempt" },
+    { id: "p", category: "parking", amount: 5000, treatment: "exempt" }
+  ] };
   const direct = buildExcelPay(row({ transport: 50000, other: 30000 }), teacher, current, { otherTreatment: "business" });
   const amounts = getMonthlyPayAmounts(teacher, { ...current, excelPay: direct });
-  assert.equal(amounts.transportAmount, 50000);
-  assert.equal(amounts.parkingAmount, 10000);
-  assert.equal(amounts.otherPaymentAmount, 20000);
+  assert.equal(amounts.manualTransportAmount, 15000);
+  assert.equal(amounts.transportAmount, 35000);
+  assert.equal(amounts.parkingAmount, 15000);
+  assert.equal(amounts.otherPaymentAmount, 30000);
+  assert.equal(amounts.additionalGrossPay, 80000);
+  assert.equal(current.parkingAmount, 10000);
   assert.throws(() => buildExcelPay(row({ transport: 10000 }), teacher, current), /영수증/);
-  assert.throws(() => buildExcelPay(row({ other: 5000 }), teacher, current), /주차비/);
+  assert.throws(() => buildExcelPay(row({ transport: 34999 }), teacher, current), /주차비/);
+  assert.equal(buildExcelPay(row({ transport: 35000 }), teacher, current).transportAmount, 0);
+  assert.equal(buildExcelPay(row({ other: 5000 }), teacher, current).otherPaymentAmount, 5000);
+});
+
+test("교통·주차 합산 불러오기는 빈칸을 유지하고 기타 0원을 주차비와 별도로 반영한다", () => {
+  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt",
+    excelPay: { transportAmount: 25000, otherPaymentAmount: 30000, otherTreatment: "business" } };
+  const unchanged = buildExcelPay(row({ transport: null, other: null, trips: 1 }), teacher, current);
+  assert.equal(unchanged.transportAmount, 25000);
+  assert.equal(unchanged.otherPaymentAmount, 30000);
+  const cleared = buildExcelPay(row({ transport: 10000, other: 0 }), teacher, current);
+  const amounts = getMonthlyPayAmounts(teacher, { ...current, excelPay: cleared });
+  assert.equal(amounts.transportAmount, 0);
+  assert.equal(amounts.parkingAmount, 10000);
+  assert.equal(amounts.otherPaymentAmount, 0);
+  assert.throws(() => buildExcelPay(row({ transport: 0 }), teacher, current), /주차비/);
+  assert.equal(buildExcelPay(row({ transport: 0 }), teacher, override).transportAmount, 0);
+});
+
+test("교통비·주차비는 J열, 기타비만 K열에 내보내고 다시 불러와도 금액이 같다", async () => {
+  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt",
+    additionalEarnings: [{ id: "o", label: "기타비", amount: 30000, treatment: "business" }],
+    approvedReceiptEarnings: [
+      { id: "r", category: "transport", amount: 20000, treatment: "exempt" },
+      { id: "p", category: "parking", amount: 5000, treatment: "exempt" }
+    ] };
+  const before = calc(teacher, current);
+  const book = createPayrollWorkbook(ExcelJS, month, [{ teacher, payroll: before }]);
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await book.xlsx.writeBuffer());
+  const sheet = loaded.worksheets[0];
+  assert.match(sheet.getCell("A2").value, /J 교통비 = 교통비 \+ 주차비/);
+  assert.match(sheet.getCell("A2").value, /K 기타 = 기타비/);
+  assert.equal(sheet.getCell("J5").value, 50000);
+  assert.equal(sheet.getCell("K5").value, 30000);
+  assert.equal(sheet.getCell("E5").result, before.gross);
+  const parsed = readPayrollWorkbook(loaded)[0].rows[0];
+  assert.equal(parsed.parkingInOther, false);
+  const excelPay = buildExcelPay(parsed, teacher, current, { otherTreatment: "business" });
+  const after = calc(teacher, { ...current, excelPay });
+  for (const field of ["gross", "totalDeductions", "net"]) assert.equal(after[field], before[field]);
+  for (const field of ["transportAmount", "parkingAmount", "otherPaymentAmount"]) assert.equal(after.reporting[field], before.reporting[field]);
+  assert.deepEqual(excelSummaryWarnings(parsed, after), []);
+});
+
+test("이전 K열 주차비 합산 표기가 있는 파일만 이전 방식으로 다시 불러온다", async () => {
+  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt",
+    additionalEarnings: [{ id: "o", label: "기타비", amount: 30000, treatment: "business" }] };
+  const before = calc(teacher, current);
+  const book = createPayrollWorkbook(ExcelJS, month, [{ teacher, payroll: before }]);
+  const sheet = book.worksheets[0];
+  sheet.getCell("A2").value = "단위: 원 · G 강사료 = 근로소득 + 사업소득 · K 기타 = 주차비 + 기타 지급";
+  sheet.getCell("J5").value = 15000;
+  sheet.getCell("K5").value = 40000;
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await book.xlsx.writeBuffer());
+  const parsed = readPayrollWorkbook(loaded)[0].rows[0];
+  assert.equal(parsed.parkingInOther, true);
+  const excelPay = buildExcelPay(parsed, teacher, current, { otherTreatment: "business" });
+  const after = calc(teacher, { ...current, excelPay });
+  assert.equal(excelPay.transportAmount, 15000);
+  assert.equal(excelPay.otherPaymentAmount, 30000);
+  assert.equal(after.gross, before.gross);
+  assert.equal(after.net, before.net);
+  assert.deepEqual(excelSummaryWarnings(parsed, after), []);
+  assert.throws(() => buildExcelPay({ ...parsed, values: { other: 5000 } }, teacher, current), /주차비/);
+});
+
+test("합산 안내가 없는 원본 양식도 J 교통비·주차비와 K 기타비로 읽는다", () => {
+  const current = { ...override, parkingAmount: 10000, parkingTreatment: "exempt" };
+  const book = createPayrollWorkbook(ExcelJS, month, [{ teacher, payroll: calc(teacher, current) }]);
+  book.worksheets[0].getCell("A2").value = null;
+  const parsed = readPayrollWorkbook(book)[0].rows[0];
+  assert.equal(parsed.parkingInOther, false);
+  const excelPay = buildExcelPay(parsed, teacher, current);
+  assert.equal(excelPay.transportAmount, 15000);
+  assert.equal(excelPay.otherPaymentAmount, 0);
 });
 
 test("건강보험 한 칸만 입력하면 요양의 현재 금액을 유지한다", () => {

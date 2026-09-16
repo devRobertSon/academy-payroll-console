@@ -324,6 +324,20 @@ body:has(.modal-backdrop) { overflow: hidden; }
 .modal-header .icon-button { margin-left: auto; }
 .modal-body { padding: 20px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--surface-subtle); }
+.excel-import-modal { width: min(1080px, 100%); }
+.excel-import-heading { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; margin-bottom: 16px; }
+.excel-import-heading span { font-size: 12px; color: var(--muted); }
+.excel-import-row { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.excel-import-row-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.excel-import-row-header select { flex: 1 1 230px; min-width: 0; max-width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text); font: inherit; }
+.excel-allocation { margin: 16px 0; }
+.excel-comparison { min-width: 580px; }
+.excel-comparison td { text-align: right; white-space: nowrap; }
+.excel-comparison th { font-size: 12px; }
+.excel-warning { font-size: 12px; color: #955510; margin: 8px 0; overflow-wrap: anywhere; }
+.excel-import-list { margin-bottom: 20px; }
+.excel-import-list details { margin-top: 12px; }
+.excel-import-list summary { cursor: pointer; font-size: 12px; }
 .error-dialog-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15,33,53,.35); z-index: 220; }
 .error-dialog { width: min(440px, 100%); max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); overflow-y: auto; border-radius: 7px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.3); }
 .error-dialog header { display: flex; align-items: center; gap: 10px; padding: 18px 18px 12px; color: var(--danger); }

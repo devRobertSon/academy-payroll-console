@@ -116,6 +116,7 @@ export function getTeacherPaySettings(teacher = {}) {
 
 export function getMonthlyPayAmounts(teacher, override = {}) {
   const settings = getTeacherPaySettings(teacher);
+  const direct = override.excelPay || {};
   let employeeGrossPay;
   let businessGrossPay;
   let businessHours;
@@ -146,14 +147,18 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     source = "teacher-default";
   }
 
-  const employeeWorkHours = Math.max(0, Number(override.employeeWorkHours) || 0);
-  const transportTrips = Math.max(0, Math.floor(Number(override.transportTrips) || 0));
+  employeeGrossPay = direct.employeeGrossPay ?? employeeGrossPay;
+  businessGrossPay = direct.businessGrossPay ?? businessGrossPay;
+  businessHours = direct.businessHours ?? businessHours;
+  if (Object.keys(direct).length) source = "excel-direct";
+  const employeeWorkHours = direct.employeeWorkHours ?? Math.max(0, Number(override.employeeWorkHours) || 0);
+  const transportTrips = direct.transportTrips ?? Math.max(0, Math.floor(Number(override.transportTrips) || 0));
   const transportUnitAmount = override.transportUnitAmount == null
     ? settings.transportPolicy.unitAmount
     : Math.max(0, won(override.transportUnitAmount));
-  const manualTransportAmount = won(transportTrips * transportUnitAmount);
+  const manualTransportAmount = direct.transportAmount ?? won(transportTrips * transportUnitAmount);
   const transportTreatment = normalizeTreatment(
-    override.transportTreatment || settings.transportPolicy.treatment
+    direct.transportTreatment || override.transportTreatment || settings.transportPolicy.treatment
   );
   const manualParkingAmount = Math.max(0, won(override.parkingAmount));
   const parkingTreatment = normalizeTreatment(override.parkingTreatment);
@@ -166,7 +171,10 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     .reduce((sum, line) => sum + line.amount, 0);
   const transportAmount = manualTransportAmount + receiptTransportAmount;
   const parkingAmount = manualParkingAmount + receiptParkingAmount;
-  const additionalEarnings = normalizeAdditionalEarnings(override.additionalEarnings);
+  const additionalEarnings = normalizeAdditionalEarnings(direct.otherPaymentAmount == null ? override.additionalEarnings : [{
+    id: "excel-other", label: "기타 지급 (엑셀)", amount: direct.otherPaymentAmount,
+    treatment: direct.otherTreatment || "pending", insuranceCovered: direct.otherInsuranceCovered === true
+  }]);
   const otherPaymentAmount = additionalEarnings.reduce((sum, line) => sum + line.amount, 0);
   const additionalGrossPay = transportAmount
     + parkingAmount
@@ -182,7 +190,7 @@ export function getMonthlyPayAmounts(teacher, override = {}) {
     businessGrossPay,
     businessHours,
     businessWorkLines,
-    tuitionPending: settings.businessRates.some(isTuitionShare)
+    tuitionPending: direct.businessGrossPay == null && settings.businessRates.some(isTuitionShare)
       && (!businessWorkLines.some(isTuitionShare) || businessWorkLines.some((line) => isTuitionShare(line) && line.tuitionPending)),
     transportTrips,
     transportUnitAmount,
@@ -228,7 +236,14 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       source: amounts.source
     });
   }
-  if (amounts.businessWorkLines.length) {
+  if (override.excelPay?.businessGrossPay != null) {
+    if (amounts.businessGrossPay > 0) lines.push({
+      id: `${month}_${teacher.id}_business-direct`, month, teacherId: teacher.id,
+      kind: "monthly", subjectName: "강사료 (직접 입력)", earningCategory: "lectureFee",
+      hours: 1, hourlyRate: amounts.businessGrossPay, workHours: amounts.businessHours,
+      treatment: "business", insuranceCovered: false, source: "excel-direct"
+    });
+  } else if (amounts.businessWorkLines.length) {
     let hourlyIndex = 0;
     amounts.businessWorkLines.forEach((line, index) => {
       const subjectName = isTuitionShare(line) ? "학원비 비율 강사료" : businessRateLabel(hourlyIndex++);
@@ -258,11 +273,12 @@ export function createMonthlyEarningLines(teacher, month, override = {}) {
       id: `${month}_${teacher.id}_transport`,
       month,
       teacherId: teacher.id,
-      kind: "unit",
+      kind: override.excelPay?.transportAmount != null ? "monthly" : "unit",
       subjectName: "교통비",
       earningCategory: "transport",
-      hours: amounts.transportTrips,
-      hourlyRate: amounts.transportUnitAmount,
+      hours: override.excelPay?.transportAmount != null ? 1 : amounts.transportTrips,
+      hourlyRate: override.excelPay?.transportAmount != null ? amounts.manualTransportAmount : amounts.transportUnitAmount,
+      transportTrips: amounts.transportTrips,
       treatment: amounts.transportTreatment,
       insuranceCovered: amounts.transportInsuranceCovered,
       source: amounts.source
@@ -410,6 +426,7 @@ export function createMonthlyEarningLine(teacher, month, override = {}) {
 }
 
 export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfile = {}) {
+  overrides = { ...overrides, ...overrides.excelPay };
   const { taxPolicy, insurancePolicy } = policyBundle;
   if (!taxPolicy?.version || !insurancePolicy?.version) {
     throw new Error("세금·사회보험 정책 묶음이 최신 스키마와 일치하지 않습니다.");
@@ -502,7 +519,6 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     : won(overrides.longTermCare);
 
   const gross = Object.values(grossByTreatment).reduce((sum, amount) => sum + amount, 0);
-  const totalDeductions = Object.values(deductions).reduce((sum, amount) => sum + amount, 0);
   const lectureFeeGross = earningLines
     .filter((line) => line.earningCategory === "lectureFee" && line.treatment === "business")
     .reduce((sum, line) => sum + line.amount, 0);
@@ -512,6 +528,27 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
   const lectureLocalTax = overrides.businessLocalTax == null
     ? won(lectureIncomeTax * Number(taxPolicy.business?.localIncomeTaxRateOfIncomeTax || 0))
     : proportionalAmount(businessLocalTax, lectureFeeGross, grossByTreatment.business);
+  // The template supplies combined withholding amounts, not an income/local tax split.
+  const excelTaxTotals = overrides.excelTaxTotals || {
+    lecture: overrides.excelLectureWithholding ?? null,
+    additional: overrides.excelAdditionalWithholding ?? null,
+    additionalIncomeType: overrides.excelAdditionalIncomeType || "business"
+  };
+  if (!overrides.excelTaxTotals) {
+    if (excelTaxTotals.lecture != null) {
+      deductions.businessIncomeTax -= lectureIncomeTax;
+      deductions.businessLocalTax -= lectureLocalTax;
+    }
+    if (excelTaxTotals.additional != null) {
+      deductions.businessIncomeTax -= businessIncomeTax - lectureIncomeTax;
+      deductions.businessLocalTax -= businessLocalTax - lectureLocalTax;
+      deductions.otherIncomeTax = 0;
+      deductions.otherLocalTax = 0;
+    }
+  }
+  if (excelTaxTotals.lecture != null) deductions.excelLectureWithholding = won(excelTaxTotals.lecture);
+  if (excelTaxTotals.additional != null) deductions.excelAdditionalWithholding = won(excelTaxTotals.additional);
+  const totalDeductions = Object.values(deductions).reduce((sum, amount) => sum + amount, 0);
   const insuranceTotal = deductions.nationalPension
     + deductions.healthInsurance
     + deductions.longTermCare
@@ -522,12 +559,12 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     reportedGross: gross,
     classHours: earningLines.reduce((sum, line) => sum + Number(line.workHours ?? (line.earningCategory === "lectureFee" ? line.hours : 0) ?? 0), 0),
     lectureFeeGross,
-    lectureWithholding: lectureIncomeTax + lectureLocalTax,
-    additionalPaymentWithholding: (businessIncomeTax + businessLocalTax - lectureIncomeTax - lectureLocalTax)
-      + otherIncomeTax + otherLocalTax,
+    lectureWithholding: excelTaxTotals.lecture ?? lectureIncomeTax + lectureLocalTax,
+    additionalPaymentWithholding: excelTaxTotals.additional ?? ((businessIncomeTax + businessLocalTax - lectureIncomeTax - lectureLocalTax)
+      + otherIncomeTax + otherLocalTax),
     transportTrips: earningLines
       .filter((line) => line.earningCategory === "transport")
-      .reduce((sum, line) => sum + Number(line.hours || 0), 0),
+      .reduce((sum, line) => sum + Number(line.transportTrips ?? line.hours ?? 0), 0),
     transportAmount: categoryGross(earningLines, "transport"),
     parkingAmount: categoryGross(earningLines, "parking"),
     otherPaymentAmount: categoryGross(earningLines, "otherPayment"),
@@ -553,6 +590,7 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     totalDeductions,
     net: gross - totalDeductions,
     reporting,
+    ...(excelTaxTotals.lecture != null || excelTaxTotals.additional != null ? { excelTaxTotals } : {}),
     unconfirmedEarningLines,
     taxPolicyVersion: taxPolicy.version,
     insurancePolicyVersion: insurancePolicy.version
@@ -571,12 +609,17 @@ export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
       { incomeType: "business", lines: earningLines.filter((line) => line.treatment === "business") }
     ]
     : [{ incomeType: hasBusinessIncome ? "business" : "employee", lines: earningLines }];
+  if (specifications.length === 1) {
+    const { incomeType } = specifications[0];
+    return [{ incomeType, incomeLabel: INCOME_COMPOSITION_LABELS[incomeType], payroll }];
+  }
   const deductions = payroll.deductions || {};
   const bases = payroll.insuranceBases || {};
 
   return specifications.filter(({ lines }) => lines.length).map(({ incomeType, lines }) => {
     const employeeDocument = incomeType === "employee";
     const includesOtherIncome = lines.some((line) => line.treatment === "other");
+    const imported = payroll.excelTaxTotals;
     const split = calculatePayroll(lines, policyBundle, {
       nationalPension: employeeDocument ? deductions.nationalPension : 0,
       healthInsurance: employeeDocument ? deductions.healthInsurance : 0,
@@ -591,8 +634,23 @@ export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
       custom: employeeDocument || !hasEmployeeIncome ? deductions.custom : 0,
       nationalPensionBase: employeeDocument ? bases.nationalPension : 0,
       healthInsuranceBase: employeeDocument ? bases.healthInsurance : 0,
-      employmentInsuranceBase: employeeDocument ? bases.employmentInsurance : 0
+      employmentInsuranceBase: employeeDocument ? bases.employmentInsurance : 0,
+      ...(imported ? { excelTaxTotals: {
+        lecture: imported.lecture == null ? null : (!hasBusinessIncome || incomeType === "business" ? imported.lecture : 0),
+        additional: imported.additional == null ? null : (specifications.length === 1 || incomeType === imported.additionalIncomeType ? imported.additional : 0),
+        additionalIncomeType: imported.additionalIncomeType
+      } } : {})
     }, taxProfile);
+    if (imported) {
+      const businessDocument = incomeType === "business";
+      split.reporting.lectureWithholding = businessDocument || !hasBusinessIncome ? payroll.reporting.lectureWithholding : 0;
+      if (imported.additional == null) {
+        const additionalBusinessTax = Number(deductions.businessIncomeTax || 0) + Number(deductions.businessLocalTax || 0)
+          - (imported.lecture == null ? payroll.reporting.lectureWithholding : 0);
+        split.reporting.additionalPaymentWithholding = (businessDocument ? additionalBusinessTax : 0)
+          + (includesOtherIncome ? Number(deductions.otherIncomeTax || 0) + Number(deductions.otherLocalTax || 0) : 0);
+      }
+    }
 
     return {
       incomeType,

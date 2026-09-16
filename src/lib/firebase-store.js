@@ -2,6 +2,7 @@ import { GMAIL_SEND_SCOPE } from "./gmail.js";
 import { WORK_HOURS_NOTIFICATION_TYPE, workHoursNotificationId } from "./admin-notifications.js";
 import { EXPENSE_RECEIPT_NOTIFICATION_TYPE, expenseReceiptNotificationId } from "./expense-receipts.js";
 import { assertTeacherAccountLink, teacherAccountUpdate } from "./teacher-account.js";
+import { excelSnapshot, validateExcelPay } from "./payroll-excel-state.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -540,6 +541,35 @@ export async function createFirebaseStore(config) {
     await batch.commit();
   }
 
+  async function saveMonthlyExcelImport(month, changes) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !changes.length || changes.length > 300) throw new Error("가져올 급여 월과 선생님을 확인해 주세요.");
+    if (new Set(changes.map((item) => item.teacherId)).size !== changes.length) throw new Error("같은 선생님을 중복해서 반영할 수 없습니다.");
+    changes.forEach((change) => validateExcelPay(change.excelPay));
+    await firestoreSdk.runTransaction(db, async (transaction) => {
+      const run = await transaction.get(firestoreSdk.doc(db, "payrollRuns", month));
+      if (run.exists() && run.data().status === "published") throw new Error("확정된 월에는 엑셀을 반영할 수 없습니다.");
+      for (const change of changes) {
+        const references = [
+          ["teachers", change.teacherId, change.expected.teacher],
+          ["payrollOverrides", `${month}_${change.teacherId}`, change.expected.override],
+          ["teacherMonthlyInputs", `${month}_${change.teacherId}`, change.expected.input]
+        ];
+        for (const [collection, id, expected] of references) {
+          const snapshot = await transaction.get(firestoreSdk.doc(db, collection, id));
+          if (excelSnapshot(snapshot.exists() ? snapshot.data() : null) !== expected) {
+            throw new Error("검토 중 급여 자료가 변경되었습니다. 새로고침 후 다시 불러와 주세요.");
+          }
+        }
+      }
+      for (const change of changes) {
+        const id = `${month}_${change.teacherId}`;
+        const data = { id, teacherId: change.teacherId, month, excelPay: change.excelPay,
+          updatedAt: firestoreSdk.serverTimestamp(), updatedBy: auth.currentUser.uid };
+        transaction.set(firestoreSdk.doc(db, "payrollOverrides", id), data, { mergeFields: Object.keys(data) });
+      }
+    });
+  }
+
   async function publishPayrollRun(run, payslips, auditLog) {
     const batch = firestoreSdk.writeBatch(db);
     const common = {
@@ -713,6 +743,7 @@ export async function createFirebaseStore(config) {
     deleteExpenseReceipt,
     markAdminNotificationRead,
     saveAdminMonthlyPayroll,
+    saveMonthlyExcelImport,
     publishPayrollRun,
     cancelPayrollRun,
     recordPayslipView,

@@ -15,6 +15,9 @@ import {
   officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
+import { payrollExcelJob } from "./lib/payroll-excel-client.js";
+import { buildExcelPay, matchExcelTeacher, excelSummaryWarnings } from "./lib/payroll-excel.js";
+import { excelSnapshot, EXCEL_PAY_FIELDS, validateExcelPay } from "./lib/payroll-excel-state.js";
 import { linkedTeacherForUser } from "./lib/teacher-account.js";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
@@ -564,7 +567,7 @@ function renderPayrollInputs() {
     const settings = teacherPaySettings(teacher);
     return settings.hasInsurance && monthlyPayAmounts(teacher, state.month).employeeGrossPay <= 0;
   });
-  setPage("월 급여 입력", formatMonth(state.month));
+  setPage("월 급여 입력", formatMonth(state.month), `<button class="button button-secondary" type="button" data-import-payroll ${locked ? "disabled" : ""}><i data-lucide="file-up"></i><span>불러오기</span></button><button class="button button-secondary" type="button" data-export-payroll><i data-lucide="file-down"></i><span>엑셀 내보내기</span></button>`);
   elements.content.innerHTML = `
     <div class="toolbar">
       <input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" />
@@ -592,10 +595,19 @@ function renderPayrollInputs() {
     </section>
   `;
   bindCommonControls();
+  elements.content.querySelector("thead th:nth-child(7)").textContent = "강사료 원천징수";
+  elements.content.querySelectorAll("[data-edit-monthly-pay]").forEach((button) => {
+    const teacher = teacherById(button.dataset.editMonthlyPay);
+    const row = button.closest("tr");
+    row.cells[6].textContent = formatWon(payrollForTeacher(teacher.id, state.month)?.payroll.reporting?.lectureWithholding || 0);
+    if (state.data.overrides[`${state.month}:${teacher.id}`]?.excelPay) row.cells[10].querySelector(".cell-subtext").textContent = "엑셀 직접 입력";
+  });
   elements.content.querySelectorAll("[data-edit-monthly-pay]").forEach((button) => button.addEventListener("click", () => {
     const teacher = teacherById(button.dataset.editMonthlyPay);
     if (teacher) openMonthlyPayModal(teacher);
   }));
+  elements.topbarActions.querySelector("[data-import-payroll]").addEventListener("click", openPayrollExcelImport);
+  elements.topbarActions.querySelector("[data-export-payroll]").addEventListener("click", exportMonthlyPayrollExcel);
 }
 
 function renderTeachers() {
@@ -1544,6 +1556,7 @@ function payslipSheet(teacher, payroll, month, run, incomeLabel = payrollComposi
 }
 
 function earningBasisLabel(line) {
+  if (line.source === "excel-direct" && line.kind === "monthly") return Number(line.workHours) > 0 ? `직접 입력 · 수업 ${formatHours(line.workHours)}` : "월 직접 입력 금액";
   if (isTuitionShare(line)) {
     const basis = tuitionBasis(line);
     const detail = basis.tuitionGroups?.map((group) => `${group.studentCount}명 × ${formatNumber(group.tuitionPerStudent)}원`).join(" + ");
@@ -2710,9 +2723,232 @@ function openTaxProfileModal(teacher) {
   });
 }
 
+function excelEffectiveOverride(teacher, month) {
+  return { ...mergeMonthlyWorkInput(teacherPaySettings(teacher).businessRates,
+    state.data.overrides[`${month}:${teacher.id}`], state.data.monthlyWorkInputs[`${month}:${teacher.id}`]),
+    approvedReceiptEarnings: approvedReceiptEarnings(state.data.expenseReceipts, teacher.id, month) };
+}
+
+function excelCalculation(teacher, month, override) {
+  return calculatePayroll(createMonthlyEarningLines(teacher, month, override), policyForMonth(month),
+    { ...override, month, insuranceSettings: teacherPaySettings(teacher).insuranceSettings }, teacher.taxProfile);
+}
+
+function excelExpectedState(teacher, month) {
+  const key = `${month}:${teacher.id}`;
+  return { teacher: excelSnapshot(teacher), override: excelSnapshot(state.data.overrides[key]), input: excelSnapshot(state.data.monthlyWorkInputs[key]) };
+}
+
+async function refreshExcelWorkspace(month) {
+  if (state.store) {
+    hydrateFirebaseData(await state.store.loadWorkspace(state.user));
+    state.month = month;
+  }
+}
+
+async function saveExcelChanges(month, changes) {
+  if (!isAdminWorkspace() || month !== state.month || runForMonth(month).status === "published") throw new Error("급여 월과 확정 상태를 확인해 주세요.");
+  if (!changes.length) throw new Error("반영할 선생님을 선택해 주세요.");
+  if (new Set(changes.map((item) => item.teacherId)).size !== changes.length) throw new Error("같은 선생님이 두 번 선택되었습니다.");
+  for (const change of changes) {
+    validateExcelPay(change.excelPay);
+    if (teacherById(change.teacherId)?.status !== "active") throw new Error("활성 선생님만 반영할 수 있습니다.");
+    if (JSON.stringify(excelExpectedState(teacherById(change.teacherId), month)) !== JSON.stringify(change.expected)) throw new Error("검토 중 자료가 변경되었습니다. 다시 불러와 주세요.");
+  }
+  if (state.store) await state.store.saveMonthlyExcelImport(month, changes);
+  for (const change of changes) {
+    const key = `${month}:${change.teacherId}`;
+    state.data.overrides[key] = { ...state.data.overrides[key], id: `${month}_${change.teacherId}`, teacherId: change.teacherId, month, excelPay: change.excelPay };
+  }
+  try { await refreshExcelWorkspace(month); }
+  catch { showError(new Error("저장은 완료됐지만 최신 자료를 다시 읽지 못했습니다. 추가 수정 전에 페이지를 새로고침해 주세요.")); }
+  render();
+}
+
+function openPayrollExcelImport() {
+  const month = state.month;
+  if (runForMonth(month).status === "published") return showError(new Error("확정된 월은 불러올 수 없습니다."));
+  let sheets = [];
+  let reading = false;
+  openModal("월 급여 엑셀 불러오기", `
+    <div class="form-grid">
+      <div class="form-field"><label>반영할 급여 월</label><strong>${formatMonth(month)}</strong></div>
+      <div class="form-field"><label for="payroll-xlsx">엑셀 파일</label><input id="payroll-xlsx" type="file" accept=".xlsx" /></div>
+      <div class="form-field full"><label for="payroll-xlsx-sheet">급여 시트</label><select id="payroll-xlsx-sheet" disabled></select></div>
+      <p class="form-help full" role="status" data-excel-status>파일 선택 대기</p>
+    </div>`, "변경 내역 확인", async () => {
+    if (reading || !sheets.length) throw new Error("엑셀 파일을 선택해 주세요.");
+    const sheet = sheets[Number(elements.modalRoot.querySelector("#payroll-xlsx-sheet").value)];
+    await refreshExcelWorkspace(month);
+    if (runForMonth(month).status === "published") throw new Error("이미 확정된 월입니다.");
+    openPayrollExcelPreview(month, sheet);
+    return false;
+  });
+  const root = elements.modalRoot.querySelector(".modal");
+  root.querySelector("#payroll-xlsx").addEventListener("change", async (event) => {
+    sheets = [];
+    const file = event.target.files[0];
+    if (!file) return;
+    event.target.disabled = true;
+    reading = true;
+    const status = root.querySelector("[data-excel-status]");
+    status.textContent = "파일 확인 중";
+    root.querySelector("[data-submit-modal]").disabled = true;
+    try {
+      if (!/\.xlsx$/i.test(file.name) || file.size > 5 * 1024 * 1024) throw new Error("5MB 이하의 .xlsx 파일을 선택해 주세요.");
+      sheets = await payrollExcelJob({ kind: "read", buffer: await file.arrayBuffer() });
+      const select = root.querySelector("#payroll-xlsx-sheet");
+      select.innerHTML = sheets.map((sheet, index) => `<option value="${index}">${e(sheet.name)} · ${sheet.rows.length}명</option>`).join("");
+      select.disabled = false;
+      status.textContent = "파일 확인 완료";
+    } catch (error) {
+      status.textContent = "파일 확인 실패";
+      showError(error);
+    } finally { reading = false; event.target.disabled = false; root.querySelector("[data-submit-modal]").disabled = false; }
+  });
+}
+
+function openPayrollExcelPreview(month, sheet) {
+  const records = sheet.rows.map((row) => ({ row, teacherId: matchExcelTeacher(row, activeTeachers()), selected: false, choices: {}, expected: null }));
+  openModal("엑셀 변경 내역", `
+    <div class="excel-import-heading"><strong>${formatMonth(month)}</strong><span>${e(sheet.name)} · ${e(sheet.title)}</span></div>
+    <div class="notice warning"><i data-lucide="triangle-alert"></i><span>빈칸은 기존 값 유지, 0은 0원 반영. 주민등록번호·주소·은행·계좌번호는 제외됩니다. 기존 시급·비율 산정 내역은 보존됩니다.</span></div>
+    <div class="excel-import-row-header"><label class="checkbox-row"><input type="checkbox" data-excel-select-all /> 확인 가능한 선생님 전체 선택</label><span data-excel-count>0명 선택</span></div>
+    <div class="excel-import-list">${records.map((record, index) => `<section class="excel-import-row" data-excel-row="${index}"></section>`).join("") || "입력된 선생님이 없습니다."}</div>
+    <label class="checkbox-row"><input type="checkbox" data-excel-confirm /> ${formatMonth(month)} 대상 월·선생님·금액 배분과 차이를 확인했습니다.</label>
+    <label class="checkbox-row"><input type="checkbox" data-excel-differences /> 엑셀의 신고액·지급액·보험료 합계와 다른 항목을 확인했습니다.</label>`, "선택한 선생님 반영", async () => {
+    const root = elements.modalRoot;
+    if (!root.querySelector("[data-excel-confirm]").checked) throw new Error("대상 월과 변경 내용을 확인해 주세요.");
+    const chosen = records.filter((record) => record.selected);
+    const changes = chosen.map((record) => {
+      updateResult(record);
+      if (record.error) throw new Error(`${record.row.name}: ${record.error}`);
+      if (record.warnings.length && !root.querySelector("[data-excel-differences]").checked) throw new Error("엑셀 합계와 다른 항목을 확인해 주세요.");
+      return { teacherId: record.teacherId, excelPay: record.next, expected: record.expected };
+    });
+    await saveExcelChanges(month, changes);
+    showToast(`${changes.length}명의 월 급여를 반영했습니다.`);
+  });
+  elements.modalRoot.querySelector(".modal").classList.add("excel-import-modal");
+  function updateResult(record) {
+    const target = record.element.querySelector("[data-excel-result]");
+    try {
+      const teacher = teacherById(record.teacherId);
+      if (!teacher) throw new Error("연결할 선생님을 선택해 주세요.");
+      const current = excelEffectiveOverride(teacher, month);
+      const before = excelCalculation(teacher, month, current);
+      record.next = buildExcelPay(record.row, teacher, current, { ...record.choices,
+        currentHealthInsurance: before.deductions.healthInsurance, currentLongTermCare: before.deductions.longTermCare });
+      validateExcelPay(record.next);
+      const after = excelCalculation(teacher, month, { ...current, excelPay: record.next });
+      const automatic = excelCalculation(teacher, month, { ...current, excelPay: null });
+      const previousAmounts = getMonthlyPayAmounts(teacher, current);
+      const previousValues = { ...previousAmounts, ...before.deductions,
+        transportAmount: previousAmounts.manualTransportAmount,
+        excelLectureWithholding: before.reporting.lectureWithholding,
+        excelAdditionalWithholding: before.reporting.additionalPaymentWithholding };
+      record.warnings = excelSummaryWarnings(record.row, after);
+      record.error = "";
+      target.innerHTML = `<div class="table-scroll"><table class="excel-comparison"><thead><tr><th>항목</th><th>기존</th><th>적용 후</th><th>산정 기준 계산</th></tr></thead><tbody>${[["총 지급액", before.gross, after.gross, automatic.gross], ["공제액", before.totalDeductions, after.totalDeductions, automatic.totalDeductions], ["실 지급액", before.net, after.net, automatic.net]].map(([label, a, b, c]) => `<tr><th>${label}</th><td>${formatWon(a)}</td><td><strong>${formatWon(b)}</strong></td><td>${formatWon(c)}</td></tr>`).join("")}</tbody></table></div>
+        <details><summary>항목별 변경 전후</summary><div class="table-scroll"><table class="excel-comparison"><thead><tr><th>항목</th><th>기존</th><th>적용 후</th></tr></thead><tbody>${Object.entries(record.next).filter(([key]) => EXCEL_PAY_FIELDS[key]).map(([key, value]) => `<tr><th>${e(EXCEL_PAY_FIELDS[key])}</th><td>${formatNumber(previousValues[key] ?? 0)}</td><td>${formatNumber(value)}</td></tr>`).join("")}</tbody></table></div></details>
+        ${record.warnings.map((message) => `<p class="excel-warning">${e(message)}</p>`).join("")}${after.unconfirmedEarningLines.length ? '<p class="excel-warning">처리 미확인 추가 지급이 있습니다. 급여 확정 전에 소득 구분을 선택해야 합니다.</p>' : ""}`;
+    } catch (error) { record.error = error.message; target.innerHTML = `<p class="excel-warning" role="status">${e(error.message)}</p>`; }
+  }
+  function drawRow(record) {
+    const teacher = teacherById(record.teacherId);
+    const amounts = teacher ? monthlyPayAmounts(teacher, month) : null;
+    const otherTreatments = amounts ? new Set(amounts.additionalEarnings.map((line) => line.treatment)) : new Set();
+    record.expected = teacher ? excelExpectedState(teacher, month) : null;
+    record.choices = { employeeGrossPay: Math.min(amounts?.employeeGrossPay || 0, record.row.values.basePay ?? Infinity), employeeWorkHours: Math.min(amounts?.employeeWorkHours || 0, record.row.values.hours ?? Infinity),
+      transportTreatment: amounts?.transportTreatment || "pending", otherTreatment: otherTreatments.size === 1 ? [...otherTreatments][0] : "pending",
+      otherInsuranceCovered: amounts?.additionalEarnings.length === 1 && amounts.additionalEarnings[0].insuranceCovered === true,
+      additionalIncomeType: teacher?.incomeComposition === "employee" ? "employee" : "business", allocationConfirmed: false };
+    const options = activeTeachers().map((item) => `<option value="${e(item.id)}" ${item.id === record.teacherId ? "selected" : ""}>${e(item.name)} · ${e(item.email || item.id)}</option>`).join("");
+    record.element.innerHTML = `<div class="excel-import-row-header"><label class="checkbox-row"><input type="checkbox" data-excel-selected ${record.selected ? "checked" : ""} /> ${record.row.number}행 ${e(record.row.name)}</label><select aria-label="${e(record.row.name)} 연결할 선생님" data-excel-teacher><option value="">선생님 선택</option>${options}</select></div>
+      ${teacher ? `<div class="form-grid excel-allocation">
+        ${teacher.incomeComposition === "mixed" && (record.row.values.basePay != null || record.row.values.hours != null) ? `${record.row.values.basePay != null ? `<label class="form-field">G 강사료 ${formatWon(record.row.values.basePay)} 중 근로소득<input type="number" data-choice="employeeGrossPay" min="0" step="1" value="${record.choices.employeeGrossPay}" /></label>` : ""}${record.row.values.hours != null ? `<label class="form-field">F ${record.row.values.hours}시간 중 근로 수업시간<input type="number" data-choice="employeeWorkHours" min="0" step="0.01" value="${record.choices.employeeWorkHours}" /></label>` : ""}<label class="checkbox-row full"><input type="checkbox" data-choice="allocationConfirmed" /> 나머지는 사업소득 금액·시간으로 배분</label>` : ""}
+        ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>` : ""}
+        ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label><label class="checkbox-row"><input type="checkbox" data-choice="otherInsuranceCovered" ${record.choices.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label><p class="form-help">K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}
+        ${teacher.incomeComposition === "mixed" && record.row.values.additionalTax != null ? `<label class="form-field">L 추가 원천징수 공제 명세서<select data-choice="additionalIncomeType"><option value="business">사업소득 명세서</option><option value="employee">근로소득 명세서</option></select></label>` : ""}
+      </div>` : ""}<div data-excel-result></div>`;
+    record.element.querySelector("[data-excel-selected]").addEventListener("change", (event) => { record.selected = event.target.checked; updateSelection(); });
+    record.element.querySelector("[data-excel-teacher]").addEventListener("change", (event) => { record.teacherId = event.target.value; drawRow(record); });
+    record.element.querySelectorAll("[data-choice]").forEach((input) => input.addEventListener("change", () => {
+      record.choices[input.dataset.choice] = input.type === "checkbox" ? input.checked : input.value;
+      updateResult(record);
+    }));
+    updateResult(record);
+  }
+  records.forEach((record, index) => { record.element = elements.modalRoot.querySelector(`[data-excel-row="${index}"]`); drawRow(record); });
+  function updateSelection() {
+    elements.modalRoot.querySelector("[data-excel-count]").textContent = `${records.filter((record) => record.selected).length}명 선택 / ${records.length}명`;
+  }
+  elements.modalRoot.querySelector("[data-excel-select-all]").addEventListener("change", (event) => {
+    records.forEach((record) => {
+      record.selected = event.target.checked && !record.error;
+      record.element.querySelector("[data-excel-selected]").checked = record.selected;
+    });
+    updateSelection();
+  });
+  refreshIcons();
+}
+
+async function exportMonthlyPayrollExcel(event) {
+  const button = event?.currentTarget;
+  if (button) button.disabled = true;
+  try {
+    const month = state.month;
+    await refreshExcelWorkspace(month);
+    const rows = runForMonth(month).status === "published"
+      ? state.data.payslips.filter((item) => item.month === month && item.status === "published" && !item.incomeType).map((item) => ({
+        teacher: { name: item.teacherName || teacherById(item.teacherId)?.name || "", phone: teacherById(item.teacherId)?.phone || "" }, payroll: item.calculation
+      }))
+      : activeTeachers().map((teacher) => {
+        const amounts = monthlyPayAmounts(teacher, month);
+        return { teacher: { name: teacher.name, phone: teacher.phone || "" },
+          classHours: amounts.employeeWorkHours + amounts.businessHours, transportTrips: amounts.transportTrips,
+          payroll: excelCalculation(teacher, month, excelEffectiveOverride(teacher, month)) };
+      });
+    if (rows.some((row) => !row.payroll) || runForMonth(month).status === "published" && !rows.length) throw new Error("확정본 계산 내역을 찾지 못했습니다. 새로고침 후 명세서를 확인해 주세요.");
+    const bytes = await payrollExcelJob({ kind: "write", month, rows });
+    downloadFile(new File([bytes], `${month}-강사료.xlsx`, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    showToast(`${rows.length}명의 급여 엑셀을 내보냈습니다.`);
+  } catch (error) { showError(error, "엑셀을 내보내지 못했습니다."); }
+  finally { if (button) button.disabled = false; }
+}
+
+function openExcelPayModal(teacher) {
+  const month = state.month;
+  const current = state.data.overrides[`${month}:${teacher.id}`];
+  const direct = current.excelPay;
+  const expected = excelExpectedState(teacher, month);
+  openModal(`${teacher.name} 월 직접 입력`, `<form id="excel-pay-form" class="form-grid">${Object.entries(EXCEL_PAY_FIELDS).map(([key, label]) => `<label class="form-field">${e(label)}<input type="number" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("")}
+    <label class="form-field">교통비 처리<select name="transportTreatment">${treatmentOptions(direct.transportTreatment || monthlyPayAmounts(teacher, month).transportTreatment)}</select></label>
+    <label class="form-field">기타 지급 처리<select name="otherTreatment">${treatmentOptions(direct.otherTreatment || "pending")}</select></label><label class="checkbox-row"><input name="otherInsuranceCovered" type="checkbox" ${direct.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label>
+    ${teacher.incomeComposition === "mixed" ? `<label class="form-field">L 추가 원천징수 공제 명세서<select name="excelAdditionalIncomeType"><option value="business" ${direct.excelAdditionalIncomeType !== "employee" ? "selected" : ""}>사업소득 명세서</option><option value="employee" ${direct.excelAdditionalIncomeType === "employee" ? "selected" : ""}>근로소득 명세서</option></select></label>` : ""}
+    <label class="checkbox-row full"><input type="checkbox" name="clearDirect" /> 엑셀 직접 입력을 모두 해제하고 기존 산정값으로 복원</label></form>`, "저장", async () => {
+    const form = elements.modalRoot.querySelector("#excel-pay-form");
+    if (!form.reportValidity()) return false;
+    const data = new FormData(form);
+    const next = { ...direct };
+    for (const key of Object.keys(EXCEL_PAY_FIELDS)) {
+      if (data.get(key) === "") delete next[key];
+      else next[key] = Number(data.get(key));
+    }
+    for (const key of ["transportTreatment", "otherTreatment"]) next[key] = data.get(key);
+    next.otherInsuranceCovered = data.has("otherInsuranceCovered");
+    if (data.has("excelAdditionalIncomeType")) next.excelAdditionalIncomeType = data.get("excelAdditionalIncomeType");
+    if (next.healthInsurance != null || next.longTermCare != null) next.healthAndLongTermCare = null;
+    else delete next.healthAndLongTermCare;
+    await saveExcelChanges(month, [{ teacherId: teacher.id, excelPay: data.has("clearDirect") ? null : next, expected }]);
+    showToast(data.has("clearDirect") ? "기존 산정값으로 복원했습니다." : "직접 입력값을 저장했습니다.");
+  });
+}
+
 function openMonthlyPayModal(teacher) {
   const key = `${state.month}:${teacher.id}`;
   const current = state.data.overrides[key] || {};
+  if (current.excelPay && Object.keys(current.excelPay).length) return openExcelPayModal(teacher);
   const settings = teacherPaySettings(teacher);
   const amounts = monthlyPayAmounts(teacher, state.month);
   const workLines = mergeBusinessWorkLines(settings.businessRates, amounts.businessWorkLines);
@@ -2802,6 +3038,7 @@ function openMonthlyPayModal(teacher) {
 function openPayrollAdjustmentModal(teacher) {
   const key = `${state.month}:${teacher.id}`;
   const current = state.data.overrides[key] || {};
+  if (current.excelPay && Object.keys(current.excelPay).length) return openExcelPayModal(teacher);
   const optionalValue = (name) => current[name] == null ? "" : e(current[name]);
   const combinedHealthValue = current.healthAndLongTermCare != null
     ? e(current.healthAndLongTermCare)
@@ -3470,7 +3707,7 @@ function currentCalendarMonth() {
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
 function policyPercentInput(rate, digits = 3) { return Number(((Number(rate) || 0) * 100).toFixed(digits)); }
 function taxProfileForTeacher(teacher) { return { dependentCount: 1, children8To20: 0, withholdingRatio: 1, ...(teacher.taxProfile || {}) }; }
-function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", custom: "기타 공제" }; }
+function deductionLabels() { return { nationalPension: "국민연금", healthInsurance: "건강보험", longTermCare: "장기요양보험", employmentInsurance: "고용보험", employeeIncomeTax: "근로소득세", employeeLocalTax: "근로소득 지방세", businessIncomeTax: "사업소득세", businessLocalTax: "사업소득 지방세", otherIncomeTax: "기타소득세", otherLocalTax: "기타소득 지방세", excelLectureWithholding: "강사료 원천징수 (직접 입력)", excelAdditionalWithholding: "추가 지급 원천징수 (직접 입력)", custom: "기타 공제" }; }
 function safeHttpUrl(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; } catch { return "#"; } }
 function isOfficialGovernmentUrl(value) { try { const host = new URL(value).hostname.toLowerCase(); return host === "go.kr" || host.endsWith(".go.kr"); } catch { return false; } }
 function isOfficialPublicSourceUrl(value) {

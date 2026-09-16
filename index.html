@@ -61,10 +61,12 @@
       </section>
 
       <div id="workspace" class="workspace" hidden>
-        <aside class="sidebar">
+        <div class="mobile-menu-backdrop" data-close-menu aria-hidden="true" hidden></div>
+        <aside id="sidebar" class="sidebar">
           <div class="sidebar-brand">
             <img class="brand-logo" src="./assets/alpha-logo-horizontal.png" alt="알파학원" width="2728" height="638" />
             <span id="sidebar-academy-name" class="sr-only">알파학원 급여 관리</span>
+            <button class="icon-button mobile-menu-close" type="button" title="메뉴 닫기" aria-label="메뉴 닫기" data-close-menu><i data-lucide="x" aria-hidden="true"></i></button>
           </div>
           <div class="sidebar-scroll">
             <nav id="main-nav" class="main-nav" aria-label="주요 메뉴"></nav>
@@ -99,12 +101,12 @@
             <span>학원 급여 포털</span>
           </div>
           <header class="topbar">
-            <button id="mobile-menu" class="icon-button mobile-menu" type="button" title="메뉴 열기" aria-label="메뉴 열기">
+            <button id="mobile-menu" class="icon-button mobile-menu" type="button" title="메뉴 열기" aria-label="메뉴 열기" aria-controls="sidebar" aria-expanded="false">
               <i data-lucide="menu" aria-hidden="true"></i>
             </button>
             <div>
               <p id="page-eyebrow" class="eyebrow">2026년 8월</p>
-              <h1 id="page-title">급여 대시보드</h1>
+              <h1 id="page-title" tabindex="-1">급여 대시보드</h1>
             </div>
             <div id="topbar-actions" class="topbar-actions"></div>
           </header>

@@ -145,7 +145,8 @@ test("숫자 입력의 스크롤 증감만 막고 일반 페이지 스크롤은 
 function insuranceForm() {
   const field = (value = "") => ({ value, checked: false, dataset: {}, listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; } });
   const pay = field("2000000");
-  const elements = { otherPaymentAmount: field("0"), otherPaymentTreatment: field("employee"), otherPaymentInsuranceCovered: field() };
+  const elements = { otherPaymentAmount: field("0"), otherPaymentTreatment: field("employee") };
+  const otherSettings = { dataset: { otherInsuranceCovered: "true" } };
   for (const key of Object.keys(INSURANCE_LABELS)) {
     elements[`edit-${key}-base`] = field(key === "nationalPension" ? "1500000" : "2000000");
     elements[`edit-${key}-enrolled`] = { ...field(), checked: true };
@@ -157,7 +158,7 @@ function insuranceForm() {
     if (!labels.has(selector)) labels.set(selector, { textContent: "" });
     return labels.get(selector);
   };
-  const form = { elements, querySelector: (selector) => selector === "#pay" ? pay : selector.startsWith("[data-insurance-preview") ? { querySelector: output } : output(selector) };
+  const form = { elements, querySelector: (selector) => selector === "#pay" ? pay : selector === "[data-other-insurance-covered]" ? otherSettings : selector.startsWith("[data-insurance-preview") ? { querySelector: output } : output(selector) };
   return { form, pay, elements, labels };
 }
 
@@ -171,10 +172,74 @@ test("보험 편집기를 열거나 급여를 바꿔도 별도로 지정한 신�
   assert.equal(elements["edit-nationalPension-base"].value, "1500000");
   assert.equal(elements["edit-healthInsurance-base"].value, "3000000");
   elements.otherPaymentAmount.value = "100000";
-  elements.otherPaymentInsuranceCovered.checked = true;
   elements.otherPaymentAmount.listeners.input();
   assert.equal(elements["edit-healthInsurance-base"].value, "3100000");
   assert.equal(elements["edit-nationalPension-base"].value, "1500000");
+});
+
+test("기타 보험 체크박스 없이 기존 기본값과 월별 보험 설정을 보존한다", () => {
+  for (const covered of [true, false]) {
+    const html = load("otherPaymentEditorHtml", { treatmentOptions: () => "" })({ ...other, insuranceCovered: covered }, "test");
+    assert.doesNotMatch(html, /type="checkbox"/);
+    const form = { elements: { otherPaymentAmount: { value: "100000" }, otherPaymentTreatment: { value: "employee" } },
+      querySelector: () => ({ dataset: { otherInsuranceCovered: String(covered) } }) };
+    assert.equal(load("readOtherPaymentPolicy")(form).insuranceCovered, covered);
+    const row = { dataset: { lineId: "old", insuranceCovered: String(covered) }, querySelector: (selector) => ({ value:
+      selector.includes("label") ? "기타" : selector.includes("amount") ? "100000" : "employee" }) };
+    const lines = load("readAdditionalEarnings", { document: { querySelectorAll: () => [row] } })("#test");
+    assert.equal(lines[0].insuranceCovered, covered);
+  }
+  assert.doesNotMatch(app, /name="otherPaymentInsuranceCovered"|data-additional-insurance|data-choice="otherInsuranceCovered"|name="otherInsuranceCovered"/);
+});
+
+test("월 지급액 저장 시 이전 주차비 금액과 보험 설정을 그대로 보존한다", async () => {
+  const legacy = { parkingAmount: 23456, parkingTreatment: "pending", parkingInsuranceCovered: true };
+  const person = { ...teacher, id: "legacy" };
+  const localState = { month: "2026-09", data: { overrides: { "2026-09:legacy": legacy } } };
+  let html;
+  let save;
+  const form = { reportValidity: () => true, elements: { transportInsuranceCovered: { checked: false } } };
+  class FormDataMock {
+    *[Symbol.iterator]() { yield* Object.entries({ employeeGrossPay: "2000000", transportTrips: "1", transportUnitAmount: "40000", transportTreatment: "exempt", legacyParkingTreatment: "exempt", grossPayNote: "" }); }
+  }
+  load("openMonthlyPayModal", {
+    state: localState, monthlyPayAmounts: () => getMonthlyPayAmounts(person, legacy),
+    mergeBusinessWorkLines: () => [], monthlyWorkInput: () => null, submittedTuitionBasis: () => null,
+    monthlyInsuranceBasesHtml: () => "", businessWorkEditorHtml: () => "", additionalEarningsEditorHtml: () => "", treatmentOptions: () => "",
+    openModal: (title, body, button, handler) => { html = body; save = handler; },
+    elements: { modalRoot: { querySelector: (selector) => selector === "#monthly-pay-form" ? form : null } },
+    bindBusinessWorkEditor() {}, bindAdditionalEarningsEditor() {}, readBusinessWorkLines: () => [], readAdditionalEarnings: () => [],
+    FormData: FormDataMock, showToast() {}, renderPayrollInputs() {}
+  })(person);
+  assert.doesNotMatch(html, /name="parkingAmount"|name="parkingInsuranceCovered"/);
+  assert.match(html, /이전 주차비 내역 23,456원/);
+  await save();
+  const saved = localState.data.overrides["2026-09:legacy"];
+  assert.equal(saved.parkingAmount, 23456);
+  assert.equal(saved.parkingInsuranceCovered, true);
+  assert.equal(saved.parkingTreatment, "exempt");
+  assert.equal(saved.transportUnitAmount, 40000);
+  assert.equal(getMonthlyPayAmounts(person, saved).additionalGrossPay, 63456);
+  assert.equal(legacy.parkingTreatment, "pending");
+});
+
+test("내역서와 CSV에서 주차비를 교통비에 한 번만 합산한다", () => {
+  const payroll = calculate(teacher, { transportTrips: 1, transportUnitAmount: 40000, transportTreatment: "exempt", parkingAmount: 23456, parkingTreatment: "exempt" });
+  const report = { transportAmount: 40000, parkingAmount: 23456, otherPaymentAmount: 0, lectureWithholding: 0, additionalPaymentWithholding: 0 };
+  let rows;
+  const extra = {
+    accountingReportFor: () => report, insuranceBasesFor: () => ({}), formatMobilePhoneNumber: () => "", formatTeacherIdentity: () => "", formatMaskedTeacherIdentity: () => "",
+    ledgerItemsForMonth: () => [{ teacher, incomeLabel: "근로소득", payroll }], earningBasisLabel: () => "", downloadCsv: (name, value) => { rows = value; }, showToast() {},
+    formatNumber: String, formatHours: String
+  };
+  load("exportLedger", extra)();
+  assert.equal(rows[0].length, rows[1].length);
+  assert.equal(rows[1][rows[0].indexOf("교통비")], 63456);
+  assert.equal(rows[0].includes("주차료"), false);
+  const html = load("ledgerTable", extra)([{ teacher, incomeLabel: "근로소득", payroll }], { gross: payroll.gross, deductions: payroll.totalDeductions, net: payroll.net });
+  assert.match(html, /<td class="numeric">63456<\/td>/);
+  assert.doesNotMatch(html, /<th[^>]*>주차/);
+  assert.equal([...html.matchAll(/<th[ >]/g)].length, 24);
 });
 
 test("기존 규칙 호환을 유지하고 새 기본 지급 설정은 관리자만 변경할 수 있다", () => {

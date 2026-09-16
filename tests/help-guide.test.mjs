@@ -33,7 +33,12 @@ test("설명서의 화면 링크는 두 문서에서 동일한 실제 PNG를 참
     const image = await readFile(new URL(path, root));
     assert.equal(image.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", path);
     assert.ok(image.readUInt32BE(16) > 0 && image.readUInt32BE(20) > 0, path);
+    for (const item of helpArticles.flatMap((article) => article.screenshots || []).filter((item) => item.src === path)) {
+      assert.equal(item.width, image.readUInt32BE(16), `${path} width reserves layout space`);
+      assert.equal(item.height, image.readUInt32BE(20), `${path} height reserves layout space`);
+    }
   }
+  assert.match(app, /width="\$\{screenshot.width\}" height="\$\{screenshot.height\}" loading="lazy"/);
 });
 
 test("검색 후에도 설명서 제목 번호는 전체 목차 번호를 유지한다", () => {

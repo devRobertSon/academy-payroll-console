@@ -15,6 +15,7 @@ import {
   officialInsurancePolicies
 } from "./data/nts-tax-policy.js";
 import { createFirebaseStore } from "./lib/firebase-store.js";
+import { createOverlayManager } from "./lib/overlays.js";
 import { payrollExcelJob } from "./lib/payroll-excel-client.js";
 import { buildExcelPay, matchExcelTeacher, excelSummaryWarnings } from "./lib/payroll-excel.js";
 import { excelSnapshot, EXCEL_PAY_FIELDS, validateExcelPay } from "./lib/payroll-excel-state.js";
@@ -137,6 +138,8 @@ const elements = {
   toastRoot: document.querySelector("#toast-root")
 };
 
+const overlays = createOverlayManager();
+
 const adminNav = [
   ["업무", "dashboard", "layout-dashboard", "급여 대시보드"],
   ["업무", "payrollInputs", "wallet-cards", "월 급여 입력"],
@@ -203,12 +206,14 @@ function bindStaticEvents() {
     button.addEventListener("click", () => openWorkspace(demoUsers[button.dataset.demoRole]));
   });
   document.querySelector("#logout-button").addEventListener("click", logout);
-  document.querySelector("#mobile-menu").addEventListener("click", () => elements.workspace.classList.toggle("menu-open"));
+  document.querySelector("#mobile-menu").addEventListener("click", () => setMobileMenu(!elements.workspace.classList.contains("menu-open")));
+  document.querySelectorAll("[data-close-menu]").forEach((button) => button.addEventListener("click", () => setMobileMenu(false)));
+  window.matchMedia("(max-width: 760px)").addEventListener("change", () => setMobileMenu(false));
   elements.assistantToggle.addEventListener("click", openAssistant);
   elements.helpNavButton.addEventListener("click", () => {
     if (!isAdminWorkspace()) return;
     state.view = "help";
-    elements.workspace.classList.remove("menu-open");
+    setMobileMenu(false);
     render();
     window.scrollTo({ top: 0, left: 0 });
   });
@@ -229,16 +234,36 @@ function bindStaticEvents() {
     const button = event.target.closest("[data-view]");
     if (!button) return;
     state.view = button.dataset.view;
-    elements.workspace.classList.remove("menu-open");
+    setMobileMenu(false);
     render();
     window.scrollTo({ top: 0, left: 0 });
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || overlays.active) return;
     if (!elements.assistantPanel.hidden) closeAssistant();
     else closeModal();
   });
   bindNumberInputScrollGuard();
+}
+
+function setMobileMenu(open) {
+  const sidebar = elements.workspace.querySelector(".sidebar");
+  const backdrop = elements.workspace.querySelector(".mobile-menu-backdrop");
+  open = open && window.matchMedia("(max-width: 760px)").matches;
+  elements.workspace.classList.toggle("menu-open", open);
+  backdrop.hidden = !open;
+  document.querySelector("#mobile-menu").setAttribute("aria-expanded", String(open));
+  if (open) {
+    sidebar.setAttribute("role", "dialog");
+    sidebar.setAttribute("aria-modal", "true");
+    sidebar.setAttribute("aria-label", "주요 메뉴");
+    overlays.open(sidebar, { allow: [backdrop], onEscape: () => setMobileMenu(false) });
+  } else {
+    sidebar.removeAttribute("role");
+    sidebar.removeAttribute("aria-modal");
+    sidebar.removeAttribute("aria-label");
+    overlays.close(sidebar);
+  }
 }
 
 function bindNumberInputScrollGuard() {
@@ -333,6 +358,9 @@ function hydrateFirebaseData(loaded) {
 
 async function logout() {
   if (state.store) await state.store.signOut();
+  closeErrorDialog();
+  closeModal();
+  setMobileMenu(false);
   state.user = null;
   state.assistantMessages = [];
   closeAssistant();
@@ -418,7 +446,7 @@ async function switchWorkspaceMode(mode) {
     if (mode === "teacher") state.selectedTeacherId = state.user.teacherId;
     closeModal();
     closeAssistant();
-    elements.workspace.classList.remove("menu-open");
+    setMobileMenu(false);
     render();
     window.scrollTo({ top: 0, left: 0 });
   } catch (error) {
@@ -586,8 +614,8 @@ function renderPayrollInputs() {
     </div>
     <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득 월급과 사업소득 강사료를 구분해 검토합니다. 학원비 비율제는 정산 대상 학원비 합계와 약정 비율을 확인해 주세요."}</span></div>
     <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·강사료·교통비·주차료·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">주차비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
+      <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·강사료·교통비(주차비 포함)·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
         ${teachers.map((teacher) => {
           const override = state.data.overrides[`${state.month}:${teacher.id}`];
           const settings = teacherPaySettings(teacher);
@@ -598,8 +626,8 @@ function renderPayrollInputs() {
           const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length;
           const statusText = missingSalary ? "근로소득 필요" : amounts.tuitionPending ? "학원비 입력 대기" : amounts.unconfirmedCount ? `처리 확인 ${amounts.unconfirmedCount}건` : total > 0 ? "입력 완료" : "금액 미입력";
           const statusClass = total > 0 && !missingSalary && !amounts.tuitionPending && !amounts.unconfirmedCount ? "paid" : "pending";
-          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.transportAmount)}</td><td class="numeric">${formatWon(amounts.parkingAmount)}</td><td class="numeric">${formatWon(amounts.otherPaymentAmount)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="이번 달 지급액 수정" aria-label="${e(teacher.name)} 이번 달 지급액 수정" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
-        }).join("") || emptyRow(13)}
+          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.transportAmount + amounts.parkingAmount)}</td><td class="numeric">${formatWon(amounts.otherPaymentAmount)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="이번 달 지급액 수정" aria-label="${e(teacher.name)} 이번 달 지급액 수정" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
+        }).join("") || emptyRow(12)}
       </tbody></table></div>
     </section>
   `;
@@ -680,7 +708,7 @@ function renderLedger() {
   `);
   elements.content.innerHTML = `
     <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="급여 월" data-control="month" /></div>
-    <div class="notice"><i data-lucide="split"></i><span>근로소득과 사업소득을 함께 받는 선생님은 소득 구분별로 두 줄이 표시됩니다. 교통·주차·기타 원천징수는 강사료 외 추가 지급을 사업소득 또는 기타소득으로 처리하면서 공제한 세금입니다.</span></div>
+    <div class="notice"><i data-lucide="split"></i><span>근로소득과 사업소득을 함께 받는 선생님은 소득 구분별로 두 줄이 표시됩니다. 교통·기타 원천징수는 강사료 외 추가 지급을 사업소득 또는 기타소득으로 처리하면서 공제한 세금입니다.</span></div>
     <section class="content-section"><div class="section-heading"><div><h2>${e(appConfig.academyName)} 급여내역서</h2><p>기장 전달용 · ${formatMonth(state.month)}</p></div></div>
     <div class="data-surface table-scroll">${ledgerTable(ledgerItems, summary)}</div></section>
   `;
@@ -757,7 +785,7 @@ function renderHelp() {
             <ol>${article.steps.map((step) => `<li>${e(step)}</li>`).join("")}</ol>
             ${article.screenshots?.length ? `<div class="help-screenshots">${article.screenshots.map((screenshot) => `
               <figure class="help-screenshot">
-                <img src="${e(screenshot.src)}" alt="${e(screenshot.alt)}" loading="lazy" />
+                <img src="${e(screenshot.src)}" alt="${e(screenshot.alt)}" width="${screenshot.width}" height="${screenshot.height}" loading="lazy" />
                 <figcaption>${e(screenshot.caption)}</figcaption>
               </figure>
             `).join("")}</div>` : ""}
@@ -903,7 +931,7 @@ function renderTeacherReceipts() {
       <div class="section-heading"><div><h2>새 영수증</h2><p>JPG, PNG, WebP 또는 PDF · 파일당 최대 5MB</p></div></div>
       <form id="receipt-submit-form" class="data-surface receipt-submit-form">
         <div class="form-field"><label for="receipt-date">사용 날짜</label><input id="receipt-date" name="expenseDate" type="date" value="${e(defaultDate)}" min="${e(state.month)}-01" max="${e(lastDayOfMonth(state.month))}" required ${locked ? "disabled" : ""} /></div>
-        <div class="form-field"><label for="receipt-category">구분</label><select id="receipt-category" name="category" required ${locked ? "disabled" : ""}><option value="transport">교통비</option><option value="parking">주차비</option></select></div>
+        <div class="form-field"><label>구분</label><strong>교통비 (주차비 포함)</strong></div>
         <div class="form-field"><label for="receipt-amount">금액</label><div class="input-suffix"><input id="receipt-amount" name="amount" type="number" min="1" max="10000000" step="1" inputmode="numeric" required ${locked ? "disabled" : ""} /><span>원</span></div></div>
         <div class="form-field"><label for="receipt-file">영수증 파일</label><input id="receipt-file" name="file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required ${locked ? "disabled" : ""} /></div>
         <div class="form-field full"><label for="receipt-note">메모</label><input id="receipt-note" name="note" maxlength="200" placeholder="예: 8월 12일 수업 이동" ${locked ? "disabled" : ""} /></div>
@@ -912,9 +940,8 @@ function renderTeacherReceipts() {
     </section>
     <section class="metrics compact-metrics" aria-label="영수증 요약">
       ${metric("hourglass", "검토 대기", `${receipts.filter((item) => item.status === "pending").length}건`, "관리자 확인 전")}
-      ${metric("train-front", "승인 교통비", formatWon(totals.transport), "급여 자동 합산")}
-      ${metric("square-parking", "승인 주차비", formatWon(totals.parking), "급여 자동 합산")}
-      ${metric("wallet-cards", "승인 합계", formatWon(totals.total), "이번 달 합계")}
+      ${metric("train-front", "승인 교통비", formatWon(totals.total), "주차비 포함")}
+      ${metric("receipt-text", "전체 제출", `${receipts.length}건`, "이번 달 제출 내역")}
     </section>
     <section class="content-section">
       <div class="section-heading"><div><h2>제출 내역</h2><p>승인된 영수증은 상태와 금액만 확인할 수 있습니다.</p></div></div>
@@ -940,11 +967,10 @@ function renderAdminReceipts() {
   setPage("영수증 관리", formatMonth(state.month), `<button class="button button-secondary" type="button" data-action="connect-drive"><i data-lucide="hard-drive"></i><span>Google Drive 연결</span></button>`);
   elements.content.innerHTML = `
     <div class="toolbar"><input class="month-control" type="month" value="${e(state.month)}" aria-label="영수증 월" data-control="month" /><span class="status-chip ${e(run.status)}">${statusLabel(run.status)}</span><span class="toolbar-spacer"></span><div class="search-wrap"><i data-lucide="search"></i><input class="search-control" type="search" value="${e(state.search)}" placeholder="선생님 검색" aria-label="선생님 검색" data-control="search" /></div></div>
-    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? "확정된 급여월의 영수증 상태는 변경할 수 없습니다. 수정하려면 먼저 급여 확정을 취소해 주세요." : "영수증 파일은 비공개 Google Drive에 저장됩니다. 처리 방식을 선택해 승인하면 교통비 또는 주차비에 자동 합산됩니다."}</span></div>
+    <div class="notice ${locked ? "warning" : ""}"><i data-lucide="${locked ? "lock" : "shield-check"}"></i><span>${locked ? "확정된 급여월의 영수증 상태는 변경할 수 없습니다. 수정하려면 먼저 급여 확정을 취소해 주세요." : "영수증 파일은 비공개 Google Drive에 저장됩니다. 처리 방식을 선택해 승인하면 교통비 합계(기존 주차비 포함)에 자동 합산됩니다."}</span></div>
     <section class="metrics compact-metrics" aria-label="영수증 검토 요약">
       ${metric("hourglass", "검토 대기", `${pending.length}건`, "승인 또는 반려 필요")}
-      ${metric("train-front", "승인 교통비", formatWon(transportTotal), `${approved.filter((item) => item.category === "transport").length}건`)}
-      ${metric("square-parking", "승인 주차비", formatWon(parkingTotal), `${approved.filter((item) => item.category === "parking").length}건`)}
+      ${metric("train-front", "승인 교통비", formatWon(transportTotal + parkingTotal), `${approved.length}건 · 주차비 포함`)}
       ${metric("receipt-text", "전체 제출", `${receipts.length}건`, formatMonth(state.month))}
     </section>
     <section class="content-section">
@@ -969,7 +995,7 @@ async function submitExpenseReceipt(event) {
   if (!form.reportValidity()) return;
   const data = Object.fromEntries(new FormData(form));
   const file = form.elements.file.files[0];
-  const draft = { month: state.month, expenseDate: data.expenseDate, category: data.category, amount: Number(data.amount), note: data.note.trim() };
+  const draft = { month: state.month, expenseDate: data.expenseDate, category: "transport", amount: Number(data.amount), note: data.note.trim() };
   const draftError = validateExpenseReceiptDraft(draft);
   const fileError = file && file.type.startsWith("image/") && file.size > RECEIPT_MAX_FILE_BYTES
     ? (RECEIPT_ALLOWED_MIME_TYPES.has(file.type) ? null : validateReceiptFile(file))
@@ -1263,11 +1289,12 @@ function initializeAssistant() {
 
 function openAssistant() {
   if (!isAdminWorkspace()) return;
-  initializeAssistant();
+  setMobileMenu(false);
   elements.assistantPanel.hidden = false;
+  initializeAssistant();
   elements.assistantToggle.setAttribute("aria-expanded", "true");
   refreshIcons();
-  requestAnimationFrame(() => elements.assistantInput.focus());
+  requestAnimationFrame(() => elements.assistantInput.focus({ preventScroll: true }));
 }
 
 function closeAssistant() {
@@ -1312,6 +1339,8 @@ async function submitAssistantQuestion(event) {
 }
 
 function renderAssistantMessages(showPending = false) {
+  const previousTop = elements.assistantMessages.scrollTop;
+  const followLatest = showPending || elements.assistantMessages.scrollHeight - elements.assistantMessages.clientHeight - previousTop <= 32;
   const suggestions = state.assistantMessages.length === 1 ? `
     <div class="assistant-suggestions" aria-label="추천 질문">
       ${["근로·사업소득을 함께 받으면 세무상 무엇을 확인해야 하나요?", "사업소득에서 합법적으로 인정받을 수 있는 필요경비와 증빙은?", "명세서를 이메일로 보내려면?"].map((question) => `<button type="button" data-assistant-question="${e(question)}">${e(question)}</button>`).join("")}
@@ -1326,7 +1355,7 @@ function renderAssistantMessages(showPending = false) {
   const submit = elements.assistantForm.querySelector("button[type='submit']");
   submit.disabled = state.assistantBusy;
   elements.assistantInput.disabled = state.assistantBusy;
-  elements.assistantMessages.scrollTop = elements.assistantMessages.scrollHeight;
+  elements.assistantMessages.scrollTop = followLatest ? elements.assistantMessages.scrollHeight : previousTop;
   refreshIcons();
 }
 
@@ -1522,12 +1551,12 @@ function payrollTable(items) {
 }
 
 function ledgerTable(items, summary) {
-  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>휴대전화</th><th>생년월일</th><th>소득 구분</th><th class="numeric">총 지급액<br>(신고액)</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 원천징수<br>(3.3%)</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">주차료</th><th class="numeric">기타</th><th class="numeric" title="강사료 외 교통비·주차료·기타 지급 중 사업소득 또는 기타소득으로 처리해 공제한 세금">교통·주차·기타<br>원천징수</th><th class="numeric">세금 공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">실 지급액</th></tr></thead><tbody>${items.map(({ teacher, incomeType, incomeLabel, payroll }) => {
+  return `<table class="accounting-ledger"><thead><tr><th>성명</th><th>휴대전화</th><th>생년월일</th><th>소득 구분</th><th class="numeric">총 지급액<br>(신고액)</th><th class="numeric">수업시간</th><th class="numeric">강사료</th><th class="numeric">강사료 원천징수<br>(3.3%)</th><th class="numeric">교통 횟수</th><th class="numeric">교통비</th><th class="numeric">기타</th><th class="numeric" title="강사료 외 교통비(주차비 포함)·기타 지급 중 사업소득 또는 기타소득으로 처리해 공제한 세금">교통·기타<br>원천징수</th><th class="numeric">세금 공제 합계</th><th class="numeric">소득세</th><th class="numeric">지방소득세</th><th class="numeric">건강+요양</th><th class="numeric">국민연금</th><th class="numeric">고용보험</th><th class="numeric">보험료 합계</th><th class="numeric">국민연금 기준액</th><th class="numeric">건강보험 기준액</th><th class="numeric">고용보험 기준액</th><th class="numeric">공제액 합계</th><th class="numeric">실 지급액</th></tr></thead><tbody>${items.map(({ teacher, incomeType, incomeLabel, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     const withholdingTotal = report.lectureWithholding + report.additionalPaymentWithholding;
-    return `<tr data-ledger-income="${e(incomeType)}"><td>${e(teacher.name)}</td><td>${e(formatMobilePhoneNumber(teacher.phone))}</td><td>${e(formatMaskedTeacherIdentity(teacher))}</td><td><span class="status-chip ${incomeType === "employee" ? "published" : "ready"}">${e(incomeLabel)}</span></td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount)}</td><td class="numeric">${formatNumber(report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
-  }).join("")}<tr class="ledger-total"><td colspan="4"><strong>합계</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="18"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
+    return `<tr data-ledger-income="${e(incomeType)}"><td>${e(teacher.name)}</td><td>${e(formatMobilePhoneNumber(teacher.phone))}</td><td>${e(formatMaskedTeacherIdentity(teacher))}</td><td><span class="status-chip ${incomeType === "employee" ? "published" : "ready"}">${e(incomeLabel)}</span></td><td class="numeric">${formatNumber(report.reportedGross)}</td><td class="numeric">${formatHours(report.classHours)}</td><td class="numeric">${formatNumber(report.lectureFeeGross)}</td><td class="numeric">${formatNumber(report.lectureWithholding)}</td><td class="numeric">${formatNumber(report.transportTrips)}</td><td class="numeric">${formatNumber(report.transportAmount + report.parkingAmount)}</td><td class="numeric">${formatNumber(report.otherPaymentAmount)}</td><td class="numeric">${formatNumber(report.additionalPaymentWithholding)}</td><td class="numeric">${formatNumber(withholdingTotal)}</td><td class="numeric">${formatNumber(report.employeeIncomeTax)}</td><td class="numeric">${formatNumber(report.employeeLocalTax)}</td><td class="numeric">${formatNumber(report.healthAndLongTermCare)}</td><td class="numeric">${formatNumber(report.nationalPension)}</td><td class="numeric">${formatNumber(report.employmentInsurance)}</td><td class="numeric">${formatNumber(report.insuranceTotal)}</td><td class="numeric">${formatNumber(bases.nationalPension)}</td><td class="numeric">${formatNumber(bases.healthInsurance)}</td><td class="numeric">${formatNumber(bases.employmentInsurance)}</td><td class="numeric">${formatNumber(payroll.totalDeductions)}</td><td class="numeric"><strong>${formatNumber(payroll.net)}</strong></td></tr>`;
+  }).join("")}<tr class="ledger-total"><td colspan="4"><strong>합계</strong></td><td class="numeric"><strong>${formatNumber(summary.gross)}</strong></td><td colspan="17"></td><td class="numeric"><strong>${formatNumber(summary.deductions)}</strong></td><td class="numeric"><strong>${formatNumber(summary.net)}</strong></td></tr></tbody></table>`;
 }
 
 function insuranceBasesFor(payroll) {
@@ -1860,16 +1889,15 @@ function insuranceEditorHtml(settings, prefix) {
 }
 
 function otherPaymentEditorHtml(policy = {}, prefix) {
-  return `<div class="form-field"><label for="${prefix}-other-amount">기타 기본금액</label><div class="input-suffix"><input id="${prefix}-other-amount" name="otherPaymentAmount" type="number" min="0" max="100000000" step="1" value="${e(policy.amount || 0)}" /><span>원</span></div></div>
-    <div class="form-field"><label for="${prefix}-other-treatment">기타금액 기본 처리</label><select id="${prefix}-other-treatment" name="otherPaymentTreatment">${treatmentOptions(policy.treatment)}</select></div>
-    <label class="checkbox-row form-field full"><input name="otherPaymentInsuranceCovered" type="checkbox" ${policy.insuranceCovered ? "checked" : ""} /> 기타금액을 보험 신고 기준에 포함</label>`;
+  return `<div class="form-field" data-other-insurance-covered="${policy.insuranceCovered === true}"><label for="${prefix}-other-amount">기타 기본금액</label><div class="input-suffix"><input id="${prefix}-other-amount" name="otherPaymentAmount" type="number" min="0" max="100000000" step="1" value="${e(policy.amount || 0)}" /><span>원</span></div></div>
+    <div class="form-field"><label for="${prefix}-other-treatment">기타금액 기본 처리</label><select id="${prefix}-other-treatment" name="otherPaymentTreatment">${treatmentOptions(policy.treatment)}</select></div>`;
 }
 
 function readOtherPaymentPolicy(form) {
   return {
     amount: Number(form.elements.otherPaymentAmount?.value || 0),
     treatment: form.elements.otherPaymentTreatment?.value || "pending",
-    insuranceCovered: form.elements.otherPaymentInsuranceCovered?.checked === true
+    insuranceCovered: form.querySelector("[data-other-insurance-covered]")?.dataset.otherInsuranceCovered === "true"
   };
 }
 
@@ -1954,7 +1982,7 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector, teacher =
     effectiveFrom.addEventListener("change", () => update());
     effectiveTo.addEventListener("change", () => update());
   });
-  [form.elements.otherPaymentAmount, form.elements.otherPaymentTreatment, form.elements.otherPaymentInsuranceCovered]
+  [form.elements.otherPaymentAmount, form.elements.otherPaymentTreatment]
     .filter(Boolean).forEach((field) => {
       field.addEventListener("input", () => update(true));
       field.addEventListener("change", () => update(true));
@@ -1987,11 +2015,10 @@ function additionalEarningsEditorHtml(lines, containerId) {
 }
 
 function additionalEarningRowHtml(line = {}) {
-  return `<div class="additional-line-row" data-additional-row data-line-id="${e(line.id || crypto.randomUUID())}">
+  return `<div class="additional-line-row" data-additional-row data-line-id="${e(line.id || crypto.randomUUID())}" data-insurance-covered="${line.insuranceCovered === true}">
     <input type="text" value="${e(line.label || "")}" placeholder="기타 내용" aria-label="기타 지급 항목명" data-additional-label />
     <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.amount || "")}" placeholder="금액" aria-label="기타 지급 금액" data-additional-amount /><span>원</span></div>
     <select aria-label="기타 지급 과세 처리" data-additional-treatment>${treatmentOptions(line.treatment)}</select>
-    <label class="checkbox-row compact"><input type="checkbox" data-additional-insurance ${line.insuranceCovered ? "checked" : ""} /> 보험 기준 포함</label>
     <button class="icon-button" type="button" title="항목 삭제" aria-label="기타 지급 항목 삭제" data-remove-additional><i data-lucide="trash-2"></i></button>
   </div>`;
 }
@@ -2019,7 +2046,7 @@ function readAdditionalEarnings(containerSelector) {
       label,
       amount,
       treatment: row.querySelector("[data-additional-treatment]").value,
-      insuranceCovered: row.querySelector("[data-additional-insurance]").checked
+      insuranceCovered: row.dataset.insuranceCovered === "true"
     };
   }).filter(Boolean);
 }
@@ -2878,8 +2905,8 @@ function openPayrollExcelPreview(month, sheet) {
     record.element.innerHTML = `<div class="excel-import-row-header"><label class="checkbox-row"><input type="checkbox" data-excel-selected ${record.selected ? "checked" : ""} /> ${record.row.number}행 ${e(record.row.name)}</label><select aria-label="${e(record.row.name)} 연결할 선생님" data-excel-teacher><option value="">선생님 선택</option>${options}</select></div>
       ${teacher ? `<div class="form-grid excel-allocation">
         ${teacher.incomeComposition === "mixed" && (record.row.values.basePay != null || record.row.values.hours != null) ? `${record.row.values.basePay != null ? `<label class="form-field">G 강사료 ${formatWon(record.row.values.basePay)} 중 근로소득<input type="number" data-choice="employeeGrossPay" min="0" step="1" value="${record.choices.employeeGrossPay}" /></label>` : ""}${record.row.values.hours != null ? `<label class="form-field">F ${record.row.values.hours}시간 중 근로 수업시간<input type="number" data-choice="employeeWorkHours" min="0" step="0.01" value="${record.choices.employeeWorkHours}" /></label>` : ""}<label class="checkbox-row full"><input type="checkbox" data-choice="allocationConfirmed" /> 나머지는 사업소득 금액·시간으로 배분</label>` : ""}
-        ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>${!record.row.parkingInOther ? `<p class="form-help">J 교통비에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함 · 주차비 금액과 소득 구분 유지</p>` : ""}` : ""}
-        ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label><label class="checkbox-row"><input type="checkbox" data-choice="otherInsuranceCovered" ${record.choices.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label>${record.row.parkingInOther ? `<p class="form-help">이전 내보내기 양식: K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}` : ""}
+        ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>${!record.row.parkingInOther && amounts.parkingAmount > 0 ? `<p class="form-help">J 교통비에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함 · 주차비 금액과 소득 구분 유지</p>` : ""}` : ""}
+        ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label>${record.row.parkingInOther ? `<p class="form-help">이전 내보내기 양식: K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}` : ""}
         ${teacher.incomeComposition === "mixed" && record.row.values.additionalTax != null ? `<label class="form-field">L 추가 원천징수 공제 명세서<select data-choice="additionalIncomeType"><option value="business">사업소득 명세서</option><option value="employee">근로소득 명세서</option></select></label>` : ""}
       </div>` : ""}<div data-excel-result></div>`;
     record.element.querySelector("[data-excel-selected]").addEventListener("change", (event) => { record.selected = event.target.checked; updateSelection(); });
@@ -2935,7 +2962,7 @@ function openExcelPayModal(teacher) {
   const expected = excelExpectedState(teacher, month);
   openModal(`${teacher.name} 월 직접 입력`, `<form id="excel-pay-form" class="form-grid">${Object.entries(EXCEL_PAY_FIELDS).map(([key, label]) => `<label class="form-field">${e(label)}<input type="number" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("")}
     <label class="form-field">교통비 처리<select name="transportTreatment">${treatmentOptions(direct.transportTreatment || monthlyPayAmounts(teacher, month).transportTreatment)}</select></label>
-    <label class="form-field">기타 지급 처리<select name="otherTreatment">${treatmentOptions(direct.otherTreatment || "pending")}</select></label><label class="checkbox-row"><input name="otherInsuranceCovered" type="checkbox" ${direct.otherInsuranceCovered ? "checked" : ""} /> 기타 지급을 보험 기준에 포함</label>
+    <label class="form-field">기타 지급 처리<select name="otherTreatment">${treatmentOptions(direct.otherTreatment || "pending")}</select></label>
     ${teacher.incomeComposition === "mixed" ? `<label class="form-field">L 추가 원천징수 공제 명세서<select name="excelAdditionalIncomeType"><option value="business" ${direct.excelAdditionalIncomeType !== "employee" ? "selected" : ""}>사업소득 명세서</option><option value="employee" ${direct.excelAdditionalIncomeType === "employee" ? "selected" : ""}>근로소득 명세서</option></select></label>` : ""}
     <label class="checkbox-row full"><input type="checkbox" name="clearDirect" /> 엑셀 직접 입력을 모두 해제하고 기존 산정값으로 복원</label></form>`, "저장", async () => {
     const form = elements.modalRoot.querySelector("#excel-pay-form");
@@ -2947,7 +2974,6 @@ function openExcelPayModal(teacher) {
       else next[key] = Number(data.get(key));
     }
     for (const key of ["transportTreatment", "otherTreatment"]) next[key] = data.get(key);
-    next.otherInsuranceCovered = data.has("otherInsuranceCovered");
     if (data.has("excelAdditionalIncomeType")) next.excelAdditionalIncomeType = data.get("excelAdditionalIncomeType");
     if (next.healthInsurance != null || next.longTermCare != null) next.healthAndLongTermCare = null;
     else delete next.healthAndLongTermCare;
@@ -2970,7 +2996,7 @@ function openMonthlyPayModal(teacher) {
     ? submittedBasis : null;
   const tuitionDiffers = tuitionSubmission && (tuitionBasis(shareLine).tuitionPending || tuitionSubmission.tuitionAmount !== tuitionBasis(shareLine).tuitionAmount);
   openModal(`${teacher.name} 월 지급액`, `
-    <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비·주차료·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
+    <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비(주차비 포함)·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
     <form id="monthly-pay-form" class="form-grid">
       <div class="form-field"><label for="monthly-pay-default-employee">기본 근로소득</label><input id="monthly-pay-default-employee" type="text" value="${e(formatWon(settings.defaultEmployeePay))}" readonly /></div>
       <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
@@ -2978,17 +3004,14 @@ function openMonthlyPayModal(teacher) {
       ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
       ${tuitionSubmission ? `<div class="form-field full tuition-submission"><strong>선생님 제출 학원비</strong><span>해당 수업 전체 학원비 ${formatWon(tuitionSubmission.tuitionAmount)}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
       ${businessWorkEditorHtml(workLines, "monthly-business-work")}
-      <div class="form-field full form-section-heading"><strong>교통비</strong><span class="form-help">대중교통 이용 횟수와 1회 금액을 곱해 교통비를 계산합니다.</span></div>
-      <div class="form-field"><label for="monthly-transport-trips">대중교통 이용 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
-      <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="100" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
+      <div class="form-field full form-section-heading"><strong>교통비 (주차비 포함)</strong></div>
+      <div class="form-field"><label for="monthly-transport-trips">교통비 지급 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
+      <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="monthly-transport-treatment">교통비 처리</label><select id="monthly-transport-treatment" name="transportTreatment">${treatmentOptions(amounts.transportTreatment)}</select></div>
       <label class="checkbox-row form-field"><input name="transportInsuranceCovered" type="checkbox" ${amounts.transportInsuranceCovered ? "checked" : ""} /> 교통비를 보험 기준에 포함</label>
-      ${amounts.receiptTransportAmount > 0 ? `<div class="form-field"><label>승인 영수증 교통비</label><input type="text" value="${e(formatWon(amounts.receiptTransportAmount))}" readonly /><span class="form-help">영수증 관리에서 승인된 금액이며 자동 합산됩니다.</span></div><div class="form-field"><label>교통비 합계</label><input type="text" value="${e(formatWon(amounts.transportAmount))}" readonly /></div>` : ""}
-      <div class="form-field full form-section-heading"><strong>주차비</strong><span class="form-help">해당 월에 지급할 주차비를 교통비와 별도로 입력합니다.</span></div>
-      <div class="form-field"><label for="monthly-parking">직접 입력 주차비</label><div class="input-suffix"><input id="monthly-parking" name="parkingAmount" type="number" min="0" step="1" value="${e(amounts.manualParkingAmount)}" /><span>원</span></div></div>
-      <div class="form-field"><label for="monthly-parking-treatment">주차비 처리</label><select id="monthly-parking-treatment" name="parkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></div>
-      <label class="checkbox-row form-field"><input name="parkingInsuranceCovered" type="checkbox" ${amounts.parkingInsuranceCovered ? "checked" : ""} /> 주차비를 보험 기준에 포함</label>
-      ${amounts.receiptParkingAmount > 0 ? `<div class="form-field"><label>승인 영수증 주차비</label><input type="text" value="${e(formatWon(amounts.receiptParkingAmount))}" readonly /><span class="form-help">영수증 관리에서 승인된 금액이며 자동 합산됩니다.</span></div><div class="form-field"><label>주차비 합계</label><input type="text" value="${e(formatWon(amounts.parkingAmount))}" readonly /></div>` : ""}
+      ${amounts.receiptTransportAmount + amounts.receiptParkingAmount > 0 ? `<div class="form-field"><label>승인 영수증 교통비</label><input type="text" value="${e(formatWon(amounts.receiptTransportAmount + amounts.receiptParkingAmount))}" readonly /></div>` : ""}
+      ${amounts.manualParkingAmount > 0 ? `<details class="form-field full"><summary>이전 주차비 내역 ${formatWon(amounts.manualParkingAmount)} (교통비 합산)</summary><label class="form-field">이전 내역 과세 처리<select name="legacyParkingTreatment">${treatmentOptions(amounts.parkingTreatment)}</select></label></details>` : ""}
+      <div class="form-field"><label>저장된 교통비 합계</label><input type="text" value="${e(formatWon(amounts.transportAmount + amounts.parkingAmount))}" readonly /></div>
       ${additionalEarningsEditorHtml(amounts.additionalEarnings, "monthly-additional-earnings")}
       <div class="form-field full"><label for="monthly-pay-note">변경 메모</label><input id="monthly-pay-note" name="grossPayNote" maxlength="200" value="${e(current.grossPayNote || "")}" placeholder="예: 보강 수업 2시간 포함" /><span class="form-help">개인정보나 상세 급여 내역을 적지 말고 변경 이유만 간단히 기록합니다.</span></div>
     </form>
@@ -3009,9 +3032,7 @@ function openMonthlyPayModal(teacher) {
       transportUnitAmount: Number(data.transportUnitAmount || 0),
       transportTreatment: data.transportTreatment,
       transportInsuranceCovered: form.elements.transportInsuranceCovered.checked,
-      parkingAmount: Number(data.parkingAmount || 0),
-      parkingTreatment: data.parkingTreatment,
-      parkingInsuranceCovered: form.elements.parkingInsuranceCovered.checked,
+      ...(amounts.manualParkingAmount > 0 ? { parkingTreatment: data.legacyParkingTreatment } : {}),
       additionalEarnings: readAdditionalEarnings("#monthly-additional-earnings"),
       grossPayNote: data.grossPayNote.trim() || null
     };
@@ -3474,20 +3495,23 @@ function openModal(title, body, submitLabel, onSubmit) {
     }
   });
   refreshIcons();
-  elements.modalRoot.querySelector("input, select, button")?.focus();
+  overlays.open(elements.modalRoot, { onEscape: closeModal });
 }
 
-function closeModal() { elements.modalRoot.innerHTML = ""; }
+function closeModal() {
+  elements.modalRoot.innerHTML = "";
+  overlays.close(elements.modalRoot);
+}
 
 function exportLedger() {
-  const rows = [["급여월", "성명", "휴대전화", "생년월일", "소득 구분", "총 지급액(신고액)", "수업시간", "강사료", "강사료 원천징수(3.3%)", "교통 횟수", "교통비", "주차료", "기타", "교통·주차·기타 원천징수", "세금 공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "실 지급액", "강사료 산정 기준"]];
+  const rows = [["급여월", "성명", "휴대전화", "생년월일", "소득 구분", "총 지급액(신고액)", "수업시간", "강사료", "강사료 원천징수(3.3%)", "교통 횟수", "교통비", "기타", "교통·기타 원천징수", "세금 공제 합계", "소득세", "지방소득세", "건강+요양", "국민연금", "고용보험", "보험료 합계", "국민연금 신고 기준액", "건강보험 신고 기준액", "고용보험 신고 기준액", "기타 공제", "공제액 합계", "실 지급액", "강사료 산정 기준"]];
   ledgerItemsForMonth(state.month).forEach(({ teacher, incomeLabel, payroll }) => {
     const report = accountingReportFor(payroll);
     const bases = insuranceBasesFor(payroll);
     rows.push([
       state.month, teacher.name, formatMobilePhoneNumber(teacher.phone), formatTeacherIdentity(teacher), incomeLabel,
       report.reportedGross, report.classHours, report.lectureFeeGross, report.lectureWithholding,
-      report.transportTrips, report.transportAmount, report.parkingAmount, report.otherPaymentAmount,
+      report.transportTrips, report.transportAmount + report.parkingAmount, report.otherPaymentAmount,
       report.additionalPaymentWithholding, report.lectureWithholding + report.additionalPaymentWithholding,
       report.employeeIncomeTax, report.employeeLocalTax, report.healthAndLongTermCare,
       report.nationalPension, report.employmentInsurance, report.insuranceTotal,
@@ -3726,7 +3750,10 @@ function isOfficialPublicSourceUrl(value) {
   }
 }
 function setLoginStatus(message, isError = true) { elements.loginStatus.textContent = message; elements.loginStatus.style.color = isError ? "var(--danger)" : "var(--muted)"; }
-function closeErrorDialog() { elements.errorDialogRoot.innerHTML = ""; }
+function closeErrorDialog() {
+  elements.errorDialogRoot.innerHTML = "";
+  overlays.close(elements.errorDialogRoot);
+}
 function showError(error, fallback = "작업을 완료하지 못했습니다.") {
   let message = typeof error === "string" ? error : error?.message;
   if (!message) message = fallback;
@@ -3744,7 +3771,7 @@ function showError(error, fallback = "작업을 완료하지 못했습니다.") 
   const closeButton = elements.errorDialogRoot.querySelector("[data-close-error]");
   closeButton.addEventListener("click", closeErrorDialog);
   refreshIcons();
-  closeButton.focus();
+  overlays.open(elements.errorDialogRoot);
 }
 function showToast(message) { const toast = document.createElement("div"); toast.className = "toast"; toast.textContent = message; elements.toastRoot.append(toast); setTimeout(() => toast.remove(), 3200); }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons(); else setTimeout(() => window.lucide?.createIcons(), 300); }

@@ -39,6 +39,35 @@ npm run qa
 - AI 도움말 화면, Firebase AI Logic 프록시와 공개 설정의 비밀키 미포함 확인
 - GitHub Actions 워크플로가 없는지 확인
 
+## 선생님 수정 권한 회귀 검사
+
+변경 범위가 선생님 정보 저장 규칙이면 아래 검사만 실행합니다. 실제 Firebase 자료나 계정을 사용하지 않습니다.
+
+```powershell
+node --test tests/admin-teacher-account.test.mjs tests/teacher-pay-settings.test.mjs
+```
+
+Firestore 에뮬레이터를 `demo-teacher-rules-qa` 프로젝트로 실행한 후 별도 터미널에서 검사합니다. Java와 Firebase CLI가 준비된 환경에서는 다음 명령을 사용합니다.
+
+```powershell
+firebase emulators:start --only firestore --project demo-teacher-rules-qa
+```
+
+```powershell
+$env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+node --test tests/teacher-rules-emulator.test.mjs
+```
+
+`teacher-rules-emulator.test.mjs`는 외부 호스트 연결을 거부하며 고정된 데모 프로젝트만 사용합니다. 에뮬레이터 주소가 없으면 건너뛰므로, 일반 단위 테스트 통과를 실제 보안 규칙 통과로 보고하지 않습니다.
+
+- 변경 전 규칙에서는 정상적인 월급·보험 기준액 저장도 표현식 1,000개 한도를 초과해 `permission-denied`가 발생했습니다.
+- 변경 후에는 수정하지 않은 중첩 설정을 다시 검사하지 않고, 새로 생성·변경·삭제한 설정에는 기존 검증 조건을 적용합니다. 허용 필드, 소득 구성 일관성, 관리자 권한과 연결 계정 보호는 유지합니다.
+- 월급 수정, 보험 기준액 자동 변경, 교통비 지급일·기타 기본금액 최초 저장, 관리자 겸 선생님 계정 보존, 잘못된 입력과 비관리자 접근 차단을 검사합니다.
+- 시급이 이미 10개이거나 시급 9개와 비율이 있는 선생님도 **산정 방식은 그대로 두고 월급을 바꾸는 경우**를 포함합니다.
+- 남은 별도 문제: 시급 10개의 금액을 한 번에 모두 변경하는 요청은 여전히 표현식 한도를 초과합니다. 이번 월급 수정 회귀 검사의 통과 범위에 포함하지 않습니다. 전체 시급 목록 검증의 추가 최적화가 필요합니다.
+
+이 변경은 `firestore.rules`를 다시 게시해야 운영에 반영됩니다. 웹 페이지 배포, Cloudflare Worker, Storage, App Check 또는 OAuth 설정 변경은 필요하지 않습니다.
+
 ## AI 도움말 수동 검사
 
 1. 관리자 메뉴 맨 아래에 `사용 설명서`가 표시되는지 확인합니다.

@@ -154,7 +154,7 @@ service cloud.firestore {
     function hasValidBusinessRates(data) {
       return data.businessRates is list
         && data.businessRates.size() <= 10
-        && validBusinessRateAt(data.businessRates, 0)
+        && (data.businessRates.size() == 0 || (validBusinessRateAt(data.businessRates, 0)
         && validBusinessRateAt(data.businessRates, 1)
         && validBusinessRateAt(data.businessRates, 2)
         && validBusinessRateAt(data.businessRates, 3)
@@ -173,7 +173,7 @@ service cloud.firestore {
           + tuitionShareCountAt(data.businessRates, 6)
           + tuitionShareCountAt(data.businessRates, 7)
           + tuitionShareCountAt(data.businessRates, 8)
-          + tuitionShareCountAt(data.businessRates, 9) <= 1;
+          + tuitionShareCountAt(data.businessRates, 9) <= 1));
     }
 
     function hasValidSelfIncomeComposition(data) {
@@ -253,7 +253,9 @@ service cloud.firestore {
         && name.matches('^[A-Za-z가-힣]+( [A-Za-z가-힣]+)*$');
     }
 
-    function hasValidTeacherDocument(data, teacherId) {
+    function hasValidTeacherDocument(data, teacherId, isUpdate) {
+      // Validate changed maps only; unchanged values cannot introduce a new invalid write.
+      let unchanged = isUpdate ? data.diff(resource.data).unchangedKeys() : [].toSet();
       return data.keys().hasOnly([
           'id', 'name', 'email', 'phone', 'birthDateCode', 'genderCode',
           'status', 'authUid', 'profileCompleted', 'incomeComposition',
@@ -270,19 +272,19 @@ service cloud.firestore {
         && (data.authUid == null || data.authUid is string)
         && data.profileCompleted is bool
         && hasValidIncomeComposition(data)
-        && hasValidOrMissingTeacherIdentity(data)
-        && hasValidInsuranceSettings(data)
+        && (unchanged.hasAll(['birthDateCode', 'genderCode']) || hasValidOrMissingTeacherIdentity(data))
+        && (unchanged.hasAll(['insuranceSettings']) || hasValidInsuranceSettings(data))
         && data.defaultEmployeePay is number
         && data.defaultEmployeePay >= 0
         && data.defaultEmployeePay <= 100000000
-        && hasValidBusinessRates(data)
+        && (unchanged.hasAll(['businessRates']) || hasValidBusinessRates(data))
         && hasConsistentIncomeComposition(data)
-        && hasValidTransportPolicy(data)
-        && hasValidOtherPaymentPolicy(data)
+        && (unchanged.hasAll(['transportPolicy']) || hasValidTransportPolicy(data))
+        && (unchanged.hasAll(['otherPaymentPolicy']) || hasValidOtherPaymentPolicy(data))
         && data.paymentDay is int
         && data.paymentDay >= 1
         && data.paymentDay <= 31
-        && hasValidTaxProfile(data)
+        && (unchanged.hasAll(['taxProfile']) || hasValidTaxProfile(data))
         && !data.keys().hasAny(['accountingReference'])
         && excludesResidentRegistrationNumber(data);
     }
@@ -447,9 +449,9 @@ service cloud.firestore {
       allow get: if isAdmin() || isOwnTeacher(teacherId);
       allow list: if isAdmin();
       allow create: if isAdmin()
-        && hasValidTeacherDocument(request.resource.data, teacherId);
+        && hasValidTeacherDocument(request.resource.data, teacherId, false);
       allow update: if (isAdmin()
-          && hasValidTeacherDocument(request.resource.data, teacherId))
+          && hasValidTeacherDocument(request.resource.data, teacherId, true))
         || (isOwnTeacher(teacherId)
           && hasValidPersonName(request.resource.data.name)
           && hasValidPhoneNumber(request.resource.data.phone)

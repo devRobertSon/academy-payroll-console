@@ -139,7 +139,7 @@ test("Excel monthly dialog preserves employee salary on edit and clearing direct
   assert.match(sourceFor("openMonthlyPayModal"), /openExcelPayModal\(teacher, true\)/);
 });
 
-test("monthly list puts net pay then reported gross after teacher, retaining accessible buttons and published-month lock", () => {
+test("monthly list puts input status between reported gross and insurance, retaining aligned amounts and published-month lock", () => {
   for (const locked of [false, true]) {
     const eventTarget = { addEventListener() {} };
     const content = { innerHTML: "", querySelector: () => eventTarget, querySelectorAll: () => [] };
@@ -156,11 +156,12 @@ test("monthly list puts net pay then reported gross after teacher, retaining acc
     assert.match(button, /aria-label="가상선생님 월 지급액 입력"/);
     assert.equal(button.includes("disabled"), locked);
     assert.match(button, /aria-pressed="false"/);
-    assert.match(content.innerHTML, /<th>선생님<\/th><th class="numeric">실 지급액<\/th><th class="numeric">신고액<\/th><th>가입 보험<\/th>/);
-    assert.match(content.innerHTML, /<\/button><\/td><td class="numeric"><strong>1,801,234원<\/strong><\/td><td class="numeric"><strong>2,000,000원<\/strong><div class="cell-subtext">엑셀 직접 입력<\/div><\/td><td><span class="status-chip/);
+    assert.match(content.innerHTML, /<th>선생님<\/th><th class="numeric">실 지급액<\/th><th class="numeric">신고액<\/th><th>입력 상태<\/th><th>가입 보험<\/th>/);
+    assert.match(content.innerHTML, /<\/button><\/td><td class="numeric"><strong>1,801,234원<\/strong><\/td><td class="numeric"><strong>2,000,000원<\/strong><\/td><td><span class="status-chip/);
     assert.equal([...content.innerHTML.matchAll(/>신고액<\/th>/g)].length, 1);
     assert.match(content.innerHTML, /<td class="numeric">4,321원<\/td>/);
-    assert.match(content.innerHTML, /엑셀 직접 입력/);
+    assert.match(content.innerHTML, /<td class="numeric"><strong>2,000,000원<\/strong><\/td><td><span class="status-chip paid">입력 완료<\/span><div class="cell-subtext">엑셀 직접 입력<\/div><\/td><td><span class="status-chip published">3종 가입<\/span><\/td>/);
+    assert.equal([...content.innerHTML.matchAll(/>입력 상태<\/th>/g)].length, 1);
     assert.doesNotMatch(content.innerHTML, /data-lucide="pencil"/);
     assert.equal([...content.innerHTML.matchAll(/<th[ >]/g)].length, 12);
   }

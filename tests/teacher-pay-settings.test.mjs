@@ -245,9 +245,13 @@ test("내역서와 CSV에서 주차비를 교통비에 한 번만 합산한다",
 test("기존 규칙 호환을 유지하고 새 기본 지급 설정은 관리자만 변경할 수 있다", () => {
   assert.match(rules, /function hasValidOtherPaymentPolicy\(data\)/);
   assert.match(rules, /return !data\.keys\(\)\.hasAny\(\['otherPaymentPolicy'\]\)/);
-  assert.match(rules, /data\.otherPaymentPolicy\.amount is int/);
-  assert.match(rules, /data\.otherPaymentPolicy\.amount <= 100000000/);
-  assert.match(rules, /data\.transportPolicy\.paymentDay is int/);
+  const otherPolicy = rules.slice(rules.indexOf("function hasValidOtherPaymentPolicy("), rules.indexOf("function hasValidTaxProfile("));
+  assert.match(otherPolicy, /let policy = data\.get\('otherPaymentPolicy', null\)/);
+  assert.match(otherPolicy, /policy\.amount is int/);
+  assert.match(otherPolicy, /policy\.amount <= 100000000/);
+  const transport = rules.slice(rules.indexOf("function hasValidTransportPolicy("), rules.indexOf("function hasValidOtherPaymentPolicy("));
+  assert.match(transport, /let policy = data\.transportPolicy/);
+  assert.match(transport, /policy\.paymentDay is int/);
   const ownUpdate = rules.slice(rules.indexOf("|| (isOwnTeacher(teacherId)"), rules.indexOf("allow delete: if isAdmin();", rules.indexOf("match /teachers/")));
   assert.doesNotMatch(ownUpdate, /'otherPaymentPolicy'|'transportPolicy'|'paymentDay'/);
 });

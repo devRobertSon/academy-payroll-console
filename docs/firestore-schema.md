@@ -22,6 +22,9 @@
 | `payslipReceipts` | 조회 | 본인 열람 기록 생성/조회 |
 | `payslipDeliveries` | 조회·생성 | 접근 불가 |
 | `payrollLedgers` | 생성/조회 | 차단 |
+| `retirementSettings` | DC형 대상 조회·설정 | 차단 |
+| `retirementContributions` | 월 납입액 조회·확정·사유 있는 정정 | 차단 |
+| `retirementContributions/{id}/history` | 불변 확정 이력 조회·생성 | 차단 |
 | `auditLogs` | 생성/조회 | 차단 |
 
 ## 핵심 문서
@@ -35,6 +38,24 @@
 `canSubmitOwnTeacherData()`는 활성 계정, `teacherId`, 선생님 문서의 본인 `authUid`와 활성 상태를 검증합니다. 이를 통과한 관리자도 본인 영수증·수업 제출 알림·명세서 열람 기록을 생성할 수 있습니다. 관리자의 기존 전체 조회·관리 권한은 유지하며, `내 급여`는 권한을 축소하는 보안 모드가 아닌 본인 업무 화면입니다. 새 규칙 게시가 필요하고 Worker·Storage·OAuth 설정은 변경하지 않습니다.
 
 관리자 권한 해제·계정 비활성화가 필요한 운영자 변경은 권한을 가진 운영자가 Firebase Console에서 별도로 처리합니다. 선생님 급여 정보 변경과 혼동하지 않습니다.
+
+### DC형 퇴직연금 관리자 전용 문서
+
+`retirementSettings/{teacherId}`에는 `teacherId`, `enabled`, `updatedAt`, `updatedBy`만 저장합니다. 선생님이 읽는 `teachers` 문서에 납입 대상 여부나 금액을 넣지 않습니다.
+
+`retirementContributions/{yyyy-mm_teacherId}`는 해당 월의 최신 확정본입니다.
+
+- 식별·상태: `teacherId`, `month`, `status: "confirmed"`, `revision`
+- 원본 급여: `sourcePayslipId`, `sourceRevision` (소득별 문서가 아닌 전체 확정 급여)
+- 계산 근거: `basis`의 항목명·세전 금액·산정 문구·산입 여부·사유, `baseAmount`, `expectedAmount`
+- 실제 납입: `actualAmount`, `paidOn`, `note`, `correctionReason`
+- 확정 기록: `confirmationId`, `confirmedAt`, `confirmedBy`, `confirmedName`
+
+최신 문서, `history/{confirmationId}`의 동일한 불변 사본과 감사 로그를 트랜잭션으로 저장합니다. 정정은 차수를 1 올리고 사유를 남기며 기존 이력은 수정·삭제할 수 없습니다. 저장 직전에 대상 설정, 급여 확정 상태·발행 차수, 현재 납입 문서가 검토 당시와 같은지 다시 확인합니다. 급여 취소·재발행 후에도 과거 납입 근거는 보존합니다.
+
+대상·납입 문서는 관리자 상세 화면에서 필요할 때만 읽습니다. 최신 규칙 미게시 오류가 일반 로그인이나 급여 조회를 차단하지 않도록 분리합니다. 일반 선생님은 모든 퇴직연금 문서의 조회·쓰기·목록 접근이 금지되며, 관리자 겸 선생님은 관리 업무 권한으로 처리할 수 있습니다. 월 예상액은 산입 임금 합계 / 12의 원 미만 올림이며 실제 납입액은 별도 입력합니다. 개인 급여 계산·명세서·엑셀에는 포함하지 않습니다.
+
+사용 전 최신 `firestore.rules` 게시가 필요합니다. 별도 복합 색인, Cloudflare Worker, Storage, App Check 변경은 필요하지 않습니다.
 
 ### `expenseReceipts/{receiptId}`
 
@@ -140,6 +161,8 @@
 학원비 비율제 계약은 `teachers.businessRates`에 `{ "id": "share-a", "tuitionShareRate": 40 }`으로 저장합니다. 한 항목에는 `hourlyRate`와 `tuitionShareRate` 중 하나만 허용합니다. 기존 시급제 형식은 변경하지 않습니다. 약정 비율은 0 초과 100 이하, 소수점 둘째 자리까지 규칙에서 검사합니다. 비율제 항목에는 선생님의 `businessHours`를 저장하거나 계산에 사용하지 않습니다. 선생님은 기존 `businessRates` 수정 권한으로 약정 비율을 입력하며 해당 수업 전체 학원비는 아래 월별 제출 문서에 별도로 저장합니다.
 
 약정 비율 항목은 한 개만 허용하며 시급 항목과 함께 저장할 수 있습니다. 혼합에서 비율을 포함한 계약 예시는 `[{ "id": "hourly-a", "hourlyRate": 50000 }, { "id": "share-a", "tuitionShareRate": 40 }]`입니다. 지급 기준은 합계 최대 10개이므로 병행 계약은 시급을 최대 9개까지 등록합니다. `시급 / 비율 / 혼합` 선택과 비율 포함 체크 상태는 이 배열에서 계산하며 별도 중복 필드를 저장하지 않습니다. 화면은 시급 항목을 먼저, 비율 항목을 마지막에 정렬합니다. 비율 행은 시급 번호와 수업 시수에 포함하지 않습니다.
+
+신규·변경하는 `businessRates` 배열은 Firestore 규칙에서도 시급 먼저·비율 마지막 순서로 검사합니다. 기존 화면의 저장 순서와 같으며, 이 순서를 이용해 최대 10개 항목과 비율 한 개 제한을 중복 순회 없이 검사합니다. 기존 배열을 그대로 두는 관리자 수정은 이전 순서도 보존합니다. UID 연결·과거 명세서·급여 자료를 일괄 변경하지 않습니다.
 
 ### `teacherMonthlyInputs/{yyyy-mm_teacherId}`
 
@@ -337,11 +360,12 @@
   "reason": "수업 시간 누락으로 계산 수정 필요",
   "payslipIds": ["2026-08_teacherId"],
   "actorUid": "관리자 UID",
+  "actorName": "처리 당시 관리자 이름",
   "createdAt": "server timestamp"
 }
 ```
 
-취소 기록은 수정·삭제하지 않습니다. 사유에는 주민등록번호, 급여 세부 내용 등 개인정보를 적지 않습니다.
+취소 기록은 수정·삭제하지 않습니다. 사유에는 주민등록번호, 급여 세부 내용 등 개인정보를 적지 않습니다. `actorUid`는 감사용 식별자로 보존하고 화면에는 `actorName`을 표시합니다. 이름이 없는 이전 기록은 관리자 화면에서 해당 `users/{actorUid}`의 이름을 조회하며 기존 취소 문서를 수정하지 않습니다. 계정 이름이 없으면 연결된 선생님 이름, 그마저 없으면 `관리자`로 표시하고 UID를 노출하지 않습니다.
 
 ### `payslipReceipts/{payslipId}_{teacherUid}`
 

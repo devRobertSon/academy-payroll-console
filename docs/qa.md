@@ -44,7 +44,7 @@ npm run qa
 변경 범위가 선생님 정보 저장 규칙이면 아래 검사만 실행합니다. 실제 Firebase 자료나 계정을 사용하지 않습니다.
 
 ```powershell
-node --test tests/admin-teacher-account.test.mjs tests/teacher-pay-settings.test.mjs
+node --test tests/admin-teacher-account.test.mjs tests/teacher-pay-settings.test.mjs tests/teacher-self-service.test.mjs tests/teacher-identity.test.mjs tests/tuition-share.test.mjs tests/tuition-total-ui.test.mjs tests/access-request.test.mjs
 ```
 
 Firestore 에뮬레이터를 `demo-teacher-rules-qa` 프로젝트로 실행한 후 별도 터미널에서 검사합니다. Java와 Firebase CLI가 준비된 환경에서는 다음 명령을 사용합니다.
@@ -61,12 +61,35 @@ node --test tests/teacher-rules-emulator.test.mjs
 `teacher-rules-emulator.test.mjs`는 외부 호스트 연결을 거부하며 고정된 데모 프로젝트만 사용합니다. 에뮬레이터 주소가 없으면 건너뛰므로, 일반 단위 테스트 통과를 실제 보안 규칙 통과로 보고하지 않습니다.
 
 - 변경 전 규칙에서는 정상적인 월급·보험 기준액 저장도 표현식 1,000개 한도를 초과해 `permission-denied`가 발생했습니다.
-- 변경 후에는 수정하지 않은 중첩 설정을 다시 검사하지 않고, 새로 생성·변경·삭제한 설정에는 기존 검증 조건을 적용합니다. 허용 필드, 소득 구성 일관성, 관리자 권한과 연결 계정 보호는 유지합니다.
-- 월급 수정, 보험 기준액 자동 변경, 교통비 지급일·기타 기본금액 최초 저장, 관리자 겸 선생님 계정 보존, 잘못된 입력과 비관리자 접근 차단을 검사합니다.
-- 시급이 이미 10개이거나 시급 9개와 비율이 있는 선생님도 **산정 방식은 그대로 두고 월급을 바꾸는 경우**를 포함합니다.
-- 남은 별도 문제: 시급 10개의 금액을 한 번에 모두 변경하는 요청은 여전히 표현식 한도를 초과합니다. 이번 월급 수정 회귀 검사의 통과 범위에 포함하지 않습니다. 전체 시급 목록 검증의 추가 최적화가 필요합니다.
+- 월급 변경만을 위한 이전 최적화로는 시급과 다른 설정을 함께 저장할 때 한도 초과가 남았습니다. 현재는 필수 필드 접근·정확한 필드 수·범위·문자열 패턴 검증으로 중복 검사를 줄이고, 시급 목록 검증과 비율 개수 검증을 한 번에 수행합니다. 숫자 비교와 문자열 패턴은 잘못된 타입도 거부하며 별도 실패 사례로 확인합니다.
+- 이름·이메일·연락처·식별정보·상태·월급·보험·교통비·기타금액·지급일·기존 세금 설정의 개별 변경, 전체 동시 변경, 신규 등록을 검사합니다. 관리자 본인과 다른 관리자의 수정 및 일반 선생님 본인의 허용된 정보 변경을 구분합니다.
+- 시급 10개 전체 변경, 시급 9개와 비율, 근로·사업·혼합 소득, 모든 설정을 동시에 바꾼 경우까지 실제 에뮬레이터의 허용 결과를 확인합니다. 신규·변경 시급 목록은 화면과 같이 시급 먼저·비율 마지막 순서로 검사하며 기존 순서를 바꾸지 않는 관리자 수정은 허용합니다.
+- 허용 필드, 소득 구성 일관성, 관리자 권한·상태 보존과 일반 선생님의 관리자 전용 항목 변경 차단은 유지합니다. 잘못된 타입·누락·추가 필드·음수·상한 초과·비율 중복의 거부를 검사합니다. 타입 검사 함수는 에뮬레이터 전용 임시 경로에서도 별도로 실행해 검사 한도에 의존하지 않고 잘못된 값을 거부하는지 확인하며, 운영 규칙에는 임시 경로를 넣지 않습니다.
 
 이 변경은 `firestore.rules`를 다시 게시해야 운영에 반영됩니다. 웹 페이지 배포, Cloudflare Worker, Storage, App Check 또는 OAuth 설정 변경은 필요하지 않습니다.
+
+## DC형 퇴직연금 변경 범위 검사
+
+이 기능 변경 시 전체 QA 대신 관련 계산·화면·보안 규칙만 검사합니다.
+
+```powershell
+node --test tests/retirement.test.mjs tests/money-inputs.test.mjs tests/payslip-layout.test.mjs tests/help-guide.test.mjs tests/help-assistant.test.mjs
+```
+
+`tests/retirement-rules-emulator.test.mjs`는 `@firebase/rules-unit-testing`과 `firebase`를 `.firebase/teacher-rules-qa`의 로컬 개발 의존성으로 사용합니다. Firestore 에뮬레이터를 데모 프로젝트 `demo-retirement-qa`로 실행한 뒤 검사합니다.
+
+```powershell
+$env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+node --test tests/retirement-rules-emulator.test.mjs
+```
+
+이 검사는 루프백 호스트만 허용합니다. 에뮬레이터 미설정으로 건너뛴 결과를 실제 규칙 통과로 보고하지 않습니다.
+
+- 1/12 예상액·원 미만 올림, 산입 변경·차이 사유, 빈 실제액 거부·0원 기록, 원본 급여 보존과 정정 차수를 검사합니다.
+- 관리자 본인과 다른 관리자의 설정·확정·정정을 허용하고 일반 선생님·비활성 관리자·미로그인의 읽기·쓰기·목록 접근을 거부합니다.
+- 최신 문서와 불변 이력의 원자적 저장, 급여 미확정·취소·재발행과 동시 수정 시 저장 차단을 실제 저장 함수로 검사합니다.
+- 가상 로컬 데모에서 대상 체크 → 근거 검토 → 실제액 입력 → 확정 → 정정 → 과거 이력 열람을 확인합니다. 실제 Firebase 자료나 메일을 사용하지 않습니다.
+- PC·모바일에서 입력창·계산 근거 표·고정 하단 버튼과 스크롤을 확인하고, 선생님 화면·급여명세서·PDF·엑셀에 납입 내역이 섞이지 않는지 확인합니다.
 
 ## AI 도움말 수동 검사
 

@@ -41,6 +41,21 @@ test("설명서의 화면 링크는 두 문서에서 동일한 실제 PNG를 참
   assert.match(app, /width="\$\{screenshot.width\}" height="\$\{screenshot.height\}" loading="lazy"/);
 });
 
+test("퇴직연금 설명서는 관리자 전용 추정과 실제 납입 기록을 구분한다", () => {
+  const article = helpArticles.find((item) => item.id === "dc-retirement");
+  assert.ok(article);
+  const text = [...article.steps, ...article.cautions].join(" ");
+  for (const content of [guide, text]) {
+    assert.match(content, /산입 대상 세전 임금 합계 ÷ 12/);
+    assert.match(content, /실제 납입액/);
+    assert.match(content, /급여 발행 후/);
+    assert.match(content, /확정 이력/);
+    assert.match(content, /연간 정산/);
+    assert.match(content, /급여명세서·PDF와 급여 엑셀/);
+  }
+  assert.equal(searchHelpArticles("DC 퇴직연금 실제 납입액", helpArticles)[0].id, article.id);
+});
+
 test("검색 후에도 설명서 제목 번호는 전체 목차 번호를 유지한다", () => {
   const eventTarget = { addEventListener() {} };
   const content = {

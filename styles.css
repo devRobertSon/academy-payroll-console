@@ -46,6 +46,9 @@ html { scrollbar-gutter: stable; }
 html.overlay-open, html.overlay-open body { overflow: hidden; overscroll-behavior: none; }
 body { min-width: 320px; background: var(--canvas); }
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
+input.money-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input.money-input[type="number"]::-webkit-inner-spin-button,
+input.money-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 button { color: inherit; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -501,6 +504,20 @@ td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 .input-suffix { display: flex; align-items: center; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
 .form-field .input-suffix input { min-width: 0; min-height: 38px; border: 0; }
 .input-suffix span { flex: 0 0 auto; padding-right: 9px; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.retirement-month { display: grid; gap: 6px; margin: 16px 0; }
+.retirement-month input { width: 100%; min-width: 0; min-height: 40px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
+[data-retirement-panel] > .button { width: 100%; white-space: normal; }
+.retirement-months { display: grid; gap: 4px; margin-top: 12px; max-height: 180px; overflow-y: auto; }
+.retirement-months button { padding: 7px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--brand); text-align: left; cursor: pointer; }
+.retirement-guidance { margin-bottom: 16px; font-size: 12px; line-height: 1.7; }
+.retirement-guidance summary { font-weight: 700; cursor: pointer; }
+.retirement-guidance a { color: var(--brand); }
+.retirement-basis table { min-width: 460px; }
+.retirement-basis td:nth-child(2) { min-width: 180px; white-space: normal; overflow-wrap: anywhere; }
+.retirement-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.retirement-summary dt { font-size: 12px; color: var(--muted); }
+.retirement-summary dd { margin: 6px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.retirement-formula { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .business-line-amount { text-align: right; font-size: 11px; white-space: nowrap; }
 .business-work-summary { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .business-work-summary > div { padding: 10px 8px; }

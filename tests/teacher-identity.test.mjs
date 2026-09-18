@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   formatMaskedTeacherIdentity,
   formatTeacherIdentity,
@@ -8,6 +9,17 @@ import {
   validateOptionalTeacherIdentity,
   validateTeacherIdentity
 } from "../src/lib/teacher-identity.js";
+
+test("선생님 상세는 저장하지 않음 안내를 생략하고 식별정보 마스킹을 유지한다", async () => {
+  const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const start = app.indexOf("function renderTeachers(");
+  assert.ok(start >= 0);
+  const details = app.slice(start).split(/\r?\nfunction /)[0];
+  assert.doesNotMatch(details, /전체 주민등록번호|저장하지 않음/);
+  assert.match(details, /<dt>휴대전화<\/dt>/);
+  assert.match(details, /<dt>생년월일<\/dt>/);
+  assert.match(details, /formatMaskedTeacherIdentity\(selected\)/);
+});
 
 test("생년월일 6자리와 성별번호 1자리를 분리해 검증한다", () => {
   assert.deepEqual(validateTeacherIdentity("900101", "1"), {

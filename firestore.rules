@@ -52,9 +52,7 @@ service cloud.firestore {
     }
 
     function hasValidTeacherIdentity(data) {
-      return data.birthDateCode is string
-        && data.birthDateCode.matches('^[0-9]{6}$')
-        && data.genderCode is string
+      return data.birthDateCode.matches('^[0-9]{6}$')
         && data.genderCode.matches('^[1-8]$');
     }
 
@@ -67,34 +65,28 @@ service cloud.firestore {
     }
 
     function hasValidIncomeComposition(data) {
-      return data.incomeComposition is string
-        && data.incomeComposition in ['employee', 'business', 'mixed'];
+      return data.incomeComposition in ['employee', 'business', 'mixed'];
+    }
+
+    function validInsuranceValues(enrolled, base, start, end) {
+      return enrolled is bool
+        && (base == null || (base >= 0 && base <= 100000000))
+        && (start == null || start is string)
+        && (end == null || end is string);
     }
 
     function validInsuranceItem(item) {
-      return item is map
-        && item.keys().hasOnly(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
-        && item.keys().hasAll(['enrolled', 'defaultBaseAmount', 'effectiveFrom', 'effectiveTo'])
-        && item.enrolled is bool
-        && (item.defaultBaseAmount == null
-          || (item.defaultBaseAmount is number
-            && item.defaultBaseAmount >= 0
-            && item.defaultBaseAmount <= 100000000))
-        && (item.effectiveFrom == null || item.effectiveFrom is string)
-        && (item.effectiveTo == null || item.effectiveTo is string);
+      // Required member access plus exact size rejects missing and extra keys.
+      return item.size() == 4
+        && validInsuranceValues(item.enrolled, item.defaultBaseAmount, item.effectiveFrom, item.effectiveTo);
     }
 
     function hasValidInsuranceSettings(data) {
-      return data.insuranceSettings is map
-        && data.insuranceSettings.keys().hasOnly([
-          'nationalPension', 'healthInsurance', 'employmentInsurance'
-        ])
-        && data.insuranceSettings.keys().hasAll([
-          'nationalPension', 'healthInsurance', 'employmentInsurance'
-        ])
-        && validInsuranceItem(data.insuranceSettings.nationalPension)
-        && validInsuranceItem(data.insuranceSettings.healthInsurance)
-        && validInsuranceItem(data.insuranceSettings.employmentInsurance);
+      let settings = data.insuranceSettings;
+      return settings.size() == 3
+        && validInsuranceItem(settings.nationalPension)
+        && validInsuranceItem(settings.healthInsurance)
+        && validInsuranceItem(settings.employmentInsurance);
     }
 
     function hasAnyInsurance(data) {
@@ -126,54 +118,37 @@ service cloud.firestore {
           && data.insuranceSettings.employmentInsurance.effectiveTo == resource.data.insuranceSettings.employmentInsurance.effectiveTo);
     }
 
-    function validBusinessRateAt(rates, index) {
-      return rates.size() <= index ? true : (
-        rates[index] is map
-        && rates[index].keys().hasAll(['id'])
-        && rates[index].id is string
-        && rates[index].id.size() > 0
-        && rates[index].id.size() <= 100
-        && ((rates[index].keys().hasOnly(['id', 'hourlyRate'])
-          && rates[index].keys().hasAll(['hourlyRate'])
-          && rates[index].hourlyRate is number
-          && rates[index].hourlyRate > 0
-          && rates[index].hourlyRate <= 10000000)
-        || (rates[index].keys().hasOnly(['id', 'tuitionShareRate'])
-          && rates[index].keys().hasAll(['tuitionShareRate'])
-          && rates[index].tuitionShareRate is number
-          && rates[index].tuitionShareRate > 0
-          && rates[index].tuitionShareRate <= 100
-          && math.abs(rates[index].tuitionShareRate * 100 - math.round(rates[index].tuitionShareRate * 100)) <= 0.000001))
-      );
+    function validLastRateValues(id, amount, share) {
+      return id.matches('(?s)^.{1,100}$')
+        && amount > 0 && amount <= (share ? 100 : 10000000)
+        && (!share || math.abs(amount * 100 - math.round(amount * 100)) <= 0.000001);
     }
 
-    function tuitionShareCountAt(rates, index) {
-      return rates.size() <= index ? 0 : (rates[index].keys().hasAny(['tuitionShareRate']) ? 1 : 0);
+    function validLastBusinessRate(rate) {
+      return rate.size() == 2
+        && validLastRateValues(rate.id, rate.get('hourlyRate', rate.get('tuitionShareRate', null)), 'tuitionShareRate' in rate);
+    }
+
+    function validHourlyRate(rate) {
+      return rate.size() == 2 && rate.id.matches('(?s)^.{1,100}$')
+        && rate.hourlyRate > 0 && rate.hourlyRate <= 10000000;
     }
 
     function hasValidBusinessRates(data) {
-      return data.businessRates is list
-        && data.businessRates.size() <= 10
-        && (data.businessRates.size() == 0 || (validBusinessRateAt(data.businessRates, 0)
-        && validBusinessRateAt(data.businessRates, 1)
-        && validBusinessRateAt(data.businessRates, 2)
-        && validBusinessRateAt(data.businessRates, 3)
-        && validBusinessRateAt(data.businessRates, 4)
-        && validBusinessRateAt(data.businessRates, 5)
-        && validBusinessRateAt(data.businessRates, 6)
-        && validBusinessRateAt(data.businessRates, 7)
-        && validBusinessRateAt(data.businessRates, 8)
-        && validBusinessRateAt(data.businessRates, 9)
-        && tuitionShareCountAt(data.businessRates, 0)
-          + tuitionShareCountAt(data.businessRates, 1)
-          + tuitionShareCountAt(data.businessRates, 2)
-          + tuitionShareCountAt(data.businessRates, 3)
-          + tuitionShareCountAt(data.businessRates, 4)
-          + tuitionShareCountAt(data.businessRates, 5)
-          + tuitionShareCountAt(data.businessRates, 6)
-          + tuitionShareCountAt(data.businessRates, 7)
-          + tuitionShareCountAt(data.businessRates, 8)
-          + tuitionShareCountAt(data.businessRates, 9) <= 1));
+      // The form writes hourly entries first and its optional single share last.
+      let rates = data.businessRates;
+      let count = rates.size();
+      return rates is list && rates.size() <= 10
+        && (count == 0 || (validLastBusinessRate(rates[count - 1])
+          && (count < 2 || validHourlyRate(rates[0]))
+          && (count < 3 || validHourlyRate(rates[1]))
+          && (count < 4 || validHourlyRate(rates[2]))
+          && (count < 5 || validHourlyRate(rates[3]))
+          && (count < 6 || validHourlyRate(rates[4]))
+          && (count < 7 || validHourlyRate(rates[5]))
+          && (count < 8 || validHourlyRate(rates[6]))
+          && (count < 9 || validHourlyRate(rates[7]))
+          && (count < 10 || validHourlyRate(rates[8]))));
     }
 
     function hasValidSelfIncomeComposition(data) {
@@ -186,46 +161,42 @@ service cloud.firestore {
     }
 
     function hasValidTransportPolicy(data) {
-      return data.transportPolicy is map
-        && data.transportPolicy.keys().hasOnly(['regionLabel', 'unitAmount', 'treatment', 'paymentDay'])
-        && data.transportPolicy.keys().hasAll(['regionLabel', 'unitAmount', 'treatment'])
-        && data.transportPolicy.regionLabel is string
-        && data.transportPolicy.regionLabel.size() <= 100
-        && data.transportPolicy.unitAmount is number
-        && data.transportPolicy.unitAmount >= 0
-        && data.transportPolicy.unitAmount <= 1000000
-        && data.transportPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
-        && (!data.transportPolicy.keys().hasAny(['paymentDay']) || (
-          data.transportPolicy.paymentDay is int
-          && data.transportPolicy.paymentDay >= 1
-          && data.transportPolicy.paymentDay <= 31
+      let policy = data.transportPolicy;
+      return policy is map
+        && policy.keys().hasOnly(['regionLabel', 'unitAmount', 'treatment', 'paymentDay'])
+        && policy.regionLabel.matches('(?s)^.{0,100}$')
+        && policy.unitAmount >= 0
+        && policy.unitAmount <= 1000000
+        && policy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
+        && (!policy.keys().hasAny(['paymentDay']) || (
+          policy.paymentDay is int
+          && policy.paymentDay >= 1
+          && policy.paymentDay <= 31
         ));
     }
 
     function hasValidOtherPaymentPolicy(data) {
+      let policy = data.get('otherPaymentPolicy', null);
       return !data.keys().hasAny(['otherPaymentPolicy']) || (
-        data.otherPaymentPolicy is map
-        && data.otherPaymentPolicy.keys().hasOnly(['amount', 'treatment', 'insuranceCovered'])
-        && data.otherPaymentPolicy.keys().hasAll(['amount', 'treatment', 'insuranceCovered'])
-        && data.otherPaymentPolicy.amount is int
-        && data.otherPaymentPolicy.amount >= 0
-        && data.otherPaymentPolicy.amount <= 100000000
-        && data.otherPaymentPolicy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
-        && data.otherPaymentPolicy.insuranceCovered is bool
+        policy.size() == 3
+        && policy.amount is int
+        && policy.amount >= 0
+        && policy.amount <= 100000000
+        && policy.treatment in ['employee', 'business', 'other', 'exempt', 'pending']
+        && policy.insuranceCovered is bool
       );
     }
 
     function hasValidTaxProfile(data) {
-      return data.taxProfile is map
-        && data.taxProfile.keys().hasOnly(['dependentCount', 'children8To20', 'withholdingRatio'])
-        && data.taxProfile.keys().hasAll(['dependentCount', 'children8To20', 'withholdingRatio'])
-        && data.taxProfile.dependentCount is int
-        && data.taxProfile.dependentCount >= 1
-        && data.taxProfile.dependentCount <= 99
-        && data.taxProfile.children8To20 is int
-        && data.taxProfile.children8To20 >= 0
-        && data.taxProfile.children8To20 <= 99
-        && data.taxProfile.withholdingRatio in [0.8, 1, 1.2];
+      let profile = data.taxProfile;
+      return profile.size() == 3
+        && profile.dependentCount is int
+        && profile.dependentCount >= 1
+        && profile.dependentCount <= 99
+        && profile.children8To20 is int
+        && profile.children8To20 >= 0
+        && profile.children8To20 <= 99
+        && profile.withholdingRatio in [0.8, 1, 1.2];
     }
 
     function hasConsistentIncomeComposition(data) {
@@ -240,22 +211,15 @@ service cloud.firestore {
     }
 
     function hasValidPhoneNumber(phone) {
-      return phone is string
-        && phone.size() <= 11
-        && (phone == ''
-          || phone.matches('^010[0-9]{8}$'));
+      return phone.matches('^(010[0-9]{8})?$');
     }
 
     function hasValidPersonName(name) {
-      return name is string
-        && name.size() > 0
-        && name.size() <= 100
+      return name.size() <= 100
         && name.matches('^[A-Za-z가-힣]+( [A-Za-z가-힣]+)*$');
     }
 
     function hasValidTeacherDocument(data, teacherId, isUpdate) {
-      // Validate changed maps only; unchanged values cannot introduce a new invalid write.
-      let unchanged = isUpdate ? data.diff(resource.data).unchangedKeys() : [].toSet();
       return data.keys().hasOnly([
           'id', 'name', 'email', 'phone', 'birthDateCode', 'genderCode',
           'status', 'authUid', 'profileCompleted', 'incomeComposition',
@@ -264,29 +228,24 @@ service cloud.firestore {
         ])
         && data.id == teacherId
         && hasValidPersonName(data.name)
-        && data.email is string
-        && data.email.size() > 3
-        && data.email.size() <= 320
+        && data.email.matches('(?s)^.{4,320}$')
         && hasValidPhoneNumber(data.phone)
         && data.status in ['active', 'inactive']
         && (data.authUid == null || data.authUid is string)
         && data.profileCompleted is bool
         && hasValidIncomeComposition(data)
-        && (unchanged.hasAll(['birthDateCode', 'genderCode']) || hasValidOrMissingTeacherIdentity(data))
-        && (unchanged.hasAll(['insuranceSettings']) || hasValidInsuranceSettings(data))
-        && data.defaultEmployeePay is number
+        && hasValidOrMissingTeacherIdentity(data)
+        && hasValidInsuranceSettings(data)
         && data.defaultEmployeePay >= 0
         && data.defaultEmployeePay <= 100000000
-        && (unchanged.hasAll(['businessRates']) || hasValidBusinessRates(data))
+        && ((isUpdate && data.businessRates == resource.data.businessRates) || hasValidBusinessRates(data))
         && hasConsistentIncomeComposition(data)
-        && (unchanged.hasAll(['transportPolicy']) || hasValidTransportPolicy(data))
-        && (unchanged.hasAll(['otherPaymentPolicy']) || hasValidOtherPaymentPolicy(data))
+        && hasValidTransportPolicy(data)
+        && hasValidOtherPaymentPolicy(data)
         && data.paymentDay is int
         && data.paymentDay >= 1
         && data.paymentDay <= 31
-        && (unchanged.hasAll(['taxProfile']) || hasValidTaxProfile(data))
-        && !data.keys().hasAny(['accountingReference'])
-        && excludesResidentRegistrationNumber(data);
+        && hasValidTaxProfile(data);
     }
 
     function monthIsEditable(month) {
@@ -798,6 +757,75 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.revision == request.resource.data.revision
         && get(/databases/$(database)/documents/payslips/$(request.resource.data.payslipId)).data.status == 'published';
       allow update, delete: if false;
+    }
+
+    match /retirementSettings/{teacherId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['teacherId', 'enabled', 'updatedAt', 'updatedBy'])
+        && request.resource.data.teacherId == teacherId
+        && request.resource.data.enabled is bool
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && exists(/databases/$(database)/documents/teachers/$(teacherId));
+      allow delete: if false;
+    }
+
+    function validRetirementContribution(data, contributionId) {
+      let payslip = get(/databases/$(database)/documents/payslips/$(data.sourcePayslipId)).data;
+      let run = get(/databases/$(database)/documents/payrollRuns/$(data.month)).data;
+      return data.keys().hasOnly([
+          'teacherId', 'month', 'status', 'revision', 'sourcePayslipId', 'sourceRevision',
+          'basis', 'baseAmount', 'expectedAmount', 'actualAmount', 'paidOn', 'note',
+          'correctionReason', 'confirmationId', 'confirmedAt', 'confirmedBy', 'confirmedName'
+        ])
+        && data.month.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')
+        && contributionId == data.month + '_' + data.teacherId
+        && data.sourcePayslipId == contributionId
+        && data.status == 'confirmed'
+        && data.revision is int && data.revision >= 1
+        && data.sourceRevision is int && data.sourceRevision >= 1
+        && data.basis is list && data.basis.size() > 0 && data.basis.size() <= 200
+        && data.baseAmount is int && data.baseAmount >= 0 && data.baseAmount <= 10000000000
+        && data.expectedAmount is int && data.expectedAmount >= 0
+        && data.expectedAmount * 12 >= data.baseAmount
+        && data.expectedAmount * 12 < data.baseAmount + 12
+        && data.actualAmount is int && data.actualAmount >= 0 && data.actualAmount <= 10000000000
+        && data.paidOn.matches('^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$')
+        && data.note is string && data.note.size() <= 1000
+        && (data.actualAmount == data.expectedAmount || data.note.size() > 0)
+        && data.correctionReason is string && data.correctionReason.size() <= 500
+        && data.confirmationId.matches('^[A-Za-z0-9-]{1,80}$')
+        && data.confirmedAt == request.time && data.confirmedBy == request.auth.uid
+        && data.confirmedName is string && data.confirmedName.size() > 0 && data.confirmedName.size() <= 100
+        && get(/databases/$(database)/documents/retirementSettings/$(data.teacherId)).data.enabled == true
+        && payslip.teacherId == data.teacherId && payslip.month == data.month
+        && !payslip.keys().hasAny(['incomeType'])
+        && payslip.status == 'published' && payslip.get('revision', 1) == data.sourceRevision
+        && run.status == 'published' && run.get('revision', 1) == data.sourceRevision
+        && !exists(/databases/$(database)/documents/retirementContributions/$(contributionId)/history/$(data.confirmationId))
+        && getAfter(/databases/$(database)/documents/retirementContributions/$(contributionId)/history/$(data.confirmationId)).data == data;
+    }
+
+    match /retirementContributions/{contributionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validRetirementContribution(request.resource.data, contributionId)
+        && request.resource.data.revision == 1 && request.resource.data.correctionReason == '';
+      allow update: if isAdmin()
+        && validRetirementContribution(request.resource.data, contributionId)
+        && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.correctionReason.size() >= 5;
+      allow delete: if false;
+      match /history/{confirmationId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.confirmationId == confirmationId
+          && request.resource.data.confirmedBy == request.auth.uid
+          && request.resource.data.confirmedAt == request.time
+          && getAfter(/databases/$(database)/documents/retirementContributions/$(contributionId)).data == request.resource.data;
+        allow update, delete: if false;
+      }
     }
 
     match /payrollLedgers/{ledgerId} {

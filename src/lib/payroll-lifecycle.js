@@ -97,6 +97,16 @@ export function artifactRevision(value) {
   return Math.max(1, Number(value?.revision) || 1);
 }
 
+export function cancellationActorName(cancellation, account = null, teachers = []) {
+  const uid = cancellation?.actorUid;
+  const sameAccount = uid && account?.uid === uid;
+  const teacher = uid ? teachers.find((item) => item.authUid === uid) : null;
+  const candidates = [cancellation?.actorName,
+    ...(sameAccount ? [account.displayName, account.name] : []), teacher?.name];
+  return candidates.map((name) => typeof name === "string" ? name.trim() : "")
+    .find((name) => name && name !== uid && !name.includes("@")) || "관리자";
+}
+
 export function payslipId(month, teacherId, incomeType = null) {
   const suffix = ["employee", "business"].includes(incomeType) ? `_${incomeType}` : "";
   return `${month}_${teacherId}${suffix}`;

@@ -3,6 +3,8 @@ import { WORK_HOURS_NOTIFICATION_TYPE, workHoursNotificationId } from "./admin-n
 import { EXPENSE_RECEIPT_NOTIFICATION_TYPE, expenseReceiptNotificationId } from "./expense-receipts.js";
 import { assertTeacherAccountLink, teacherAccountUpdate } from "./teacher-account.js";
 import { excelSnapshot, validateExcelPay } from "./payroll-excel-state.js";
+import { cancellationActorName } from "./payroll-lifecycle.js";
+import { createRetirementStore } from "./retirement-store.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -136,6 +138,24 @@ export async function createFirebaseStore(config) {
     return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
   }
 
+  async function loadCancellationNames(cancellations, user, teachers) {
+    const accounts = new Map([[user.uid, user]]);
+    const missingUids = [...new Set(cancellations
+      .filter((item) => item.actorUid && item.actorUid !== user.uid && cancellationActorName(item) === "관리자")
+      .map((item) => item.actorUid))];
+    await Promise.all(missingUids.map(async (uid) => {
+      try {
+        const snapshot = await firestoreSdk.getDoc(firestoreSdk.doc(db, "users", uid));
+        if (snapshot.exists()) accounts.set(uid, { ...snapshot.data(), uid });
+      } catch {
+        console.warn("취소 이력의 관리자 이름을 불러오지 못했습니다.");
+      }
+    }));
+    return cancellations.map((item) => ({
+      ...item, actorName: cancellationActorName(item, accounts.get(item.actorUid), teachers)
+    }));
+  }
+
   async function loadWorkspace(user) {
     if (user.role === "admin") {
       const [teachers, payrollRuns, taxPolicies, insurancePolicies, payrollOverrides, teacherMonthlyInputs, expenseReceipts, adminNotifications, payslips, payslipVersions, payslipReceipts, payslipDeliveries, payrollCancellations, accessRequests] = await Promise.all([
@@ -167,7 +187,7 @@ export async function createFirebaseStore(config) {
         payslipVersions,
         payslipReceipts,
         payslipDeliveries,
-        payrollCancellations,
+        payrollCancellations: await loadCancellationNames(payrollCancellations, user, teachers),
         accessRequests
       };
     }
@@ -726,6 +746,7 @@ export async function createFirebaseStore(config) {
   }
 
   return {
+    ...createRetirementStore({ firestoreSdk, db, auth }),
     signIn,
     restoreSession,
     signOut,

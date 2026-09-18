@@ -20,12 +20,14 @@ import { payrollExcelJob } from "./lib/payroll-excel-client.js";
 import { buildExcelPay, matchExcelTeacher, excelSummaryWarnings } from "./lib/payroll-excel.js";
 import { excelSnapshot, EXCEL_PAY_FIELDS, validateExcelPay } from "./lib/payroll-excel-state.js";
 import { linkedTeacherForUser } from "./lib/teacher-account.js";
+import { retirementId, retirementBasis, retirementEstimate, buildRetirementConfirmation, DC_GUIDANCE_URL } from "./lib/retirement.js";
 import { buildGeminiPrompt, buildLocalHelpAnswer, detectSensitiveInput, searchHelpArticles } from "./lib/help-assistant.js";
 import { csvRowsToObjects, parseCsv } from "./lib/csv.js";
 import { buildGmailMessage, fileToBytes } from "./lib/gmail.js";
 import { createPayslipPdfFile, downloadFile, payslipFilename } from "./lib/payslip-file.js";
 import {
   artifactRevision,
+  cancellationActorName,
   currentArtifactForRevision,
   matchingTeachersForAccessRequest,
   nextPayrollRevision,
@@ -96,6 +98,8 @@ const state = {
   assistantBusy: false,
   store: null,
   receiptApi: null,
+  retirementCache: {},
+  retirementMonth: currentCalendarMonth(),
   data: {
     teachers: [],
     payrollRuns: [],
@@ -295,6 +299,7 @@ function loadDemoData() {
 
 async function openWorkspace(user) {
   if (!user) return;
+  if (!appConfig.demoMode) state.retirementCache = {};
   state.user = { ...user };
   state.workspaceMode = user.role === "teacher" ? "teacher" : "admin";
   state.view = user.role === "teacher" ? "workHours" : "dashboard";
@@ -587,7 +592,7 @@ function renderDashboard() {
         ${progressStep("4", "명세서 공개", run.status === "published" ? "선생님 열람 가능" : run.status === "cancelled" ? "재발행 후 공개" : "확정 후 공개", run.status === "published", false)}
       </div>
     </section>
-    ${cancellations.length ? `<section class="content-section"><div class="section-heading"><div><h2>취소·재발행 이력</h2><p>기존 확정본을 삭제하지 않고 변경 사유를 보존합니다.</p></div></div><div class="data-surface table-scroll"><table><thead><tr><th>취소 차수</th><th>사유</th><th>처리 시각</th><th>처리자</th></tr></thead><tbody>${cancellations.map((item) => `<tr><td>${e(item.revision)}차</td><td>${e(item.reason)}</td><td>${e(formatDateTime(item.createdAt))}</td><td>${e(item.actorUid || "관리자")}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+    ${cancellations.length ? `<section class="content-section"><div class="section-heading"><div><h2>취소·재발행 이력</h2><p>기존 확정본을 삭제하지 않고 변경 사유를 보존합니다.</p></div></div><div class="data-surface table-scroll"><table><thead><tr><th>취소 차수</th><th>사유</th><th>처리 시각</th><th>처리자</th></tr></thead><tbody>${cancellations.map((item) => `<tr><td>${e(item.revision)}차</td><td>${e(item.reason)}</td><td>${e(formatDateTime(item.createdAt))}</td><td>${e(cancellationActorName(item, state.user, state.data.teachers))}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='export-ledger']").addEventListener("click", exportLedger);
@@ -672,14 +677,16 @@ function renderTeachers() {
       </section>
       ${selected ? `<aside class="detail-panel">
         <div class="detail-panel-header detail-title-row"><div><h2>${e(selected.name)}</h2><p>${e(selected.email)}</p></div><div class="row-actions"><button class="icon-button" type="button" title="선생님 정보 수정" aria-label="${e(selected.name)} 정보 수정" data-edit-teacher><i data-lucide="pencil"></i></button><button class="icon-button icon-button-danger" type="button" title="선생님 삭제" aria-label="${e(selected.name)} 삭제" data-delete-teacher><i data-lucide="trash-2"></i></button></div></div>
-        <div class="detail-block"><h3>휴대전화·식별 정보</h3><dl class="definition-list"><div><dt>휴대전화</dt><dd>${e(formatMobilePhoneNumber(selected.phone) || "미등록")}</dd></div><div><dt>생년월일</dt><dd>${e(formatMaskedTeacherIdentity(selected) || "미등록")}</dd></div><div><dt>전체 주민등록번호</dt><dd>저장하지 않음</dd></div></dl></div>
+        <div class="detail-block"><h3>휴대전화·식별 정보</h3><dl class="definition-list"><div><dt>휴대전화</dt><dd>${e(formatMobilePhoneNumber(selected.phone) || "미등록")}</dd></div><div><dt>생년월일</dt><dd>${e(formatMaskedTeacherIdentity(selected) || "미등록")}</dd></div></dl></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
+        ${retirementPanel(selected)}
       </aside>` : ""}
     </div>
   `;
   bindCommonControls();
   elements.topbarActions.querySelector("[data-action='link-my-payroll']").addEventListener("click", openAdminTeacherLinkModal);
+  if (selected) bindRetirementPanel(selected);
   elements.topbarActions.querySelector("[data-action='add-teacher']").addEventListener("click", openTeacherModal);
   elements.topbarActions.querySelector("[data-action='copy-portal']").addEventListener("click", copyPortalLink);
   elements.content.querySelector("[data-edit-teacher]")?.addEventListener("click", () => openTeacherEditModal(selected));
@@ -697,6 +704,176 @@ function renderTeachers() {
     renderTeachers();
   }));
   refreshIcons();
+}
+
+function retirementPanel(teacher) {
+  if (!isAdminWorkspace()) return "";
+  const cached = state.retirementCache[teacher.id];
+  if (!cached || cached.loading) return `<div class="detail-block" data-retirement-panel><h3>DC형 퇴직연금</h3><p aria-live="polite">불러오는 중...</p></div>`;
+  if (cached.error) return `<div class="detail-block" data-retirement-panel><h3>DC형 퇴직연금</h3><p>${e(cached.error)}</p><button class="button button-secondary" data-retirement-retry><i data-lucide="refresh-cw"></i>다시 확인</button></div>`;
+  const month = state.retirementMonth;
+  const record = cached.records.find((item) => item.month === month);
+  const enabled = cached.settings?.enabled === true;
+  const payroll = state.data.payslips.find((item) => item.id === retirementId(month, teacher.id) && item.status === "published")?.calculation
+    || payrollForTeacher(teacher.id, month)?.payroll;
+  let expected = "계산 근거 확인 필요";
+  try { if (record || payroll) expected = formatWon(record?.expectedAmount ?? retirementEstimate(retirementBasis(payroll)).expectedAmount); } catch { /* The detail dialog reports invalid source data. */ }
+  return `<div class="detail-block" data-retirement-panel>
+    <h3>DC형 퇴직연금</h3>
+    <label class="checkbox-row"><input type="checkbox" data-retirement-enabled ${enabled ? "checked" : ""} /> 퇴직연금 대상</label>
+    <div class="retirement-month"><label for="retirement-month">대상 급여월</label><input id="retirement-month" type="month" value="${e(month)}" required /></div>
+    ${enabled || record ? `<dl class="definition-list"><div><dt>${record ? "확정 당시 예상액" : "월 예상 납입액"}</dt><dd>${expected}</dd></div><div><dt>실제 납입액</dt><dd>${record ? formatWon(record.actualAmount) : "미확정"}</dd></div></dl>
+    <button class="button button-secondary" data-retirement-open><i data-lucide="notebook-pen"></i>${record ? "납입 확정 내역" : "근거 확인 · 납입액 확정"}</button>` : ""}
+    ${cached.records.length ? `<div class="retirement-months">${cached.records.slice().sort((a, b) => b.month.localeCompare(a.month)).map((item) => `<button type="button" data-retirement-record="${e(item.month)}">${e(item.month)} · ${formatWon(item.actualAmount)}</button>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+async function loadRetirementPanel(teacherId) {
+  if (!isAdminWorkspace()) return;
+  const user = state.user;
+  state.retirementCache[teacherId] = { loading: true };
+  try {
+    const loaded = state.store ? await state.store.loadRetirementData(teacherId) : { settings: null, records: [], history: [] };
+    if (state.user !== user) return;
+    state.retirementCache[teacherId] = loaded;
+  } catch (error) {
+    if (state.user !== user) return;
+    state.retirementCache[teacherId] = { error: error.code === "permission-denied"
+      ? "퇴직연금 권한을 확인할 수 없습니다. 최신 Firestore 규칙을 게시한 뒤 다시 확인해 주세요." : "퇴직연금 자료를 불러오지 못했습니다. 다시 확인해 주세요." };
+  }
+  if (state.view === "teachers" && isAdminWorkspace() && state.selectedTeacherId === teacherId) renderTeachers();
+}
+
+function bindRetirementPanel(teacher) {
+  const panel = elements.content.querySelector("[data-retirement-panel]");
+  if (!panel || !isAdminWorkspace()) return;
+  if (!state.retirementCache[teacher.id]) { void loadRetirementPanel(teacher.id); return; }
+  panel.querySelector("[data-retirement-retry]")?.addEventListener("click", () => loadRetirementPanel(teacher.id));
+  panel.querySelector("[data-retirement-enabled]")?.addEventListener("change", async (event) => {
+    const user = state.user;
+    const checkbox = event.target;
+    const enabled = checkbox.checked;
+    const cached = state.retirementCache[teacher.id];
+    checkbox.disabled = true;
+    try {
+      if (state.store) {
+        await state.store.saveRetirementSettings(teacher.id, enabled, cached.settings);
+        if (state.user !== user || !isAdminWorkspace()) return;
+        await loadRetirementPanel(teacher.id);
+      } else cached.settings = { teacherId: teacher.id, enabled };
+      if (state.user === user && isAdminWorkspace() && state.view === "teachers") renderTeachers();
+    } catch (error) {
+      if (state.user !== user || !isAdminWorkspace()) return;
+      checkbox.checked = !enabled;
+      showError(error, "퇴직연금 대상 설정을 저장하지 못했습니다.");
+    } finally { checkbox.disabled = false; }
+  });
+  panel.querySelector("#retirement-month")?.addEventListener("change", (event) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) return;
+    state.retirementMonth = event.target.value;
+    renderTeachers();
+  });
+  panel.querySelector("[data-retirement-open]")?.addEventListener("click", () => openRetirementModal(teacher.id, state.retirementMonth));
+  panel.querySelectorAll("[data-retirement-record]").forEach((button) => button.addEventListener("click", () => openRetirementModal(teacher.id, button.dataset.retirementRecord)));
+}
+
+function retirementBasisHtml(basis, editable) {
+  return `<div class="table-scroll retirement-basis"><table><thead><tr><th>임금 산입</th><th>지급 항목 · 산정 근거</th><th class="numeric">세전 금액</th></tr></thead><tbody>${basis.map((line, index) => `<tr><td><label class="checkbox-row"><input type="checkbox" data-retirement-include="${index}" aria-label="${e(line.label)} 임금 산입" ${line.included ? "checked" : ""} ${editable ? "" : "disabled"} /><span>${editable ? "산입" : line.included ? "포함" : "제외"}</span></label></td><td><strong>${e(line.label)}</strong><div class="cell-subtext">${e(line.calculation)}</div><div class="cell-subtext">${e(line.reason)}</div></td><td class="numeric">${formatWon(line.amount)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+async function openRetirementModal(teacherId, month, correcting = false, historical = null) {
+  if (!isAdminWorkspace()) return;
+  const modalUser = state.user;
+  try {
+    retirementId(month, teacherId);
+    if (state.store && !historical) {
+      const user = state.user;
+      const [loaded, retirement] = await Promise.all([state.store.loadWorkspace(user), state.store.loadRetirementData(teacherId)]);
+      if (state.user !== user || !isAdminWorkspace()) return;
+      hydrateFirebaseData(loaded);
+      state.retirementCache[teacherId] = retirement;
+    }
+    const teacher = teacherById(teacherId);
+    const cache = state.retirementCache[teacherId];
+    if (!teacher || !cache || cache.error) throw new Error("퇴직연금 정보를 다시 불러와 주세요.");
+    const previous = cache.records.find((item) => item.month === month) || null;
+    const record = historical || previous;
+    const readOnly = Boolean(historical || previous && !correcting);
+    const published = state.data.payslips.find((item) => item.id === retirementId(month, teacherId));
+    const sourceReady = published?.status === "published" && runForMonth(month).status === "published"
+      && artifactRevision(published) === artifactRevision(runForMonth(month));
+    const payroll = sourceReady ? published.calculation : payrollForTeacher(teacherId, month)?.payroll;
+    const freshBasis = readOnly ? [] : retirementBasis(payroll, earningBasisLabel);
+    const sameBasis = correcting && previous.sourceRevision === artifactRevision(published)
+      && previous.basis.length === freshBasis.length
+      && previous.basis.every((line, i) => line.amount === freshBasis[i].amount && line.label === freshBasis[i].label);
+    const basis = readOnly ? structuredClone(record.basis) : sameBasis
+      ? freshBasis.map((line, i) => ({ ...line, included: previous.basis[i].included, reason: previous.basis[i].reason })) : freshBasis;
+    const canConfirm = !readOnly && sourceReady && cache.settings?.enabled === true && basis.length > 0;
+    const expected = { record: structuredClone(previous), payslip: excelSnapshot(published) };
+    const sourceChanged = record && (!sourceReady || record.sourceRevision !== artifactRevision(published));
+    const estimate = readOnly ? record : retirementEstimate(basis);
+    openModal(`${teacher.name} · ${formatMonth(month)} DC형 퇴직연금`, `
+      ${sourceChanged ? `<div class="notice warning">${readOnly ? "급여가 취소되거나 재발행되었습니다. 아래는 납입액 확정 당시의 기록입니다." : "급여가 변경되었습니다. 최신 급여의 산입 항목을 다시 검토해 주세요."}</div>` : ""}
+      ${!readOnly && !sourceReady ? `<div class="notice warning">급여 확정 전 예상액입니다. 납입액 확정은 해당 월 급여를 확정한 뒤 가능합니다.</div>` : ""}
+      ${!readOnly && !cache.settings?.enabled ? `<div class="notice warning">퇴직연금 대상 설정을 먼저 확인해 주세요.</div>` : ""}
+      <details class="retirement-guidance" open><summary>DC형 예상 납입액 산정 근거</summary><p>산입 대상 세전 임금 합계 ÷ 12, 원 미만 올림. 연간 법정 최소 부담금은 연간 임금총액의 1/12이며 월 예상액 합계와 실제 납입액은 연간 정산이 필요합니다.</p><p>기본 급여·강사료는 산입 초안입니다. 소득 구분만으로 근로자성·임금성을 판단하지 않습니다. 교통비·기타비도 임금 성격이면 포함하고 실비변상은 제외합니다. 육아휴직·휴업 등 특수기간은 별도 확인이 필요합니다.</p><a href="${DC_GUIDANCE_URL}" target="_blank" rel="noopener noreferrer">고용노동부 DC형 부담금 기준</a></details>
+      ${retirementBasisHtml(basis, !readOnly)}
+      <dl class="retirement-summary"><div><dt>산입 대상 임금</dt><dd data-retirement-base>${formatWon(estimate.baseAmount)}</dd></div><div><dt>예상 납입액</dt><dd data-retirement-estimate>${formatWon(estimate.expectedAmount)}</dd></div></dl>
+      <p class="retirement-formula" data-retirement-formula>${formatWon(estimate.baseAmount)} ÷ 12 = ${formatWon(estimate.expectedAmount)} (원 미만 올림)</p>
+      ${readOnly ? `<dl class="definition-list"><div><dt>실제 납입액</dt><dd>${formatWon(record.actualAmount)}</dd></div><div><dt>예상액 대비 차이</dt><dd>${formatWon(record.actualAmount - record.expectedAmount)}</dd></div><div><dt>납입 확인일</dt><dd>${e(record.paidOn)}</dd></div><div><dt>처리자 · 확정 시각</dt><dd>${e(record.confirmedName)} · ${e(formatDateTime(record.confirmedAt))}</dd></div><div><dt>근거 급여</dt><dd>${record.sourceRevision}차 발행본</dd></div><div><dt>납입 확정</dt><dd>${record.revision}차</dd></div><div><dt>산입·차이 메모</dt><dd>${e(record.note || "없음")}</dd></div>${record.correctionReason ? `<div><dt>정정 사유</dt><dd>${e(record.correctionReason)}</dd></div>` : ""}</dl>
+      ${historical ? "" : `<div class="row-actions"><button class="button button-secondary" data-retirement-correct ${cache.settings?.enabled && sourceReady ? "" : "disabled"}><i data-lucide="pencil"></i>납입액 정정</button><button class="button button-secondary" data-retirement-history><i data-lucide="history"></i>확정 이력</button></div>`}` : canConfirm ? `
+      <form id="retirement-confirm-form" class="form-grid">
+        <div class="form-field"><label for="retirement-actual">실제 납입액</label><div class="input-suffix"><input id="retirement-actual" name="actualAmount" type="number" class="money-input" min="0" max="10000000000" step="1" value="${correcting ? e(previous.actualAmount) : ""}" required /><span>원</span></div></div>
+        <div class="form-field"><label for="retirement-paid-on">납입 확인일</label><input id="retirement-paid-on" name="paidOn" type="date" value="${e(correcting ? previous.paidOn : new Date().toLocaleDateString("sv-SE"))}" required /></div>
+        <div class="form-field full"><label for="retirement-note">산입 항목 변경·차이·특수기간 메모</label><textarea id="retirement-note" name="note" maxlength="1000">${e(correcting ? previous.note : "")}</textarea></div>
+        ${correcting ? `<div class="form-field full"><label for="retirement-correction">정정 사유</label><textarea id="retirement-correction" name="correctionReason" minlength="5" maxlength="500" required></textarea></div>` : ""}
+        <label class="checkbox-row full"><input name="reviewed" type="checkbox" required /> 임금 산입 항목·특수기간과 실제 납입 내역을 확인했습니다.</label>
+      </form>` : ""}
+    `, canConfirm ? correcting ? "정정 확정" : "납입액 확정" : null, async () => {
+      if (state.user !== modalUser || !isAdminWorkspace()) throw new Error("관리 업무 화면에서 다시 확인해 주세요.");
+      const form = elements.modalRoot.querySelector("#retirement-confirm-form");
+      if (!form.reportValidity()) return false;
+      const values = new FormData(form);
+      const input = { teacherId, month, basis, actualAmount: values.get("actualAmount"), paidOn: values.get("paidOn"),
+        note: values.get("note"), correctionReason: values.get("correctionReason") || "", reviewed: form.elements.reviewed.checked };
+      const actorName = cancellationActorName({ actorUid: state.user.uid }, state.user, state.data.teachers);
+      const result = buildRetirementConfirmation({ ...input, payslip: published, previous });
+      if (state.store) {
+        await state.store.confirmRetirementContribution(input, expected, actorName);
+        if (state.user !== modalUser || !isAdminWorkspace()) return;
+        await loadRetirementPanel(teacherId);
+      } else {
+        if (excelSnapshot(cache.records.find((item) => item.month === month) || null) !== excelSnapshot(expected.record)
+          || runForMonth(month).status !== "published" || !cache.settings?.enabled) throw new Error("자료가 변경되었습니다. 다시 확인해 주세요.");
+        const saved = { ...result, id: retirementId(month, teacherId), confirmationId: crypto.randomUUID(),
+          confirmedName: actorName, confirmedBy: state.user.uid, confirmedAt: new Date().toISOString() };
+        cache.records = [...cache.records.filter((item) => item.month !== month), saved];
+        cache.history = [...(cache.history || []), structuredClone(saved)];
+      }
+      if (state.user !== modalUser || !isAdminWorkspace()) return;
+      state.retirementMonth = month;
+      if (state.view === "teachers") renderTeachers();
+      showToast("퇴직연금 납입액을 확정했습니다. 급여·명세서 금액은 변경하지 않습니다.");
+    });
+    elements.modalRoot.querySelectorAll("[data-retirement-include]").forEach((checkbox) => checkbox.addEventListener("change", () => {
+      basis[Number(checkbox.dataset.retirementInclude)].included = checkbox.checked;
+      const totals = retirementEstimate(basis);
+      elements.modalRoot.querySelector("[data-retirement-base]").textContent = formatWon(totals.baseAmount);
+      elements.modalRoot.querySelector("[data-retirement-estimate]").textContent = formatWon(totals.expectedAmount);
+      elements.modalRoot.querySelector("[data-retirement-formula]").textContent = `${formatWon(totals.baseAmount)} ÷ 12 = ${formatWon(totals.expectedAmount)} (원 미만 올림)`;
+    }));
+    elements.modalRoot.querySelector("[data-retirement-correct]")?.addEventListener("click", () => openRetirementModal(teacherId, month, true));
+    elements.modalRoot.querySelector("[data-retirement-history]")?.addEventListener("click", async () => {
+      try {
+        const records = state.store ? await state.store.loadRetirementHistory(retirementId(month, teacherId))
+          : (cache.history || []).filter((item) => item.month === month).slice().reverse();
+        if (state.user !== modalUser || !isAdminWorkspace()) return;
+        openModal(`${teacher.name} · ${formatMonth(month)} 납입 확정 이력`, `<div class="table-scroll"><table><thead><tr><th>차수</th><th>실제 납입액</th><th>처리자 · 시각</th><th>정정 사유</th><th>근거</th></tr></thead><tbody>${records.map((item, i) => `<tr><td>${item.revision}차</td><td class="numeric">${formatWon(item.actualAmount)}</td><td>${e(item.confirmedName)}<div class="cell-subtext">${e(formatDateTime(item.confirmedAt))}</div></td><td>${e(item.correctionReason || "최초 확정")}</td><td><button class="icon-button" aria-label="${item.revision}차 계산 근거" title="계산 근거" data-retirement-version="${i}"><i data-lucide="file-search"></i></button></td></tr>`).join("")}</tbody></table></div>`, null);
+        elements.modalRoot.querySelectorAll("[data-retirement-version]").forEach((button) => button.addEventListener("click", () => openRetirementModal(teacherId, month, false, records[Number(button.dataset.retirementVersion)])));
+      } catch (error) { showError(error, "퇴직연금 이력을 불러오지 못했습니다."); }
+    });
+  } catch (error) { showError(error, "퇴직연금 내역을 열지 못했습니다."); }
 }
 
 function renderLedger() {
@@ -932,7 +1109,7 @@ function renderTeacherReceipts() {
       <form id="receipt-submit-form" class="data-surface receipt-submit-form">
         <div class="form-field"><label for="receipt-date">사용 날짜</label><input id="receipt-date" name="expenseDate" type="date" value="${e(defaultDate)}" min="${e(state.month)}-01" max="${e(lastDayOfMonth(state.month))}" required ${locked ? "disabled" : ""} /></div>
         <div class="form-field"><label>구분</label><strong>교통비 (주차비 포함)</strong></div>
-        <div class="form-field"><label for="receipt-amount">금액</label><div class="input-suffix"><input id="receipt-amount" name="amount" type="number" min="1" max="10000000" step="1" inputmode="numeric" required ${locked ? "disabled" : ""} /><span>원</span></div></div>
+        <div class="form-field"><label for="receipt-amount">금액</label><div class="input-suffix"><input id="receipt-amount" name="amount" type="number" class="money-input" min="1" max="10000000" step="1" inputmode="numeric" required ${locked ? "disabled" : ""} /><span>원</span></div></div>
         <div class="form-field"><label for="receipt-file">영수증 파일</label><input id="receipt-file" name="file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required ${locked ? "disabled" : ""} /></div>
         <div class="form-field full"><label for="receipt-note">메모</label><input id="receipt-note" name="note" maxlength="200" placeholder="예: 8월 12일 수업 이동" ${locked ? "disabled" : ""} /></div>
         <div class="receipt-submit-actions"><span class="form-help">이미지는 전송 전에 자동으로 축소됩니다.</span><button class="button button-primary" type="submit" ${locked ? "disabled" : ""}><i data-lucide="upload"></i><span>영수증 제출</span></button></div>
@@ -1605,7 +1782,7 @@ function payslipSheet(teacher, payroll, month, run, incomeLabel = payrollComposi
     <h3>지급 내역</h3><div class="table-scroll"><table><thead><tr><th>지급 항목</th><th>소득 구분</th>${showEarningBasis ? "<th>산정 기준</th>" : ""}<th class="numeric">금액</th></tr></thead><tbody>${earningRows.map(({ line, basis }) => `<tr><td>${e(line.subjectName)}</td><td>${e(TREATMENT_LABELS[line.treatment] || line.treatment)}</td>${showEarningBasis ? `<td>${e(basis)}</td>` : ""}<td class="numeric">${formatNumber(line.amount)}</td></tr>`).join("")}</tbody></table></div>
     <h3>공제 내역</h3><div class="table-scroll"><table><thead><tr><th>항목</th><th class="numeric">금액</th></tr></thead><tbody>${deductionRows.map(([key, label]) => `<tr><td>${e(label)}</td><td class="numeric">${formatNumber(payroll.deductions[key])}</td></tr>`).join("") || `<tr><td colspan="2">공제 내역 없음</td></tr>`}</tbody></table></div>
     <div class="payslip-totals"><div><span>총 지급액</span><strong>${formatWon(payroll.gross)}</strong></div><div><span>총 공제액</span><strong>${formatWon(payroll.totalDeductions)}</strong></div><div class="net"><span>실 지급액</span><strong>${formatWon(payroll.net)}</strong></div></div>
-    <p class="payslip-footnote">본 명세서는 확정된 선생님별 월 지급액과 유형을 기준으로 작성되었습니다. 세금 기준 ${e(payroll.taxPolicyVersion)}, 사회보험 기준 ${e(payroll.insurancePolicyVersion)}. 세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요.</p>
+    <p class="payslip-footnote">본 명세서는 확정된 선생님별 월 지급액과 유형을 기준으로 작성되었습니다. 세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요.</p>
   </article>`;
 }
 
@@ -1889,7 +2066,7 @@ function insuranceEditorHtml(settings, prefix) {
 }
 
 function otherPaymentEditorHtml(policy = {}, prefix) {
-  return `<div class="form-field" data-other-insurance-covered="${policy.insuranceCovered === true}"><label for="${prefix}-other-amount">기타 기본금액</label><div class="input-suffix"><input id="${prefix}-other-amount" name="otherPaymentAmount" type="number" min="0" max="100000000" step="1" value="${e(policy.amount || 0)}" /><span>원</span></div></div>
+  return `<div class="form-field" data-other-insurance-covered="${policy.insuranceCovered === true}"><label for="${prefix}-other-amount">기타 기본금액</label><div class="input-suffix"><input id="${prefix}-other-amount" name="otherPaymentAmount" type="number" class="money-input" min="0" max="100000000" step="1" value="${e(policy.amount || 0)}" /><span>원</span></div></div>
     <div class="form-field"><label for="${prefix}-other-treatment">기타금액 기본 처리</label><select id="${prefix}-other-treatment" name="otherPaymentTreatment">${treatmentOptions(policy.treatment)}</select></div>`;
 }
 
@@ -1999,7 +2176,7 @@ function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
   const rows = Object.entries(INSURANCE_LABELS).filter(([key]) => settings[key]?.enrolled).map(([key, label]) => {
     const field = fields[key];
     const value = current[field] ?? settings[key]?.defaultBaseAmount ?? employeeGrossPay ?? 0;
-    return `<div class="form-field"><label for="monthly-${field}">${e(label)} 신고 기준액</label><div class="input-suffix"><input id="monthly-${field}" name="${field}" type="number" min="0" step="1000" value="${e(value)}" required /><span>원</span></div></div>`;
+    return `<div class="form-field"><label for="monthly-${field}">${e(label)} 신고 기준액</label><div class="input-suffix"><input id="monthly-${field}" name="${field}" type="number" class="money-input" min="0" step="1000" value="${e(value)}" required /><span>원</span></div></div>`;
   }).join("");
   if (!rows) return "";
   return `<div class="form-field full form-section-heading"><strong>이번 달 보험 신고 기준액</strong><span class="form-help">보험료 자동 계산의 기준입니다. 실제 공단 신고액과 다르면 이번 달 값으로 수정합니다.</span></div>${rows}`;
@@ -2017,7 +2194,7 @@ function additionalEarningsEditorHtml(lines, containerId) {
 function additionalEarningRowHtml(line = {}) {
   return `<div class="additional-line-row" data-additional-row data-line-id="${e(line.id || crypto.randomUUID())}" data-insurance-covered="${line.insuranceCovered === true}">
     <input type="text" value="${e(line.label || "")}" placeholder="기타 내용" aria-label="기타 지급 항목명" data-additional-label />
-    <div class="input-suffix"><input type="number" min="0" step="1000" value="${e(line.amount || "")}" placeholder="금액" aria-label="기타 지급 금액" data-additional-amount /><span>원</span></div>
+    <div class="input-suffix"><input type="number" class="money-input" min="0" step="1000" value="${e(line.amount || "")}" placeholder="금액" aria-label="기타 지급 금액" data-additional-amount /><span>원</span></div>
     <select aria-label="기타 지급 과세 처리" data-additional-treatment>${treatmentOptions(line.treatment)}</select>
     <button class="icon-button" type="button" title="항목 삭제" aria-label="기타 지급 항목 삭제" data-remove-additional><i data-lucide="trash-2"></i></button>
   </div>`;
@@ -2067,7 +2244,7 @@ function businessRateRowHtml(rate = {}, index = 0) {
   const label = businessRateLabel(index);
   return `<div class="business-line-row rate-row" data-business-rate-row data-line-id="${e(rate.id || crypto.randomUUID())}">
     <span class="business-rate-label" data-rate-label>${e(label)}</span>
-    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-rate-hourly /><span>원/시간</span></div>
+    <div class="input-suffix"><input type="number" class="money-input" min="0" step="1" value="${e(rate.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-rate-hourly /><span>원/시간</span></div>
     <button class="icon-button" type="button" title="시급 삭제" aria-label="사업소득 시급 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
   </div>`;
 }
@@ -2130,7 +2307,7 @@ function businessPayRateEditorHtml(settings, prefix, containerId) {
     </div>
     <label class="checkbox-row" data-combined-tuition-option ${useCombinedRates ? "" : "hidden"}><input type="checkbox" data-combined-tuition ${shareRate ? "checked" : ""} /> 수업 전체 학원비 비율 포함</label>
     <div class="form-field" data-tuition-share-rate ${shareRate ? "" : "hidden"}><label for="${e(prefix)}-tuition-share-rate">약정 비율</label><div class="input-suffix"><input id="${e(prefix)}-tuition-share-rate" name="${e(prefix)}-tuition-share-rate" type="number" min="0.01" max="100" step="0.01" value="${e(shareRate?.tuitionShareRate ?? "")}" required /><span>%</span></div></div>
-    <div class="form-field" data-default-business-rate ${useCombinedRates || shareRate ? "hidden" : ""}><label for="${e(prefix)}-default-business-rate">시급 1</label><div class="input-suffix"><input id="${e(prefix)}-default-business-rate" name="${e(prefix)}-default-business-rate" type="number" min="0" step="1" value="${e(singleRate.hourlyRate)}" /><span>원/시간</span></div></div>
+    <div class="form-field" data-default-business-rate ${useCombinedRates || shareRate ? "hidden" : ""}><label for="${e(prefix)}-default-business-rate">시급 1</label><div class="input-suffix"><input id="${e(prefix)}-default-business-rate" name="${e(prefix)}-default-business-rate" type="number" class="money-input" min="0" step="1" value="${e(singleRate.hourlyRate)}" /><span>원/시간</span></div></div>
     <div data-multiple-business-rates ${useCombinedRates ? "" : "hidden"}>${businessRateEditorHtml(hourlyRates.length ? hourlyRates : [singleRate], containerId)}</div>
   </fieldset>`;
 }
@@ -2221,7 +2398,7 @@ function businessWorkEditorHtml(lines, containerId) {
 function tuitionAmountEditorHtml(line = {}) {
   const basis = tuitionBasis(line);
   return `<div class="tuition-amount-editor" data-tuition-editor>
-    <label class="form-field"><span>해당 수업 전체 학원비</span><div class="input-suffix"><input type="number" min="0" max="10000000000" step="1" value="${e(basis.tuitionPending ? "" : basis.tuitionAmount)}" aria-label="해당 수업 전체 학원비" data-tuition-amount /><span>원</span></div></label>
+    <label class="form-field"><span>해당 수업 전체 학원비</span><div class="input-suffix"><input type="number" class="money-input" min="0" max="10000000000" step="1" value="${e(basis.tuitionPending ? "" : basis.tuitionAmount)}" aria-label="해당 수업 전체 학원비" data-tuition-amount /><span>원</span></div></label>
     <div class="tuition-total"><span>정산 대상 학원비</span><strong data-tuition-total>입력 대기</strong></div>
   </div>`;
 }
@@ -2259,7 +2436,7 @@ function businessWorkRowHtml(line = {}, index = 0) {
   const label = businessRateLabel(index);
   return `<div class="business-line-row work-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}">
     <span class="business-rate-label" data-work-label>${e(label)}</span>
-    <div class="input-suffix"><input type="number" min="0" step="1" value="${e(line.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-work-hourly /><span>원</span></div>
+    <div class="input-suffix"><input type="number" class="money-input" min="0" step="1" value="${e(line.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-work-hourly /><span>원</span></div>
     <div class="input-suffix"><input type="number" min="0" step="0.5" value="${e(line.hours || "")}" placeholder="수업시간" aria-label="${e(label)} 수업시간" data-work-hours /><span>시간</span></div>
     <strong class="business-line-amount" data-work-amount>0원</strong>
     <button class="icon-button" type="button" title="수업 삭제" aria-label="사업소득 수업 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
@@ -2492,7 +2669,7 @@ function openTeacherModal() {
       <section class="conditional-form-section full" data-income-section="employee" hidden>
         <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액과 보험별 가입 기간을 입력합니다.</span></div>
         <div class="form-grid">
-          <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 예상 근로자 부담액이 자동 계산됩니다.</span></div>
+          <div class="form-field full payroll-primary-field"><label for="teacher-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-employee-pay" name="defaultEmployeePay" type="number" class="money-input" min="0" step="1" value="0" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험을 선택하면 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(getTeacherPaySettings({ incomeComposition: "employee" }).insuranceSettings, "teacher")}
         </div>
       </section>
@@ -2503,7 +2680,7 @@ function openTeacherModal() {
       <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">기타금액은 매월 기본으로 적용되며 해당 월 입력에서 변경할 수 있습니다.</span></div>
       ${otherPaymentEditorHtml({}, "teacher")}
       <div class="form-field"><label for="teacher-transport-region">교통비 적용 지역·기준</label><input id="teacher-transport-region" name="transportRegionLabel" placeholder="예: 서울 시내" /></div>
-      <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="0" /><span>원</span></div></div>
+      <div class="form-field"><label for="teacher-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-transport-unit" name="transportUnitAmount" type="number" class="money-input" min="0" step="1" value="0" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-transport-treatment">교통비 기본 처리</label><select id="teacher-transport-treatment" name="transportTreatment">${treatmentOptions("pending")}</select></div>
       <div class="form-field"><label for="teacher-transport-payday">교통비 지급일</label><div class="input-suffix"><input id="teacher-transport-payday" name="transportPaymentDay" type="number" min="1" max="31" step="1" value="5" required /><span>일</span></div></div>
       <div class="form-field"><label for="teacher-payday">급여 지급일</label><input id="teacher-payday" name="paymentDay" type="number" min="1" max="31" value="10" required /></div>
@@ -2692,7 +2869,7 @@ function openTeacherEditModal(teacher) {
       <section class="conditional-form-section full" data-income-section="employee" hidden>
         <div class="conditional-section-heading"><strong>근로소득·4대보험 설정</strong><span>월 지급액과 보험별 가입 기간을 입력합니다.</span></div>
         <div class="form-grid">
-          <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험의 예상 근로자 부담액이 자동 계산됩니다.</span></div>
+          <div class="form-field full payroll-primary-field"><label for="teacher-edit-employee-pay">기본 근로소득 월 지급액</label><div class="input-suffix"><input id="teacher-edit-employee-pay" name="defaultEmployeePay" type="number" class="money-input" min="0" step="1" value="${e(paySettings.defaultEmployeePay)}" required /><span>원</span></div><span class="form-help">1원 단위로 입력합니다. 가입 보험의 예상 근로자 부담액이 자동 계산됩니다.</span></div>
           ${insuranceEditorHtml(paySettings.insuranceSettings, "teacher-edit")}
         </div>
       </section>
@@ -2703,7 +2880,7 @@ function openTeacherEditModal(teacher) {
       <div class="form-field full form-section-heading"><strong>공통 지급 설정</strong><span class="form-help">기타금액은 매월 기본으로 적용되며 해당 월 입력에서 변경할 수 있습니다.</span></div>
       ${otherPaymentEditorHtml(paySettings.otherPaymentPolicy, "teacher-edit")}
       <div class="form-field"><label for="teacher-edit-transport-region">교통비 적용 지역·기준</label><input id="teacher-edit-transport-region" name="transportRegionLabel" value="${e(paySettings.transportPolicy.regionLabel)}" placeholder="예: 서울 시내" /></div>
-      <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
+      <div class="form-field"><label for="teacher-edit-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="teacher-edit-transport-unit" name="transportUnitAmount" type="number" class="money-input" min="0" step="1" value="${e(paySettings.transportPolicy.unitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="teacher-edit-transport-treatment">교통비 기본 처리</label><select id="teacher-edit-transport-treatment" name="transportTreatment">${treatmentOptions(paySettings.transportPolicy.treatment)}</select></div>
       <div class="form-field"><label for="teacher-edit-transport-payday">교통비 지급일</label><div class="input-suffix"><input id="teacher-edit-transport-payday" name="transportPaymentDay" type="number" min="1" max="31" step="1" value="${e(paySettings.transportPolicy.paymentDay)}" required /><span>일</span></div></div>
       <div class="form-field"><label for="teacher-edit-payday">급여 지급일</label><input id="teacher-edit-payday" name="paymentDay" type="number" min="1" max="31" value="${e(teacher.paymentDay)}" required /></div>
@@ -2904,7 +3081,7 @@ function openPayrollExcelPreview(month, sheet) {
     const options = activeTeachers().map((item) => `<option value="${e(item.id)}" ${item.id === record.teacherId ? "selected" : ""}>${e(item.name)} · ${e(item.email || item.id)}</option>`).join("");
     record.element.innerHTML = `<div class="excel-import-row-header"><label class="checkbox-row"><input type="checkbox" data-excel-selected ${record.selected ? "checked" : ""} /> ${record.row.number}행 ${e(record.row.name)}</label><select aria-label="${e(record.row.name)} 연결할 선생님" data-excel-teacher><option value="">선생님 선택</option>${options}</select></div>
       ${teacher ? `<div class="form-grid excel-allocation">
-        ${teacher.incomeComposition === "mixed" && (record.row.values.basePay != null || record.row.values.hours != null) ? `${record.row.values.basePay != null ? `<label class="form-field">G 강사료 ${formatWon(record.row.values.basePay)} 중 근로소득<input type="number" data-choice="employeeGrossPay" min="0" step="1" value="${record.choices.employeeGrossPay}" /></label>` : ""}${record.row.values.hours != null ? `<label class="form-field">F ${record.row.values.hours}시간 중 근로 수업시간<input type="number" data-choice="employeeWorkHours" min="0" step="0.01" value="${record.choices.employeeWorkHours}" /></label>` : ""}<label class="checkbox-row full"><input type="checkbox" data-choice="allocationConfirmed" /> 나머지는 사업소득 금액·시간으로 배분</label>` : ""}
+        ${teacher.incomeComposition === "mixed" && (record.row.values.basePay != null || record.row.values.hours != null) ? `${record.row.values.basePay != null ? `<label class="form-field">G 강사료 ${formatWon(record.row.values.basePay)} 중 근로소득<input type="number" class="money-input" data-choice="employeeGrossPay" min="0" step="1" value="${record.choices.employeeGrossPay}" /></label>` : ""}${record.row.values.hours != null ? `<label class="form-field">F ${record.row.values.hours}시간 중 근로 수업시간<input type="number" data-choice="employeeWorkHours" min="0" step="0.01" value="${record.choices.employeeWorkHours}" /></label>` : ""}<label class="checkbox-row full"><input type="checkbox" data-choice="allocationConfirmed" /> 나머지는 사업소득 금액·시간으로 배분</label>` : ""}
         ${record.row.values.transport != null ? `<label class="form-field">교통비 소득 구분<select data-choice="transportTreatment">${treatmentOptions(record.choices.transportTreatment)}</select></label>${!record.row.parkingInOther && amounts.parkingAmount > 0 ? `<p class="form-help">J 교통비에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함 · 주차비 금액과 소득 구분 유지</p>` : ""}` : ""}
         ${record.row.values.other != null ? `<label class="form-field">기타 지급 소득 구분<select data-choice="otherTreatment">${treatmentOptions(record.choices.otherTreatment)}</select></label>${record.row.parkingInOther ? `<p class="form-help">이전 내보내기 양식: K 기타에 기존 주차비 ${formatWon(amounts.parkingAmount)} 포함</p>` : ""}` : ""}
         ${teacher.incomeComposition === "mixed" && record.row.values.additionalTax != null ? `<label class="form-field">L 추가 원천징수 공제 명세서<select data-choice="additionalIncomeType"><option value="business">사업소득 명세서</option><option value="employee">근로소득 명세서</option></select></label>` : ""}
@@ -2960,7 +3137,7 @@ function openExcelPayModal(teacher) {
   const current = state.data.overrides[`${month}:${teacher.id}`];
   const direct = current.excelPay;
   const expected = excelExpectedState(teacher, month);
-  openModal(`${teacher.name} 월 직접 입력`, `<form id="excel-pay-form" class="form-grid">${Object.entries(EXCEL_PAY_FIELDS).map(([key, label]) => `<label class="form-field">${e(label)}<input type="number" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("")}
+  openModal(`${teacher.name} 월 직접 입력`, `<form id="excel-pay-form" class="form-grid">${Object.entries(EXCEL_PAY_FIELDS).map(([key, label]) => `<label class="form-field">${e(label)}<input type="number" class="${key.includes("Hours") || key === "transportTrips" ? "" : "money-input"}" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("")}
     <label class="form-field">교통비 처리<select name="transportTreatment">${treatmentOptions(direct.transportTreatment || monthlyPayAmounts(teacher, month).transportTreatment)}</select></label>
     <label class="form-field">기타 지급 처리<select name="otherTreatment">${treatmentOptions(direct.otherTreatment || "pending")}</select></label>
     ${teacher.incomeComposition === "mixed" ? `<label class="form-field">L 추가 원천징수 공제 명세서<select name="excelAdditionalIncomeType"><option value="business" ${direct.excelAdditionalIncomeType !== "employee" ? "selected" : ""}>사업소득 명세서</option><option value="employee" ${direct.excelAdditionalIncomeType === "employee" ? "selected" : ""}>근로소득 명세서</option></select></label>` : ""}
@@ -2999,14 +3176,14 @@ function openMonthlyPayModal(teacher) {
     <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비(주차비 포함)·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
     <form id="monthly-pay-form" class="form-grid">
       <div class="form-field"><label for="monthly-pay-default-employee">기본 근로소득</label><input id="monthly-pay-default-employee" type="text" value="${e(formatWon(settings.defaultEmployeePay))}" readonly /></div>
-      <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
+      <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" class="money-input" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
       <div class="form-field"><label for="monthly-employee-hours">근로 수업시간</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>시간</span></div></div>
       ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
       ${tuitionSubmission ? `<div class="form-field full tuition-submission"><strong>선생님 제출 학원비</strong><span>해당 수업 전체 학원비 ${formatWon(tuitionSubmission.tuitionAmount)}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
       ${businessWorkEditorHtml(workLines, "monthly-business-work")}
       <div class="form-field full form-section-heading"><strong>교통비 (주차비 포함)</strong></div>
       <div class="form-field"><label for="monthly-transport-trips">교통비 지급 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
-      <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" min="0" step="1" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
+      <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" class="money-input" min="0" step="1" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
       <div class="form-field"><label for="monthly-transport-treatment">교통비 처리</label><select id="monthly-transport-treatment" name="transportTreatment">${treatmentOptions(amounts.transportTreatment)}</select></div>
       <label class="checkbox-row form-field"><input name="transportInsuranceCovered" type="checkbox" ${amounts.transportInsuranceCovered ? "checked" : ""} /> 교통비를 보험 기준에 포함</label>
       ${amounts.receiptTransportAmount + amounts.receiptParkingAmount > 0 ? `<div class="form-field"><label>승인 영수증 교통비</label><input type="text" value="${e(formatWon(amounts.receiptTransportAmount + amounts.receiptParkingAmount))}" readonly /></div>` : ""}
@@ -3080,18 +3257,18 @@ function openPayrollAdjustmentModal(teacher) {
   openModal(`${teacher.name} 과세·공제 조정`, `
     <div class="notice"><i data-lucide="circle-equal"></i><span>비과세와 학자금 지원액은 근로소득 간이세액표의 월급여에서 제외됩니다. 수동 공제액을 비워 두면 현재 세금·사회보험 정책으로 자동 계산합니다.</span></div>
     <form id="payroll-adjustment-form" class="form-grid">
-      <div class="form-field"><label for="adjust-nontaxable">근로소득 비과세액</label><input id="adjust-nontaxable" name="employeeNonTaxableAmount" type="number" min="0" step="1" value="${e(current.employeeNonTaxableAmount || 0)}" /></div>
-      <div class="form-field"><label for="adjust-student-loan">학자금 지원액</label><input id="adjust-student-loan" name="employeeStudentLoanSupportAmount" type="number" min="0" step="1" value="${e(current.employeeStudentLoanSupportAmount || 0)}" /></div>
-      <div class="form-field"><label for="adjust-employee-tax">근로소득세 수동값</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-employee-local">근로소득 지방세 수동값</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-pension">국민연금 수동값</label><input id="adjust-pension" name="nationalPension" type="number" min="0" step="1" value="${optionalValue("nationalPension")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-health-care">건강보험+장기요양 수동값</label><input id="adjust-health-care" name="healthAndLongTermCare" type="number" min="0" step="1" value="${combinedHealthValue}" placeholder="자동" /><span class="form-help">공단 고지서의 두 근로자 부담액을 합쳐 입력합니다.</span></div>
-      <div class="form-field"><label for="adjust-employment">고용보험 수동값</label><input id="adjust-employment" name="employmentInsurance" type="number" min="0" step="1" value="${optionalValue("employmentInsurance")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-business-tax">사업소득세 수동값</label><input id="adjust-business-tax" name="businessIncomeTax" type="number" min="0" step="1" value="${optionalValue("businessIncomeTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-business-local">사업소득 지방세 수동값</label><input id="adjust-business-local" name="businessLocalTax" type="number" min="0" step="1" value="${optionalValue("businessLocalTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-other-tax">기타소득세 수동값</label><input id="adjust-other-tax" name="otherIncomeTax" type="number" min="0" step="1" value="${optionalValue("otherIncomeTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-other-local">기타소득 지방세 수동값</label><input id="adjust-other-local" name="otherLocalTax" type="number" min="0" step="1" value="${optionalValue("otherLocalTax")}" placeholder="자동" /></div>
-      <div class="form-field full"><label for="adjust-custom">기타 공제</label><input id="adjust-custom" name="custom" type="number" min="0" step="1" value="${optionalValue("custom")}" placeholder="0" /></div>
+      <div class="form-field"><label for="adjust-nontaxable">근로소득 비과세액</label><input id="adjust-nontaxable" name="employeeNonTaxableAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employeeNonTaxableAmount || 0)}" /></div>
+      <div class="form-field"><label for="adjust-student-loan">학자금 지원액</label><input id="adjust-student-loan" name="employeeStudentLoanSupportAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employeeStudentLoanSupportAmount || 0)}" /></div>
+      <div class="form-field"><label for="adjust-employee-tax">근로소득세 수동값</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-employee-local">근로소득 지방세 수동값</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-pension">국민연금 수동값</label><input id="adjust-pension" name="nationalPension" type="number" class="money-input" min="0" step="1" value="${optionalValue("nationalPension")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-health-care">건강보험+장기요양 수동값</label><input id="adjust-health-care" name="healthAndLongTermCare" type="number" class="money-input" min="0" step="1" value="${combinedHealthValue}" placeholder="자동" /><span class="form-help">공단 고지서의 두 근로자 부담액을 합쳐 입력합니다.</span></div>
+      <div class="form-field"><label for="adjust-employment">고용보험 수동값</label><input id="adjust-employment" name="employmentInsurance" type="number" class="money-input" min="0" step="1" value="${optionalValue("employmentInsurance")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-business-tax">사업소득세 수동값</label><input id="adjust-business-tax" name="businessIncomeTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("businessIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-business-local">사업소득 지방세 수동값</label><input id="adjust-business-local" name="businessLocalTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("businessLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-other-tax">기타소득세 수동값</label><input id="adjust-other-tax" name="otherIncomeTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("otherIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-other-local">기타소득 지방세 수동값</label><input id="adjust-other-local" name="otherLocalTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("otherLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field full"><label for="adjust-custom">기타 공제</label><input id="adjust-custom" name="custom" type="number" class="money-input" min="0" step="1" value="${optionalValue("custom")}" placeholder="0" /></div>
     </form>
   `, "저장", async () => {
     const form = elements.modalRoot.querySelector("#payroll-adjustment-form");
@@ -3136,7 +3313,7 @@ function openTaxPolicyModal() {
       <div class="form-field"><label for="local-rate">지방소득세 비율 (%)</label><input id="local-rate" name="localIncomeTaxRatio" type="number" min="0" max="100" step="0.001" value="${e(Number(current.business.localIncomeTaxRateOfIncomeTax) * 100)}" required /><span class="form-help">소득세액에 곱하는 비율</span></div>
       <div class="form-field"><label for="other-expense">일시적 강의 필요경비율 (%)</label><input id="other-expense" name="otherExpenseRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.expenseRate) * 100)}" required /></div>
       <div class="form-field"><label for="other-rate">기타소득 소득세율 (%)</label><input id="other-rate" name="otherIncomeTaxRate" type="number" min="0" max="100" step="0.001" value="${e(Number(current.other.categories.temporaryLecture.incomeTaxRate) * 100)}" required /></div>
-      <div class="form-field"><label for="other-minimum">기타소득 과세최저한</label><input id="other-minimum" name="otherMinimumTaxableIncome" type="number" min="0" step="1" value="${e(current.other.categories.temporaryLecture.minimumTaxableIncomeAmount)}" required /><span class="form-help">필요경비 차감 후 건별 소득금액</span></div>
+      <div class="form-field"><label for="other-minimum">기타소득 과세최저한</label><input id="other-minimum" name="otherMinimumTaxableIncome" type="number" class="money-input" min="0" step="1" value="${e(current.other.categories.temporaryLecture.minimumTaxableIncomeAmount)}" required /><span class="form-help">필요경비 차감 후 건별 소득금액</span></div>
       <div class="form-field full"><label for="tax-table-file">근로소득 간이세액표 CSV</label><input id="tax-table-file" name="tableFile" type="file" accept=".csv,text/csv" /><span class="form-help">비워 두면 현재 표를 복사합니다. 상단의 CSV를 내려받아 새 공식 표 값으로 수정한 뒤 업로드할 수 있습니다.</span></div>
       <div class="form-field full"><label for="high-income-rules">월 1천만원 초과 산식 JSON</label><textarea id="high-income-rules" name="highIncomeRules" spellcheck="false" required>${e(JSON.stringify(current.employment.highIncomeBrackets, null, 2))}</textarea><span class="form-help">소득세법 시행령 별표 2의 고액 급여 구간, 가산액, 초과금액 비율과 세율입니다.</span></div>
     </form>
@@ -3215,13 +3392,13 @@ function openInsurancePolicyModal() {
       <div class="form-field"><label for="insurance-name">기준명</label><input id="insurance-name" name="name" value="${e(current.name)}" required /></div>
       <div class="form-field"><label for="insurance-effective">시행일</label><input id="insurance-effective" name="effectiveFrom" type="date" required /></div>
       <div class="form-field"><label for="pension-rate">국민연금 근로자 부담률 (%)</label><input id="pension-rate" name="pensionRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.nationalPension.rate))}" required /></div>
-      <div class="form-field"><label for="pension-minimum">국민연금 기준소득월액 하한</label><input id="pension-minimum" name="pensionMinimumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
-      <div class="form-field"><label for="pension-maximum">국민연금 기준소득월액 상한</label><input id="pension-maximum" name="pensionMaximumBase" type="number" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
-      <div class="form-field"><label for="pension-base-unit">국민연금 기준액 절사 단위 (원)</label><input id="pension-base-unit" name="pensionBaseUnit" type="number" min="1" step="1" value="${e(current.employee.nationalPension.baseUnit || 1000)}" required /><span class="form-help">현재 기준은 천원 미만 절사</span></div>
-      <div class="form-field"><label for="insurance-rounding-unit">자동 보험료 절사 단위 (원)</label><input id="insurance-rounding-unit" name="insuranceRoundingUnit" type="number" min="1" step="1" value="${e(current.employee.nationalPension.roundingUnit || current.employee.healthInsurance.roundingUnit || 10)}" required /><span class="form-help">현재 기준은 10원 미만 절사</span></div>
+      <div class="form-field"><label for="pension-minimum">국민연금 기준소득월액 하한</label><input id="pension-minimum" name="pensionMinimumBase" type="number" class="money-input" min="0" step="1000" value="${e(current.employee.nationalPension.minimumBase || 0)}" required /></div>
+      <div class="form-field"><label for="pension-maximum">국민연금 기준소득월액 상한</label><input id="pension-maximum" name="pensionMaximumBase" type="number" class="money-input" min="0" step="1000" value="${e(current.employee.nationalPension.maximumBase || 0)}" required /></div>
+      <div class="form-field"><label for="pension-base-unit">국민연금 기준액 절사 단위 (원)</label><input id="pension-base-unit" name="pensionBaseUnit" type="number" class="money-input" min="1" step="1" value="${e(current.employee.nationalPension.baseUnit || 1000)}" required /><span class="form-help">현재 기준은 천원 미만 절사</span></div>
+      <div class="form-field"><label for="insurance-rounding-unit">자동 보험료 절사 단위 (원)</label><input id="insurance-rounding-unit" name="insuranceRoundingUnit" type="number" class="money-input" min="1" step="1" value="${e(current.employee.nationalPension.roundingUnit || current.employee.healthInsurance.roundingUnit || 10)}" required /><span class="form-help">현재 기준은 10원 미만 절사</span></div>
       <div class="form-field"><label for="health-rate">건강보험 근로자 부담률 (%)</label><input id="health-rate" name="healthRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.healthInsurance.rate))}" required /></div>
-      <div class="form-field"><label for="health-minimum">건강보험 근로자 부담 하한액</label><input id="health-minimum" name="healthMinimumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
-      <div class="form-field"><label for="health-maximum">건강보험 근로자 부담 상한액</label><input id="health-maximum" name="healthMaximumAmount" type="number" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
+      <div class="form-field"><label for="health-minimum">건강보험 근로자 부담 하한액</label><input id="health-minimum" name="healthMinimumAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employee.healthInsurance.minimumAmount || 0)}" required /></div>
+      <div class="form-field"><label for="health-maximum">건강보험 근로자 부담 상한액</label><input id="health-maximum" name="healthMaximumAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employee.healthInsurance.maximumAmount || 0)}" required /></div>
       <div class="form-field"><label for="long-term-rate">장기요양 비율 (%)</label><input id="long-term-rate" name="longTermCareRate" type="number" min="0" max="100" step="0.000001" value="${e(policyPercentInput(current.employee.longTermCareRate, 6))}" required /><span class="form-help">건강보험료에 곱하는 비율</span></div>
       <div class="form-field"><label for="employment-rate">고용보험 근로자 부담률 (%)</label><input id="employment-rate" name="employmentRate" type="number" min="0" max="100" step="0.001" value="${e(policyPercentInput(current.employee.employmentInsurance.rate))}" required /></div>
       <div class="form-field full"><label for="pension-source">국민연금 공식 근거 URL</label><input id="pension-source" name="pensionSourceUrl" type="url" value="${e(sourceUrl("nationalPension"))}" required /></div>
@@ -3429,6 +3606,7 @@ function openCancelPayrollModal() {
     const reason = new FormData(form).get("reason").trim();
     const cancelledAt = new Date().toISOString();
     const cancellationId = `${state.month}_v${revision}`;
+    const actorName = cancellationActorName({ actorUid: state.user.uid }, state.user, state.data.teachers);
     let currentPayslips = state.data.payslips.filter((item) => item.month === state.month && item.status === "published");
     if (!currentPayslips.length) {
       currentPayslips = payrollsForMonth(state.month).map(({ teacher, payroll }) => ({
@@ -3457,7 +3635,7 @@ function openCancelPayrollModal() {
     const run = { ...currentRun, status: "cancelled", revision, cancellationId, cancellationReason: reason, cancelledAt };
     const cancellation = {
       id: cancellationId,
-      data: { month: state.month, revision, reason, releaseId: currentRun.releaseId || `${state.month}_v${revision}`, payslipIds: currentPayslips.map((item) => item.id), actorUid: state.user.uid }
+      data: { month: state.month, revision, reason, releaseId: currentRun.releaseId || `${state.month}_v${revision}`, payslipIds: currentPayslips.map((item) => item.id), actorUid: state.user.uid, actorName }
     };
     if (state.store) {
       await state.store.cancelPayrollRun(
@@ -3465,7 +3643,7 @@ function openCancelPayrollModal() {
         currentPayslips.map((item) => ({ id: item.id })),
         archives,
         cancellation,
-        { id: crypto.randomUUID(), data: { action: "PAYROLL_CANCELLED", month: state.month, revision, reason, actorUid: state.user.uid } }
+        { id: crypto.randomUUID(), data: { action: "PAYROLL_CANCELLED", month: state.month, revision, reason, actorUid: state.user.uid, actorName } }
       );
     }
     currentPayslips.forEach((item) => Object.assign(item, { status: "cancelled", cancellationId, cancellationReason: reason, cancelledAt }));

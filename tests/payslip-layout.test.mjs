@@ -98,3 +98,19 @@ test("명세서 표시 변경은 입력과 발행 기록을 수정하지 않는�
   assert.match(sourceFor("createCurrentPayslipPdf"), /querySelector\("\.payslip-sheet"\)/);
   assert.match(sourceFor("openPayslipEmailModal"), /createCurrentPayslipPdf\(teacher, payslipDocument\)/);
 });
+
+test("PDF 원본 명세서는 기준 버전 문구를 생략하고 계산 기록은 보존한다", () => {
+  const payroll = {
+    earningLines: [fixedLine], deductions: { employeeIncomeTax: 10000 },
+    gross: 2000000, totalDeductions: 10000, net: 1990000,
+    taxPolicyVersion: "NTS-2024-02-29", insurancePolicyVersion: "INSURANCE-2026-07"
+  };
+  const before = structuredClone(payroll);
+  for (const status of ["published", "draft"]) {
+    const html = render({ name: "가상강사", paymentDay: 10 }, payroll, "2026-09", { status }, "근로소득");
+    assert.doesNotMatch(html, /세금 기준|사회보험 기준|NTS-2024-02-29|INSURANCE-2026-07/);
+    assert.match(html, /세부 계약 또는 공제 관련 문의는 학원 담당자에게 연락해 주세요/);
+    assert.match(html, /1,990,000원/);
+  }
+  assert.deepEqual(payroll, before);
+});

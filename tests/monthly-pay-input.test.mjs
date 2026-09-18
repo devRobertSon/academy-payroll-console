@@ -139,14 +139,15 @@ test("Excel monthly dialog preserves employee salary on edit and clearing direct
   assert.match(sourceFor("openMonthlyPayModal"), /openExcelPayModal\(teacher, true\)/);
 });
 
-test("monthly list uses accessible teacher-cell buttons and retains published-month lock", () => {
+test("monthly list puts net pay after teacher, retains accessible buttons and published-month lock", () => {
   for (const locked of [false, true]) {
     const eventTarget = { addEventListener() {} };
     const content = { innerHTML: "", querySelector: () => eventTarget, querySelectorAll: () => [] };
     load("renderPayrollInputs", {
       runForMonth: () => ({ status: locked ? "published" : "draft" }), activeTeachers: () => [teacher],
-      state: { month: "2026-09", search: "", data: { overrides: {} } }, monthlyPayAmounts: () => getMonthlyPayAmounts(teacher),
-      setPage() {}, bindCommonControls() {}, statusLabel: String, personCell: load("personCell", {}),
+      state: { month: "2026-09", search: "", data: { overrides: { "2026-09:demo": { excelPay: { employeeGrossPay: 2000000 } } } } }, monthlyPayAmounts: () => getMonthlyPayAmounts(teacher),
+      payrollForTeacher: () => ({ payroll: { net: 1801234, reporting: { lectureWithholding: 4321 } } }),
+      setPage() {}, bindCommonControls() {}, bindMonthlyPayRows: (value) => assert.equal(value, locked), statusLabel: String, personCell: load("personCell", {}),
       estimatedBusinessWithholding: () => 0, elements: { content, topbarActions: { querySelector: () => eventTarget } },
       openPayrollExcelImport() {}, exportMonthlyPayrollExcel() {}
     })();
@@ -154,9 +155,52 @@ test("monthly list uses accessible teacher-cell buttons and retains published-mo
     const button = content.innerHTML.match(/<button[^>]*data-edit-monthly-pay="demo"[^>]*>/)[0];
     assert.match(button, /aria-label="가상선생님 월 지급액 입력"/);
     assert.equal(button.includes("disabled"), locked);
+    assert.match(button, /aria-pressed="false"/);
+    assert.match(content.innerHTML, /<th>선생님<\/th><th class="numeric">실 지급액<\/th><th>가입 보험<\/th>/);
+    assert.match(content.innerHTML, /<\/button><\/td><td class="numeric"><strong>1,801,234원<\/strong>/);
+    assert.match(content.innerHTML, /<td class="numeric">4,321원<\/td>/);
+    assert.match(content.innerHTML, /엑셀 직접 입력/);
     assert.doesNotMatch(content.innerHTML, /data-lucide="pencil"/);
-    assert.equal([...content.innerHTML.matchAll(/<th[ >]/g)].length, 11);
+    assert.equal([...content.innerHTML.matchAll(/<th[ >]/g)].length, 12);
   }
+});
+
+test("monthly row first activation selects, another row changes selection, and reactivation opens edit", () => {
+  const opened = [];
+  const rows = ["first", "second"].map((id) => {
+    const button = { attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, focus() { this.focused = true; } };
+    const row = { dataset: { monthlyPayRow: id }, selected: false, button, handlers: {},
+      querySelector: () => button, addEventListener(type, handler) { this.handlers[type] = handler; } };
+    row.classList = { toggle: (name, value) => { assert.equal(name, "selected-row"); row.selected = value; } };
+    return row;
+  });
+  let status = "draft";
+  const bind = load("bindMonthlyPayRows", {
+    elements: { content: { querySelectorAll: () => rows } }, state: { month: "2026-09" }, runForMonth: () => ({ status }),
+    teacherById: id => ({ id }), openMonthlyPayModal: person => opened.push(person.id)
+  });
+  bind(true);
+  assert.equal(rows[0].handlers.click, undefined);
+  bind(false);
+  rows[0].handlers.click();
+  assert.deepEqual(opened, []);
+  assert.equal(rows[0].selected, true);
+  assert.equal(rows[0].button.attributes["aria-pressed"], "true");
+  assert.equal(rows[0].button.focused, true);
+  rows[1].handlers.click();
+  assert.deepEqual(opened, []);
+  assert.equal(rows[0].selected, false);
+  assert.equal(rows[0].button.attributes["aria-pressed"], "false");
+  assert.equal(rows[1].selected, true);
+  rows[1].handlers.click();
+  assert.deepEqual(opened, ["second"]);
+  status = "published";
+  rows[1].handlers.click();
+  assert.deepEqual(opened, ["second"]);
+  status = "draft";
+  bind(false);
+  rows[1].handlers.click();
+  assert.deepEqual(opened, ["second"]);
 });
 
 const hourly = { id: "hourly", hourlyRate: 40000 };

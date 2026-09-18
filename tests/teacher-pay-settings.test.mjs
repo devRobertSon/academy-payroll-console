@@ -8,6 +8,7 @@ import { buildExcelPay } from "../src/lib/payroll-excel.js";
 import { escapeHtml as e, formatWon, formatMonth } from "../src/lib/format.js";
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
 const rules = await readFile(new URL("../firestore.rules", import.meta.url), "utf8");
 const policy = createCombinedPolicy(ntsTaxPolicy2024, officialInsurancePolicies.at(-1));
 const teacher = {
@@ -36,6 +37,15 @@ function calculate(person, override = {}) {
   return calculatePayroll(createMonthlyEarningLines(person, "2026-09", override), policy,
     { ...override, insuranceSettings: person.insuranceSettings }, person.taxProfile);
 }
+
+test("선생님 수정 입력칸은 옆 필드의 설명 길이와 관계없이 위쪽에 정렬한다", () => {
+  assert.match(css, /#teacher-edit-form\s*>\s*\.form-field\s*\{\s*align-content:\s*start;\s*\}/);
+  assert.match(css, /#teacher-edit-payday,\s*#teacher-edit-status\s*\{\s*height:\s*44px;\s*\}/);
+  const edit = sourceFor("openTeacherEditModal");
+  assert.match(edit, /id="teacher-edit-form" class="form-grid"/);
+  assert.match(edit, /<label for="teacher-edit-payday">급여 지급일<\/label><input[^>]+name="paymentDay"/);
+  assert.match(edit, /<select id="teacher-edit-status"[\s\S]*?<span class="form-help">관리자를 겸하는 계정의 관리 권한은 유지됩니다\.<\/span>/);
+});
 
 test("신규 항목이 없는 기존 선생님의 지급액과 급여 지급일을 보존한다", () => {
   const before = structuredClone(teacher);

@@ -74,7 +74,7 @@ node --test tests/teacher-rules-emulator.test.mjs
 node --test tests/monthly-pay-input.test.mjs tests/teacher-pay-settings.test.mjs tests/money-inputs.test.mjs tests/payroll.test.mjs tests/payroll-excel.test.mjs tests/admin-teacher-account.test.mjs tests/payslip-layout.test.mjs tests/help-guide.test.mjs tests/help-assistant.test.mjs tests/overlays.test.mjs tests/scroll-behavior.test.mjs tests/tuition-total-ui.test.mjs tests/tuition-share.test.mjs
 ```
 
-- 표 앞부분이 선생님·공제 후 실 지급액·가입 보험 순서이고 엑셀 원천징수·입력 상태가 해당 열에 표시되는지 확인합니다. 행 첫 클릭은 선택만, 같은 행의 재클릭은 입력 창 열기이며 다른 행은 선택만 이동합니다. 이름 버튼의 Enter·Space도 같은 순서이고 확정 월에는 동작하지 않는지 확인합니다.
+- 표 앞부분이 선생님·공제 후 실 지급액·신고액·가입 보험 순서이고 엑셀 원천징수·입력 상태가 해당 열에 표시되는지 확인합니다. 행 첫 클릭은 선택만, 같은 행의 재클릭은 입력 창 열기이며 다른 행은 선택만 이동합니다. 이름 버튼의 Enter·Space도 같은 순서이고 확정 월에는 동작하지 않는지 확인합니다.
 - 월 근로소득은 읽기 전용이고 계약을 바꾸지 않은 저장 요청에는 근로소득·보험 기준액 필드가 없는지, 기존 값·명시적 0원이 그대로 유지되는지 검사합니다.
 - 근로·사업·혼합 소득과 시급·비율·병행 계약별로 필요한 입력만 표시하고 월 입력에서 시급 추가·삭제·금액·비율 변경을 허용하지 않는지 확인합니다.
 - 별도 선생님 정보 수정 창의 저장·취소·닫기·Esc 후 입력 중인 월 급여로 복귀하는지, 미완성 기타 항목과 교통비·메모를 보존하는지 확인합니다. 저장 중 닫기는 차단하고 오류 시 수정 창을 유지합니다.

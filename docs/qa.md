@@ -68,6 +68,35 @@ node --test tests/teacher-rules-emulator.test.mjs
 
 이 변경은 `firestore.rules`를 다시 게시해야 운영에 반영됩니다. 웹 페이지 배포, Cloudflare Worker, Storage, App Check 또는 OAuth 설정 변경은 필요하지 않습니다.
 
+## 월 급여 입력과 보험 기준 연동 검사
+
+```powershell
+node --test tests/monthly-pay-input.test.mjs tests/teacher-pay-settings.test.mjs tests/money-inputs.test.mjs tests/payroll.test.mjs tests/payroll-excel.test.mjs tests/admin-teacher-account.test.mjs tests/payslip-layout.test.mjs tests/help-guide.test.mjs tests/help-assistant.test.mjs tests/overlays.test.mjs tests/scroll-behavior.test.mjs tests/tuition-total-ui.test.mjs tests/tuition-share.test.mjs
+```
+
+- 선생님 칸 클릭·Enter로 입력 창을 열며, 연필 작업 열이 없고 확정 월에는 입력 버튼이 잠기는지 확인합니다.
+- 월 근로소득은 읽기 전용이고 계약을 바꾸지 않은 저장 요청에는 근로소득·보험 기준액 필드가 없는지, 기존 값·명시적 0원이 그대로 유지되는지 검사합니다.
+- 근로·사업·혼합 소득과 시급·비율·병행 계약별로 필요한 입력만 표시하고 월 입력에서 시급 추가·삭제·금액·비율 변경을 허용하지 않는지 확인합니다.
+- 별도 선생님 정보 수정 창의 저장·취소·닫기·Esc 후 입력 중인 월 급여로 복귀하는지, 미완성 기타 항목과 교통비·메모를 보존하는지 확인합니다. 저장 중 닫기는 차단하고 오류 시 수정 창을 유지합니다.
+- 시급·비율 변경 후 기존 시간·학원비를 새 계약으로 계산하며 삭제 항목을 경고하는지 검사합니다. 별도 창에서 월급을 바꾼 경우에만 새 월급을 월 저장 요청에 포함하고 최종 저장 전에는 월 입력을 쓰지 않습니다.
+- 엑셀 직접 입력 행의 수정과 입력 해제에서도 근로소득을 보존합니다. 가져오기·공제 조정의 기존 경로는 유지합니다.
+- 새 자동 계산에서 과거 월별·선생님별 보험 기준액을 무시하고 근로소득에 연동하는지 확인합니다. 교통비는 근로소득 처리와 보험 포함이 모두 선택됐을 때만 기준에 더합니다.
+- 가입 여부·적용 기간, 수동 보험료와 발행 명세서 스냅샷을 보존합니다. 실제 데이터 변경 없이 로컬 데모로 PC·모바일 화면과 저장 후 금액을 확인합니다.
+
+## 근로소득 세금 참고액 검사
+
+월 급여 입력 변경 범위 검사와 함께 다음 관련 검사를 실행합니다.
+
+```powershell
+node --test tests/employee-tax-reference.test.mjs tests/retirement.test.mjs tests/payroll-lifecycle.test.mjs
+```
+
+- 근로소득세·지방소득세만 관리자 참고액으로 분리하고 사업·기타소득 세금, 엑셀 H·L, 보험료·기타 공제를 유지하는지 검사합니다.
+- 자동 계산·직접 입력·명시적 0원·혼합 소득 분리의 공제액과 실 지급액을 검증합니다. 엑셀 R·S 가져오기는 참고액이며 급여 내보내기는 실제 공제액 0원입니다.
+- 현재 발행본에는 참고액을 저장하지 않고 관리자 전용 불변 버전에만 원자적으로 저장하는지, 관리자 화면·현재 차수에서만 표시하는지 검사합니다.
+- 이미 발행된 기존 계산은 변경하지 않습니다. 참고액이 명세서 본문·PDF·인쇄·선생님 화면에 포함되지 않는지 검사합니다.
+- 가상 로컬 PC·모바일에서 관리자 참고액과 계산 근거, 소득별 월 입력, 계약 수정 후 미완성 입력 복귀를 확인합니다. 실제 데이터나 메일을 사용하지 않습니다.
+
 ## DC형 퇴직연금 변경 범위 검사
 
 이 기능 변경 시 전체 QA 대신 관련 계산·화면·보안 규칙만 검사합니다.

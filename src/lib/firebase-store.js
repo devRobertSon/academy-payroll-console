@@ -5,6 +5,7 @@ import { assertTeacherAccountLink, teacherAccountUpdate } from "./teacher-accoun
 import { excelSnapshot, validateExcelPay } from "./payroll-excel-state.js";
 import { cancellationActorName } from "./payroll-lifecycle.js";
 import { createRetirementStore } from "./retirement-store.js";
+import { publicPayslipCalculation } from "./payroll.js";
 
 const FIREBASE_VERSION = "12.17.1";
 const sdk = (module) => `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-${module}.js`;
@@ -597,7 +598,9 @@ export async function createFirebaseStore(config) {
       updatedBy: auth.currentUser.uid
     };
     payslips.forEach((payslip) => {
-      batch.set(firestoreSdk.doc(db, "payslips", payslip.id), { ...payslip.data, ...common });
+      batch.set(firestoreSdk.doc(db, "payslips", payslip.id), {
+        ...payslip.data, calculation: publicPayslipCalculation(payslip.data.calculation), ...common
+      });
       batch.set(firestoreSdk.doc(db, "payslipVersions", payslip.versionId), { ...payslip.data, ...common });
     });
     batch.set(firestoreSdk.doc(db, "payrollRuns", run.month), { ...run, ...common });

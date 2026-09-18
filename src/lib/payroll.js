@@ -115,6 +115,16 @@ export function getTeacherPaySettings(teacher = {}) {
   };
 }
 
+export function incomeLinkedInsuranceOverrides(insuranceSettings, overrides = {}) {
+  // Keep recorded amounts intact; only live insurance-base calculations follow earnings.
+  const result = { ...overrides, insuranceSettings: Object.fromEntries(
+    Object.entries(normalizeInsuranceSettings(insuranceSettings))
+      .map(([key, item]) => [key, { ...item, defaultBaseAmount: null }])
+  ) };
+  for (const field of ["nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"]) delete result[field];
+  return result;
+}
+
 export function getMonthlyPayAmounts(teacher, override = {}) {
   const settings = getTeacherPaySettings(teacher);
   const direct = override.excelPay || {};
@@ -440,6 +450,7 @@ export function createMonthlyEarningLine(teacher, month, override = {}) {
 
 export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfile = {}) {
   overrides = { ...overrides, ...overrides.excelPay };
+  const referenceEmployeeTax = overrides.employeeTaxMode === "admin-reference";
   const { taxPolicy, insurancePolicy } = policyBundle;
   if (!taxPolicy?.version || !insurancePolicy?.version) {
     throw new Error("세금·사회보험 정책 묶음이 최신 스키마와 일치하지 않습니다.");
@@ -513,8 +524,8 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     employmentInsurance: overrides.employmentInsurance == null
       ? applyRateWithBounds(insuranceBases.employmentInsurance, insurance.employmentInsurance)
       : won(overrides.employmentInsurance),
-    employeeIncomeTax: employeeTax,
-    employeeLocalTax,
+    employeeIncomeTax: referenceEmployeeTax ? 0 : employeeTax,
+    employeeLocalTax: referenceEmployeeTax ? 0 : employeeLocalTax,
     businessIncomeTax,
     businessLocalTax,
     otherIncomeTax,
@@ -603,11 +614,20 @@ export function calculatePayroll(entries, policyBundle, overrides = {}, taxProfi
     totalDeductions,
     net: gross - totalDeductions,
     reporting,
+    ...(referenceEmployeeTax ? {
+      employeeTaxMode: "admin-reference",
+      adminTaxReference: { employeeIncomeTax: employeeTax, employeeLocalTax, employeeTaxablePay }
+    } : {}),
     ...(excelTaxTotals.lecture != null || excelTaxTotals.additional != null ? { excelTaxTotals } : {}),
     unconfirmedEarningLines,
     taxPolicyVersion: taxPolicy.version,
     insurancePolicyVersion: insurancePolicy.version
   };
+}
+
+export function publicPayslipCalculation(payroll) {
+  const { adminTaxReference, ...publicCalculation } = payroll;
+  return publicCalculation;
 }
 
 export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
@@ -638,8 +658,9 @@ export function splitPayrollByIncome(payroll, policyBundle, taxProfile = {}) {
       healthInsurance: employeeDocument ? deductions.healthInsurance : 0,
       longTermCare: employeeDocument ? deductions.longTermCare : 0,
       employmentInsurance: employeeDocument ? deductions.employmentInsurance : 0,
-      employeeIncomeTax: employeeDocument ? deductions.employeeIncomeTax : 0,
-      employeeLocalTax: employeeDocument ? deductions.employeeLocalTax : 0,
+      employeeIncomeTax: employeeDocument ? payroll.adminTaxReference?.employeeIncomeTax ?? deductions.employeeIncomeTax : 0,
+      employeeLocalTax: employeeDocument ? payroll.adminTaxReference?.employeeLocalTax ?? deductions.employeeLocalTax : 0,
+      ...(payroll.employeeTaxMode === "admin-reference" ? { employeeTaxMode: "admin-reference" } : {}),
       businessIncomeTax: incomeType === "business" ? deductions.businessIncomeTax : 0,
       businessLocalTax: incomeType === "business" ? deductions.businessLocalTax : 0,
       otherIncomeTax: includesOtherIncome ? deductions.otherIncomeTax : 0,

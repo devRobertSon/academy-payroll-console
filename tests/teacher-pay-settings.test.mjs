@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
-import { calculatePayroll, createMonthlyEarningLines, getMonthlyPayAmounts, getTeacherPaySettings, INSURANCE_LABELS, TREATMENT_LABELS, businessRateLabel, isTuitionShare } from "../src/lib/payroll.js";
+import { calculatePayroll, createMonthlyEarningLines, getMonthlyPayAmounts, getTeacherPaySettings, incomeLinkedInsuranceOverrides, INSURANCE_LABELS, TREATMENT_LABELS, businessRateLabel, isTuitionShare } from "../src/lib/payroll.js";
 import { createCombinedPolicy, ntsTaxPolicy2024, officialInsurancePolicies } from "../src/data/nts-tax-policy.js";
 import { buildExcelPay } from "../src/lib/payroll-excel.js";
 import { escapeHtml as e, formatWon, formatMonth } from "../src/lib/format.js";
@@ -24,7 +24,7 @@ function sourceFor(name) {
   return next < 0 ? remaining : remaining.slice(0, next);
 }
 const context = {
-  e, formatWon, formatMonth, calculatePayroll, createMonthlyEarningLines,
+  e, formatWon, formatMonth, calculatePayroll, createMonthlyEarningLines, incomeLinkedInsuranceOverrides,
   INSURANCE_LABELS, TREATMENT_LABELS, businessRateLabel, isTuitionShare,
   state: { month: "2026-09" }, teacherPaySettings: getTeacherPaySettings,
   policyForMonth: () => policy, teacherContractLabel: () => "근로소득"
@@ -162,14 +162,15 @@ function insuranceForm() {
   return { form, pay, elements, labels };
 }
 
-test("보험 편집기를 열거나 급여를 바꿔도 별도로 지정한 신고 기준액은 덮어쓰지 않는다", () => {
+test("과거 신고 기준액을 보존하되 예상 보험료는 근로소득에 연동한다", () => {
   const { form, pay, elements, labels } = insuranceForm();
   load("bindInsuranceEditorAutomation", { readOtherPaymentPolicy: load("readOtherPaymentPolicy") })(form, "edit", "#pay", teacher);
   assert.equal(elements["edit-nationalPension-base"].value, "1500000");
-  assert.equal(labels.get('[data-insurance-row-estimate="nationalPension"]').textContent, "71,250원");
+  assert.equal(labels.get('[data-insurance-row-estimate="nationalPension"]').textContent, "95,000원");
   pay.value = "3000000";
   pay.listeners.input();
   assert.equal(elements["edit-nationalPension-base"].value, "1500000");
+  assert.equal(labels.get('[data-insurance-row-estimate="nationalPension"]').textContent, "142,500원");
   assert.equal(elements["edit-healthInsurance-base"].value, "3000000");
   elements.otherPaymentAmount.value = "100000";
   elements.otherPaymentAmount.listeners.input();
@@ -204,10 +205,11 @@ test("월 지급액 저장 시 이전 주차비 금액과 보험 설정을 그�
   }
   load("openMonthlyPayModal", {
     state: localState, monthlyPayAmounts: () => getMonthlyPayAmounts(person, legacy),
+    monthlyTeacherEditButtonHtml: () => "", monthlyIncomeFieldsHtml: () => "", hasEmployeeIncome: () => true,
     mergeBusinessWorkLines: () => [], monthlyWorkInput: () => null, submittedTuitionBasis: () => null,
     monthlyInsuranceBasesHtml: () => "", businessWorkEditorHtml: () => "", additionalEarningsEditorHtml: () => "", treatmentOptions: () => "",
     openModal: (title, body, button, handler) => { html = body; save = handler; },
-    elements: { modalRoot: { querySelector: (selector) => selector === "#monthly-pay-form" ? form : null } },
+    elements: { modalRoot: { querySelector: (selector) => selector === "#monthly-pay-form" ? form : selector === "[data-monthly-edit-teacher]" ? { addEventListener() {} } : null } },
     bindBusinessWorkEditor() {}, bindAdditionalEarningsEditor() {}, readBusinessWorkLines: () => [], readAdditionalEarnings: () => [],
     FormData: FormDataMock, showToast() {}, renderPayrollInputs() {}
   })(person);

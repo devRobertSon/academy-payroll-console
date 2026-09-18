@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { EXCEL_PAY_FIELDS } from "../src/lib/payroll-excel-state.js";
+import { getTeacherPaySettings } from "../src/lib/payroll.js";
 import { escapeHtml } from "../src/lib/format.js";
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
@@ -61,7 +62,7 @@ test("Excel direct input renders money-only styling and preserves values and val
   assert.ok(start >= 0 && end > start);
   let html;
   const context = {
-    EXCEL_PAY_FIELDS, e: escapeHtml,
+    EXCEL_PAY_FIELDS, e: escapeHtml, teacherPaySettings: getTeacherPaySettings,
     state: { month: "2026-09", data: { overrides: { "2026-09:demo": {
       excelPay: { employeeGrossPay: 2000000, businessGrossPay: 0, businessHours: 2.5 }
     } } } },

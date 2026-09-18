@@ -294,7 +294,11 @@
 }
 ```
 
-`businessWorkLines`의 각 금액은 `hourlyRate × hours`로 계산하며 확정 명세서에는 당시 시급·시수와 화면 표시명(`시급 1`, `시급 2`)이 계산 스냅샷으로 보존됩니다. 교통비·주차료·기타 지급의 `treatment`가 `pending`이면 미리보기에는 포함되지만 급여 확정은 차단됩니다. 세무사 확인 후 `business`, `employee`, `exempt`, `other` 중 하나를 선택합니다. 보험별 기준액은 서로 다르게 입력할 수 있습니다.
+`businessWorkLines`의 각 금액은 `hourlyRate × hours`로 계산하며 확정 명세서에는 당시 시급·시수와 화면 표시명(`시급 1`, `시급 2`)이 계산 스냅샷으로 보존됩니다. 교통비·주차료·기타 지급의 `treatment`가 `pending`이면 미리보기에는 포함되지만 급여 확정은 차단됩니다. 세무사 확인 후 `business`, `employee`, `exempt`, `other` 중 하나를 선택합니다.
+
+월 급여 입력의 일반 저장은 근로소득·보험 기준액 필드를 쓰지 않고 수업시간·추가 지급 등 편집 가능한 필드만 병합합니다. 기존 `employeeGrossPay`와 `excelPay.employeeGrossPay`는 유지하며, 엑셀 행의 월별 편집·직접 입력 해제에서도 근로소득은 고정합니다. 엑셀 파일 불러오기와 과세·공제 조정의 기존 절차는 유지합니다.
+
+포털의 새 자동 보험료 계산은 `incomeLinkedInsuranceOverrides()`를 거쳐 월별 세 기준액과 선생님별 `defaultBaseAmount`를 무시합니다. `employee` 처리이면서 `insuranceCovered`가 참인 근로소득·수당 합계를 사용하고 가입 여부·적용 기간은 유지합니다. 과거 기준액 필드를 삭제하거나 운영 데이터를 일괄 변환하지 않으며, 수동 보험료와 이미 발행된 명세서 계산값도 바꾸지 않습니다. 저장 형식은 그대로이므로 Firestore 규칙·Cloudflare 설정 변경은 없습니다.
 
 비율제의 월별 관리 입력은 `payrollOverrides.businessWorkLines`의 `{ "id": "share-a", "rateId": "share-a", "tuitionShareRate": 40, "tuitionAmount": 5000000, "hours": 0 }`입니다. 계산 기준은 해당 수업 전체 학원비이며 학원 전체 매출이 아닙니다. `tuitionAmount: null`은 미입력, `0`은 확정한 0원 정산입니다. 비율 계산식은 `Math.round(tuitionAmount * Math.round(tuitionShareRate * 100) / 10000)`입니다. 명세서에는 `kind: "tuition-share-business"`, 전체 학원비·적용 비율을 복사해 보존하고 기존 `lectureFee` 사업소득 공제를 적용합니다.
 
@@ -349,6 +353,8 @@
 ### `payslipVersions/{yyyy-mm_teacherId_vN}`
 
 각 발행 차수의 급여명세서 스냅샷입니다. 혼합형 소득 구분 문서는 `{yyyy-mm}_{teacherId}_employee_vN`과 `{yyyy-mm}_{teacherId}_business_vN` 형식을 사용합니다. `payslips`는 선생님에게 보이는 현재본이고 `payslipVersions`는 관리자 감사용 불변 원본입니다. 생성 후 수정·삭제할 수 없습니다.
+
+새 계산에는 `calculation.employeeTaxMode: "admin-reference"`가 있으며 근로소득세·지방소득세 공제액은 0원입니다. 기존 차수에는 소급 적용하지 않습니다. 계산한 세금 참고액은 관리자만 읽을 수 있는 `payslipVersions`의 `calculation.adminTaxReference`에 `employeeIncomeTax`, `employeeLocalTax`, `employeeTaxablePay`로 보존합니다. 선생님이 읽는 `payslips`에는 해당 객체를 제거한 계산만 저장합니다. 두 문서는 같은 배치로 발행하며 관리자는 현재 차수의 불변 원본에서 참고액을 조회합니다. 사업·기타소득 세금, 보험료 및 직접 공제는 기존대로 적용합니다. 추가 컬렉션이나 규칙·Worker 설정 변경은 필요하지 않습니다.
 
 ### `payrollCancellations/{yyyy-mm_vN}`
 

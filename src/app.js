@@ -47,6 +47,7 @@ import {
   createMonthlyEarningLines,
   getMonthlyPayAmounts,
   getTeacherPaySettings,
+  incomeLinkedInsuranceOverrides,
   INCOME_COMPOSITION_LABELS,
   INSURANCE_LABELS,
   isTuitionShare,
@@ -55,6 +56,7 @@ import {
   resolveIncomeComposition,
   resolveEffectivePolicy,
   splitPayrollByIncome,
+  publicPayslipCalculation,
   summarizePayroll,
   TREATMENT_LABELS
 } from "./lib/payroll.js";
@@ -619,8 +621,8 @@ function renderPayrollInputs() {
     </div>
     <div class="notice ${missingInsuredSalary.length ? "warning" : ""}"><i data-lucide="${missingInsuredSalary.length ? "triangle-alert" : "circle-check"}"></i><span>${missingInsuredSalary.length ? `근로소득 월급이 입력되지 않은 보험 가입 선생님이 ${missingInsuredSalary.length}명 있습니다.` : "근로소득 월급과 사업소득 강사료를 구분해 검토합니다. 학원비 비율제는 정산 대상 학원비 합계와 약정 비율을 확인해 주세요."}</span></div>
     <section class="content-section">
-      <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득·강사료·교통비(주차비 포함)·기타 지급과 보험 신고 기준액을 선생님별로 입력합니다.</p></div></div>
-      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th><th aria-label="작업"></th></tr></thead><tbody>
+      <div class="section-heading"><div><h2>${formatMonth(state.month)} 지급액</h2><p>근로소득 · 수업시간 · 강사료 · 교통비(주차비 포함) · 기타 지급</p></div></div>
+      <div class="data-surface table-scroll"><table><thead><tr><th>선생님</th><th>가입 보험</th><th class="numeric">이번 달 근로소득</th><th class="numeric">근로 수업시간</th><th class="numeric">수업 시수</th><th class="numeric">강사료</th><th class="numeric">강사료 3.3%</th><th class="numeric">교통비</th><th class="numeric">기타</th><th class="numeric">신고액</th><th>입력 상태</th></tr></thead><tbody>
         ${teachers.map((teacher) => {
           const override = state.data.overrides[`${state.month}:${teacher.id}`];
           const settings = teacherPaySettings(teacher);
@@ -631,8 +633,8 @@ function renderPayrollInputs() {
           const insuranceCount = Object.values(settings.insuranceSettings).filter((item) => item.enrolled).length;
           const statusText = missingSalary ? "근로소득 필요" : amounts.tuitionPending ? "학원비 입력 대기" : amounts.unconfirmedCount ? `처리 확인 ${amounts.unconfirmedCount}건` : total > 0 ? "입력 완료" : "금액 미입력";
           const statusClass = total > 0 && !missingSalary && !amounts.tuitionPending && !amounts.unconfirmedCount ? "paid" : "pending";
-          return `<tr><td>${personCell(teacher)}</td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.transportAmount + amounts.parkingAmount)}</td><td class="numeric">${formatWon(amounts.otherPaymentAmount)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td><td><button class="icon-button" type="button" title="이번 달 지급액 수정" aria-label="${e(teacher.name)} 이번 달 지급액 수정" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}><i data-lucide="pencil"></i></button></td></tr>`;
-        }).join("") || emptyRow(12)}
+          return `<tr><td class="monthly-pay-person"><button class="person-edit-button" type="button" title="월 지급액 입력" aria-label="${e(teacher.name)} 월 지급액 입력" data-edit-monthly-pay="${e(teacher.id)}" ${locked ? "disabled" : ""}>${personCell(teacher)}</button></td><td><span class="status-chip ${insuranceCount ? "published" : "pending"}">${insuranceCount ? `${insuranceCount}종 가입` : "미가입"}</span></td><td class="numeric"><strong>${formatWon(amounts.employeeGrossPay)}</strong></td><td class="numeric">${formatHours(amounts.employeeWorkHours)}</td><td class="numeric">${formatHours(amounts.businessHours)}</td><td class="numeric"><strong>${formatWon(amounts.businessGrossPay)}</strong></td><td class="numeric">${formatWon(estimatedBusinessWithholding(amounts.businessGrossPay))}</td><td class="numeric">${formatWon(amounts.transportAmount + amounts.parkingAmount)}</td><td class="numeric">${formatWon(amounts.otherPaymentAmount)}</td><td class="numeric"><strong>${formatWon(total)}</strong><div class="cell-subtext">${custom ? "이번 달 입력" : "기본값"}</div></td><td><span class="status-chip ${statusClass}">${e(statusText)}</span></td></tr>`;
+        }).join("") || emptyRow(11)}
       </tbody></table></div>
     </section>
   `;
@@ -642,7 +644,7 @@ function renderPayrollInputs() {
     const teacher = teacherById(button.dataset.editMonthlyPay);
     const row = button.closest("tr");
     row.cells[6].textContent = formatWon(payrollForTeacher(teacher.id, state.month)?.payroll.reporting?.lectureWithholding || 0);
-    if (state.data.overrides[`${state.month}:${teacher.id}`]?.excelPay) row.cells[10].querySelector(".cell-subtext").textContent = "엑셀 직접 입력";
+    if (state.data.overrides[`${state.month}:${teacher.id}`]?.excelPay) row.cells[9].querySelector(".cell-subtext").textContent = "엑셀 직접 입력";
   });
   elements.content.querySelectorAll("[data-edit-monthly-pay]").forEach((button) => button.addEventListener("click", () => {
     const teacher = teacherById(button.dataset.editMonthlyPay);
@@ -680,6 +682,7 @@ function renderTeachers() {
         <div class="detail-block"><h3>휴대전화·식별 정보</h3><dl class="definition-list"><div><dt>휴대전화</dt><dd>${e(formatMobilePhoneNumber(selected.phone) || "미등록")}</dd></div><div><dt>생년월일</dt><dd>${e(formatMaskedTeacherIdentity(selected) || "미등록")}</dd></div></dl></div>
         <div class="detail-block"><h3>접근 연결</h3><dl class="definition-list"><div><dt>로그인 UID</dt><dd>${e(selected.authUid || "승인 대기")}</dd></div><div><dt>상태</dt><dd>${selected.status === "active" ? "활성" : "비활성"}</dd></div></dl></div>
         ${teacherPayDetails(selected)}
+        ${adminTaxReferencePanel(selected, state.month)}
         ${retirementPanel(selected)}
       </aside>` : ""}
     </div>
@@ -1418,6 +1421,7 @@ function renderPayslips() {
       </aside>
       ${selectedDocument && teacher ? payslipSheet(teacher, selectedDocument.payroll, state.selectedPayslipMonth, run, selectedDocument.incomeLabel) : `<div class="empty-state">확인할 명세서가 없습니다.</div>`}
     </div>
+    ${isAdmin && selectedDocument && teacher ? adminTaxReferencePanel(teacher, state.selectedPayslipMonth, selectedDocument.payroll) : ""}
   `;
   elements.topbarActions.querySelector("[data-action='download-payslip']")?.addEventListener("click", downloadCurrentPayslip);
   elements.topbarActions.querySelector("[data-action='print-payslip']")?.addEventListener("click", () => window.print());
@@ -1558,7 +1562,7 @@ function payrollForTeacher(teacherId, month) {
   if (isTeacherWorkspace() && teacherId !== state.user.teacherId) return null;
   if (!appConfig.demoMode) {
     const saved = state.data.payslips.find((item) => item.id === payslipId(month, teacherId));
-    if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: saved.calculation || saved };
+    if (saved?.status === "published") return { teacher: teacherById(teacherId), payroll: publishedPayrollCalculation(saved) };
     if (isTeacherWorkspace()) return null;
   }
   if (isTeacherWorkspace() && runForMonth(month).status !== "published") return null;
@@ -1581,10 +1585,19 @@ function payrollForTeacher(teacherId, month) {
     payroll: calculatePayroll(
       earningLines,
       policyForMonth(month),
-      { ...override, insuranceSettings: settings.insuranceSettings },
+      { ...incomeLinkedInsuranceOverrides(settings.insuranceSettings, override), employeeTaxMode: "admin-reference" },
       teacher.taxProfile
     )
   };
+}
+
+function publishedPayrollCalculation(saved) {
+  if (isAdminWorkspace() && saved.calculation?.employeeTaxMode === "admin-reference") {
+    const versionId = payslipVersionId(saved.month, saved.teacherId, saved.revision, saved.incomeType);
+    const version = state.data.payslipVersions.find((item) => item.id === versionId);
+    if (version?.calculation) return version.calculation;
+  }
+  return saved.calculation || saved;
 }
 
 function payslipDocumentsFor(teacher, payroll, month) {
@@ -1596,7 +1609,7 @@ function payslipDocumentsFor(teacher, payroll, month) {
     ));
     return {
       ...document,
-      payroll: saved?.calculation || document.payroll,
+      payroll: saved ? publishedPayrollCalculation(saved) : document.payroll,
       payslipId: saved?.id || payslipId(month, teacher.id),
       persistedSeparately: Boolean(saved)
     };
@@ -1641,9 +1654,21 @@ function payrollCompositionLabel(payroll) {
 }
 function teacherInsuranceEstimate(teacher) {
   const settings = teacherPaySettings(teacher);
-  return calculatePayroll(createMonthlyEarningLines(teacher, state.month), policyForMonth(state.month), {
-    insuranceSettings: settings.insuranceSettings
-  }, taxProfileForTeacher(teacher));
+  return calculatePayroll(createMonthlyEarningLines(teacher, state.month), policyForMonth(state.month),
+    { ...incomeLinkedInsuranceOverrides(settings.insuranceSettings), employeeTaxMode: "admin-reference" }, taxProfileForTeacher(teacher));
+}
+
+function adminTaxReferencePanel(teacher, month, calculation) {
+  if (!isAdminWorkspace()) return "";
+  const payroll = calculation || payrollForTeacher(teacher.id, month)?.payroll;
+  if (!payroll || payroll.employeeTaxMode !== "admin-reference" || !payroll.adminTaxReference) return "";
+  if (!payroll.grossByTreatment.employee && !payroll.adminTaxReference.employeeIncomeTax && !payroll.adminTaxReference.employeeLocalTax) return "";
+  const reference = payroll.adminTaxReference;
+  return `<section class="detail-block admin-tax-reference" data-admin-tax-reference>
+    <h3>근로소득 세금 참고액</h3><p class="form-help">${formatMonth(month)} · 급여 공제 제외 · ${runForMonth(month).status === "published" ? "발행 당시 참고액" : "현재 예상액"}</p>
+    <dl class="definition-list"><div><dt>근로소득세</dt><dd>${formatWon(reference.employeeIncomeTax)}</dd></div><div><dt>지방소득세</dt><dd>${formatWon(reference.employeeLocalTax)}</dd></div><div><dt>참고 세금 합계</dt><dd><strong>${formatWon(reference.employeeIncomeTax + reference.employeeLocalTax)}</strong></dd></div></dl>
+    <details><summary>계산 기준</summary><dl class="definition-list"><div><dt>과세 대상 근로소득</dt><dd>${formatWon(reference.employeeTaxablePay)}</dd></div><div><dt>세금 기준</dt><dd>${e(payroll.taxPolicyVersion)}</dd></div></dl><p class="form-help">간이세액표 계산값 또는 관리자·엑셀 직접 입력값입니다. 실제 세무 신고·납부와는 별도 기록입니다.</p></details>
+  </section>`;
 }
 
 function teacherPayDetails(teacher) {
@@ -2056,8 +2081,8 @@ function insuranceEditorHtml(settings, prefix) {
         <div><span>산재보험</span><strong>근로자 공제 없음</strong></div>
       </div>
       <div class="insurance-tax-preview">
-        <div><span>소득세</span><strong data-tax-estimate="incomeTax">0원</strong></div>
-        <div><span>지방소득세</span><strong data-tax-estimate="localIncomeTax">0원</strong></div>
+        <div><span>소득세 참고액 · 공제 제외</span><strong data-tax-estimate="incomeTax">0원</strong></div>
+        <div><span>지방소득세 참고액 · 공제 제외</span><strong data-tax-estimate="localIncomeTax">0원</strong></div>
       </div>
       <span class="form-help">자동 보험료는 공단 기준에 따라 국민연금 계산 기준의 천원 미만과 보험료의 10원 미만을 절사합니다. 산재보험은 사업주 부담이며 실제 공단 고지액을 최종 확인하세요.</span>
     </div>
@@ -2149,8 +2174,8 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector, teacher =
       if (rowAmount) rowAmount.textContent = formatWon(amount);
     });
     preview.querySelector("[data-insurance-total]").textContent = formatWon(payroll.reporting.insuranceTotal);
-    preview.querySelector('[data-tax-estimate="incomeTax"]').textContent = formatWon(payroll.deductions.employeeIncomeTax);
-    preview.querySelector('[data-tax-estimate="localIncomeTax"]').textContent = formatWon(payroll.deductions.employeeLocalTax);
+    preview.querySelector('[data-tax-estimate="incomeTax"]').textContent = formatWon(payroll.adminTaxReference.employeeIncomeTax);
+    preview.querySelector('[data-tax-estimate="localIncomeTax"]').textContent = formatWon(payroll.adminTaxReference.employeeLocalTax);
   };
 
   payInput.addEventListener("input", () => update(true));
@@ -2165,21 +2190,6 @@ function bindInsuranceEditorAutomation(form, prefix, payInputSelector, teacher =
       field.addEventListener("change", () => update(true));
     });
   update();
-}
-
-function monthlyInsuranceBasesHtml(settings, current, employeeGrossPay) {
-  const fields = {
-    nationalPension: "nationalPensionBase",
-    healthInsurance: "healthInsuranceBase",
-    employmentInsurance: "employmentInsuranceBase"
-  };
-  const rows = Object.entries(INSURANCE_LABELS).filter(([key]) => settings[key]?.enrolled).map(([key, label]) => {
-    const field = fields[key];
-    const value = current[field] ?? settings[key]?.defaultBaseAmount ?? employeeGrossPay ?? 0;
-    return `<div class="form-field"><label for="monthly-${field}">${e(label)} 신고 기준액</label><div class="input-suffix"><input id="monthly-${field}" name="${field}" type="number" class="money-input" min="0" step="1000" value="${e(value)}" required /><span>원</span></div></div>`;
-  }).join("");
-  if (!rows) return "";
-  return `<div class="form-field full form-section-heading"><strong>이번 달 보험 신고 기준액</strong><span class="form-help">보험료 자동 계산의 기준입니다. 실제 공단 신고액과 다르면 이번 달 값으로 수정합니다.</span></div>${rows}`;
 }
 
 function additionalEarningsEditorHtml(lines, containerId) {
@@ -2387,11 +2397,10 @@ function readBusinessPaySettings(form, prefix, containerSelector) {
 }
 
 function businessWorkEditorHtml(lines, containerId) {
-  const rows = lines.length ? lines : [{ id: crypto.randomUUID(), rateId: null, hourlyRate: "", hours: "" }];
   return `<div class="form-field full business-editor-field">
-    <div class="editor-heading"><label>${formatMonth(state.month)} 사업소득 강사료</label><button class="button button-secondary button-compact" type="button" data-add-business-work="${e(containerId)}"><i data-lucide="plus"></i><span>시급 항목 추가</span></button></div>
-    <div id="${e(containerId)}" class="business-line-editor">${rows.map(businessWorkRowHtml).join("")}</div>
-    <div class="business-work-summary"><div><span>수업 시수</span><strong id="business-hours-total">0시간</strong></div><div><span>사업소득 총액</span><strong id="business-gross-total">0원</strong></div><div><span>예상 3.3%</span><strong id="business-tax-total">0원</strong></div><div><span>사업소득 예상 지급액</span><strong id="business-net-total">0원</strong></div></div>
+    <div class="editor-heading"><label>${formatMonth(state.month)} 사업소득 강사료</label></div>
+    <div id="${e(containerId)}" class="business-line-editor">${lines.map(businessWorkRowHtml).join("") || '<p class="muted">등록된 시급·비율이 없습니다.</p>'}</div>
+    <div class="business-work-summary"><div ${lines.some((line) => !isTuitionShare(line)) ? "" : "hidden"}><span>수업 시수</span><strong id="business-hours-total">0시간</strong></div><div><span>사업소득 총액</span><strong id="business-gross-total">0원</strong></div><div><span>예상 3.3%</span><strong id="business-tax-total">0원</strong></div><div><span>사업소득 예상 지급액</span><strong id="business-net-total">0원</strong></div></div>
   </div>`;
 }
 
@@ -2430,16 +2439,15 @@ function bindTuitionEditors(root, onChange = () => {}) {
 function businessWorkRowHtml(line = {}, index = 0) {
   if (isTuitionShare(line)) return `<div class="business-line-row work-row tuition-share-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}" data-tuition-share>
     ${tuitionAmountEditorHtml(line)}
-    <div class="tuition-share-result"><label class="form-field"><span>약정 비율</span><div class="input-suffix"><input type="number" min="0.01" max="100" step="0.01" value="${e(line.tuitionShareRate)}" aria-label="약정 비율" data-work-share required /><span>%</span></div></label>
+    <div class="tuition-share-result"><label class="form-field"><span>약정 비율</span><div class="input-suffix"><input type="number" min="0.01" max="100" step="0.01" value="${e(line.tuitionShareRate)}" aria-label="약정 비율" data-work-share readonly /><span>%</span></div></label>
     <div><span>비율 강사료</span><strong class="business-line-amount" data-work-amount>입력 대기</strong></div></div>
   </div>`;
   const label = businessRateLabel(index);
-  return `<div class="business-line-row work-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}">
+  return `<div class="business-line-row work-row monthly-contract-row" data-business-work-row data-line-id="${e(line.id || crypto.randomUUID())}" data-rate-id="${e(line.rateId || "")}">
     <span class="business-rate-label" data-work-label>${e(label)}</span>
-    <div class="input-suffix"><input type="number" class="money-input" min="0" step="1" value="${e(line.hourlyRate || "")}" placeholder="시급" aria-label="${e(label)} 금액" data-work-hourly /><span>원</span></div>
+    <div class="input-suffix"><input type="number" class="money-input" min="0" step="1" value="${e(line.hourlyRate || "")}" aria-label="${e(label)} 금액" data-work-hourly readonly /><span>원</span></div>
     <div class="input-suffix"><input type="number" min="0" step="0.5" value="${e(line.hours || "")}" placeholder="수업시간" aria-label="${e(label)} 수업시간" data-work-hours /><span>시간</span></div>
     <strong class="business-line-amount" data-work-amount>0원</strong>
-    <button class="icon-button" type="button" title="수업 삭제" aria-label="사업소득 수업 삭제" data-remove-business-line><i data-lucide="trash-2"></i></button>
   </div>`;
 }
 
@@ -2455,25 +2463,7 @@ function renumberBusinessWorkRows(container) {
 function bindBusinessWorkEditor(containerSelector) {
   const container = document.querySelector(containerSelector);
   if (!container) return;
-  document.querySelector(`[data-add-business-work='${container.id}']`)?.addEventListener("click", () => {
-    const rowCount = container.querySelectorAll("[data-business-work-row]").length;
-    if (rowCount >= 10) {
-      showError("시급 항목은 최대 10개까지 입력할 수 있습니다.");
-      return;
-    }
-    container.insertAdjacentHTML("beforeend", businessWorkRowHtml({}, rowCount));
-    renumberBusinessWorkRows(container);
-    refreshIcons();
-    updateBusinessWorkSummary(containerSelector);
-  });
   container.addEventListener("input", () => updateBusinessWorkSummary(containerSelector));
-  container.addEventListener("click", (event) => {
-    const remove = event.target.closest("[data-remove-business-line]");
-    if (!remove) return;
-    remove.closest("[data-business-work-row]")?.remove();
-    renumberBusinessWorkRows(container);
-    updateBusinessWorkSummary(containerSelector);
-  });
   renumberBusinessWorkRows(container);
   bindTuitionEditors(container, () => updateBusinessWorkSummary(containerSelector));
   updateBusinessWorkSummary(containerSelector);
@@ -2530,10 +2520,16 @@ function estimatedBusinessWithholding(gross) {
 }
 
 function mergeBusinessWorkLines(rates, workLines) {
-  const currentByRate = new Map(workLines.filter((line) => line.rateId).map((line) => [line.rateId, line]));
-  const defaults = rates.map((rate) => currentByRate.get(rate.id) || { ...rate, rateId: rate.id, hours: 0 });
-  const custom = workLines.filter((line) => !line.rateId || !rates.some((rate) => rate.id === line.rateId));
-  return [...defaults, ...custom];
+  const used = new Set();
+  return rates.map((rate) => {
+    const line = workLines.find((item) => !used.has(item) && isTuitionShare(item) === isTuitionShare(rate)
+      && (item.rateId === rate.id || !item.rateId && (isTuitionShare(rate)
+        ? item.tuitionShareRate === rate.tuitionShareRate : item.hourlyRate === rate.hourlyRate)));
+    if (line) used.add(line);
+    return { id: line?.id || rate.id, rateId: rate.id, ...(isTuitionShare(rate)
+      ? { tuitionShareRate: rate.tuitionShareRate, tuitionAmount: line ? tuitionBasis(line).tuitionAmount : null, hours: 0 }
+      : { hourlyRate: rate.hourlyRate, hours: line?.hours ?? 0 }) };
+  });
 }
 
 function bindPayrollRows() {
@@ -2850,7 +2846,7 @@ function openTeacherDeletionModal(teacher) {
   syncDeleteButton();
 }
 
-function openTeacherEditModal(teacher) {
+function openTeacherEditModal(teacher, { onSaved, onClose } = {}) {
   const paySettings = teacherPaySettings(teacher);
   const incomeComposition = resolveIncomeComposition(teacher);
   openModal("선생님 정보 수정", `
@@ -2928,7 +2924,8 @@ function openTeacherEditModal(teacher) {
     Object.assign(teacher, updated);
     showToast(`${teacher.name} 선생님 정보를 저장했습니다.`);
     render();
-  });
+    onSaved?.();
+  }, { onClose });
   const form = elements.modalRoot.querySelector("#teacher-edit-form");
   bindPersonNameInput(form);
   bindIncomeCompositionForm(form);
@@ -2946,7 +2943,7 @@ function excelEffectiveOverride(teacher, month) {
 
 function excelCalculation(teacher, month, override) {
   return calculatePayroll(createMonthlyEarningLines(teacher, month, override), policyForMonth(month),
-    { ...override, month, insuranceSettings: teacherPaySettings(teacher).insuranceSettings }, teacher.taxProfile);
+    { ...incomeLinkedInsuranceOverrides(teacherPaySettings(teacher).insuranceSettings, { ...override, month }), employeeTaxMode: "admin-reference" }, teacher.taxProfile);
 }
 
 function excelExpectedState(teacher, month) {
@@ -3058,7 +3055,7 @@ function openPayrollExcelPreview(month, sheet) {
       const after = excelCalculation(teacher, month, { ...current, excelPay: record.next });
       const automatic = excelCalculation(teacher, month, { ...current, excelPay: null });
       const previousAmounts = getMonthlyPayAmounts(teacher, current);
-      const previousValues = { ...previousAmounts, ...before.deductions,
+      const previousValues = { ...previousAmounts, ...before.deductions, ...before.adminTaxReference,
         transportAmount: previousAmounts.manualTransportAmount,
         excelLectureWithholding: before.reporting.lectureWithholding,
         excelAdditionalWithholding: before.reporting.additionalPaymentWithholding };
@@ -3132,21 +3129,38 @@ async function exportMonthlyPayrollExcel(event) {
   finally { if (button) button.disabled = false; }
 }
 
-function openExcelPayModal(teacher) {
+function excelPayFieldsForTeacher(teacher) {
+  const settings = teacherPaySettings(teacher);
+  const employeeFields = ["employeeGrossPay", "employeeWorkHours", "employeeIncomeTax", "employeeLocalTax", "healthInsurance", "longTermCare", "nationalPension", "employmentInsurance"];
+  const businessFields = ["businessGrossPay", "businessHours", "excelLectureWithholding"];
+  return Object.entries(EXCEL_PAY_FIELDS).filter(([key]) =>
+    (!employeeFields.includes(key) || hasEmployeeIncome(settings.incomeComposition))
+    && (!businessFields.includes(key) || hasBusinessIncome(settings.incomeComposition))
+    && (key !== "businessHours" || settings.businessRates.some((rate) => !isTuitionShare(rate))));
+}
+
+function openExcelPayModal(teacher, lockEmployeePay = false) {
   const month = state.month;
   const current = state.data.overrides[`${month}:${teacher.id}`];
   const direct = current.excelPay;
-  const expected = excelExpectedState(teacher, month);
-  openModal(`${teacher.name} 월 직접 입력`, `<form id="excel-pay-form" class="form-grid">${Object.entries(EXCEL_PAY_FIELDS).map(([key, label]) => `<label class="form-field">${e(label)}<input type="number" class="${key.includes("Hours") || key === "transportTrips" ? "" : "money-input"}" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("")}
+  let expected = excelExpectedState(teacher, month);
+  let settings = teacherPaySettings(teacher);
+  let employeePayUpdated = false;
+  let draftFields = {};
+  const fieldsHtml = () => (lockEmployeePay ? excelPayFieldsForTeacher(teacher) : Object.entries(EXCEL_PAY_FIELDS)).map(([key, label]) => lockEmployeePay && key === "employeeGrossPay"
+    ? `<label class="form-field">${e(label)}<input type="text" value="${e(formatWon(employeePayUpdated ? settings.defaultEmployeePay : monthlyPayAmounts(teacher, month).employeeGrossPay))}" readonly /></label>`
+    : `<label class="form-field">${e(label)}<input type="number" class="${key.includes("Hours") || key === "transportTrips" ? "" : "money-input"}" name="${key}" min="0" max="${key.includes("Hours") || key === "businessHours" || key === "transportTrips" ? 10000 : 10000000000}" step="${key.includes("Hours") || key === "businessHours" ? "0.01" : "1"}" value="${e(direct[key] ?? "")}" placeholder="기존 산정값" /></label>`).join("");
+  openModal(`${teacher.name} 월 직접 입력`, `${lockEmployeePay ? monthlyTeacherEditButtonHtml() : ""}<form id="excel-pay-form" class="form-grid"><div class="form-grid full" data-excel-pay-fields>${fieldsHtml()}</div>
     <label class="form-field">교통비 처리<select name="transportTreatment">${treatmentOptions(direct.transportTreatment || monthlyPayAmounts(teacher, month).transportTreatment)}</select></label>
     <label class="form-field">기타 지급 처리<select name="otherTreatment">${treatmentOptions(direct.otherTreatment || "pending")}</select></label>
     ${teacher.incomeComposition === "mixed" ? `<label class="form-field">L 추가 원천징수 공제 명세서<select name="excelAdditionalIncomeType"><option value="business" ${direct.excelAdditionalIncomeType !== "employee" ? "selected" : ""}>사업소득 명세서</option><option value="employee" ${direct.excelAdditionalIncomeType === "employee" ? "selected" : ""}>근로소득 명세서</option></select></label>` : ""}
-    <label class="checkbox-row full"><input type="checkbox" name="clearDirect" /> 엑셀 직접 입력을 모두 해제하고 기존 산정값으로 복원</label></form>`, "저장", async () => {
+    <label class="checkbox-row full"><input type="checkbox" name="clearDirect" /> ${lockEmployeePay ? "근로소득을 제외한 엑셀 직접 입력 해제" : "엑셀 직접 입력을 모두 해제하고 기존 산정값으로 복원"}</label></form>`, "저장", async () => {
     const form = elements.modalRoot.querySelector("#excel-pay-form");
     if (!form.reportValidity()) return false;
     const data = new FormData(form);
     const next = { ...direct };
     for (const key of Object.keys(EXCEL_PAY_FIELDS)) {
+      if ((lockEmployeePay && key === "employeeGrossPay") || !data.has(key)) continue;
       if (data.get(key) === "") delete next[key];
       else next[key] = Number(data.get(key));
     }
@@ -3154,18 +3168,76 @@ function openExcelPayModal(teacher) {
     if (data.has("excelAdditionalIncomeType")) next.excelAdditionalIncomeType = data.get("excelAdditionalIncomeType");
     if (next.healthInsurance != null || next.longTermCare != null) next.healthAndLongTermCare = null;
     else delete next.healthAndLongTermCare;
-    await saveExcelChanges(month, [{ teacherId: teacher.id, excelPay: data.has("clearDirect") ? null : next, expected }]);
-    showToast(data.has("clearDirect") ? "기존 산정값으로 복원했습니다." : "직접 입력값을 저장했습니다.");
+    if (employeePayUpdated) next.employeeGrossPay = settings.defaultEmployeePay;
+    const preservedSalary = employeePayUpdated ? settings.defaultEmployeePay : direct.employeeGrossPay;
+    const cleared = lockEmployeePay && preservedSalary != null ? { employeeGrossPay: preservedSalary } : null;
+    await saveExcelChanges(month, [{ teacherId: teacher.id, excelPay: data.has("clearDirect") ? cleared : next, expected }]);
+    showToast(data.has("clearDirect") ? lockEmployeePay ? "근로소득을 유지하고 나머지 직접 입력을 해제했습니다." : "기존 산정값으로 복원했습니다." : "직접 입력값을 저장했습니다.");
   });
+  if (lockEmployeePay) elements.modalRoot.querySelector("[data-monthly-edit-teacher]").addEventListener("click", () => {
+    const form = elements.modalRoot.querySelector("#excel-pay-form");
+    draftFields = { ...draftFields, ...Object.fromEntries(new FormData(form)) };
+    editTeacherFromMonthlyPay(teacher, () => {
+      const updated = teacherPaySettings(teacher);
+      employeePayUpdated ||= settings.defaultEmployeePay !== updated.defaultEmployeePay || settings.incomeComposition !== updated.incomeComposition;
+      settings = updated;
+      elements.modalRoot.querySelector("[data-excel-pay-fields]").innerHTML = fieldsHtml();
+      for (const [key, value] of Object.entries(draftFields)) {
+        const input = form.elements[key];
+        if (input && key !== "clearDirect") input.value = value;
+      }
+      elements.modalRoot.querySelector("#modal-title").textContent = `${teacher.name} 월 직접 입력`;
+      expected = { ...expected, teacher: excelExpectedState(teacher, month).teacher };
+    });
+  });
+}
+
+function editTeacherFromMonthlyPay(teacher, onSaved) {
+  // Retain the actual controls, including incomplete values and their event handlers.
+  const nodes = [...elements.modalRoot.childNodes];
+  const scrollTop = elements.modalRoot.querySelector(".modal-body").scrollTop;
+  let saved = false;
+  openTeacherEditModal(teacher, {
+    onSaved: () => { saved = true; },
+    onClose: () => {
+      elements.modalRoot.replaceChildren(...nodes);
+      if (saved) onSaved();
+      refreshIcons();
+      overlays.open(elements.modalRoot, { onEscape: () => elements.modalRoot.querySelector("[data-close-modal]").click() });
+      elements.modalRoot.querySelector("[data-monthly-edit-teacher]").focus({ preventScroll: true });
+      elements.modalRoot.querySelector(".modal-body").scrollTop = scrollTop;
+    }
+  });
+}
+
+function monthlyTeacherEditButtonHtml() {
+  return `<div class="monthly-teacher-toolbar"><button class="button button-secondary button-compact" type="button" data-monthly-edit-teacher><i data-lucide="user-cog"></i><span>선생님 정보 수정</span></button></div>`;
+}
+
+function monthlyIncomeFieldsHtml(settings, amounts, workLines) {
+  return `${hasEmployeeIncome(settings.incomeComposition) ? `
+    <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" type="text" value="${e(formatWon(amounts.employeeGrossPay))}" readonly /></div>
+    <div class="form-field"><label for="monthly-employee-hours">근로 수업시간</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>시간</span></div></div>` : ""}
+    ${hasBusinessIncome(settings.incomeComposition) ? businessWorkEditorHtml(workLines, "monthly-business-work") : ""}`;
+}
+
+function captureMonthlyWorkDraft() {
+  return [...elements.modalRoot.querySelectorAll("[data-business-work-row]")].map((row) => ({
+    id: row.dataset.lineId, rateId: row.dataset.rateId,
+    ...(row.hasAttribute("data-tuition-share")
+      ? { tuitionShareRate: Number(row.querySelector("[data-work-share]").value), tuitionAmount: row.querySelector("[data-tuition-amount]").value || null }
+      : { hourlyRate: Number(row.querySelector("[data-work-hourly]").value), hours: row.querySelector("[data-work-hours]").value })
+  }));
 }
 
 function openMonthlyPayModal(teacher) {
   const key = `${state.month}:${teacher.id}`;
   const current = state.data.overrides[key] || {};
-  if (current.excelPay && Object.keys(current.excelPay).length) return openExcelPayModal(teacher);
-  const settings = teacherPaySettings(teacher);
+  if (current.excelPay && Object.keys(current.excelPay).length) return openExcelPayModal(teacher, true);
+  let settings = teacherPaySettings(teacher);
   const amounts = monthlyPayAmounts(teacher, state.month);
   const workLines = mergeBusinessWorkLines(settings.businessRates, amounts.businessWorkLines);
+  let employeePayUpdated = false;
   const submittedTuition = monthlyWorkInput(teacher.id)?.tuitionInput;
   const shareLine = workLines.find(isTuitionShare);
   const submittedBasis = submittedTuitionBasis(submittedTuition);
@@ -3173,14 +3245,12 @@ function openMonthlyPayModal(teacher) {
     ? submittedBasis : null;
   const tuitionDiffers = tuitionSubmission && (tuitionBasis(shareLine).tuitionPending || tuitionSubmission.tuitionAmount !== tuitionBasis(shareLine).tuitionAmount);
   openModal(`${teacher.name} 월 지급액`, `
+    ${monthlyTeacherEditButtonHtml()}
     <div class="notice"><i data-lucide="wallet-cards"></i><span>신고액은 아래 모든 지급 항목의 합계입니다. 교통비(주차비 포함)·기타 지급은 세무사 확인 결과에 맞는 처리 방식을 선택해야 급여를 확정할 수 있습니다.</span></div>
+    <div class="notice warning" data-monthly-contract-notice ${amounts.businessWorkLines.some((line) => !workLines.some((item) => item.id === line.id)) ? "" : "hidden"}><span>현재 계약에 없는 수업 항목은 이번 입력에서 제외되었습니다. 금액을 확인한 뒤 저장해 주세요.</span></div>
     <form id="monthly-pay-form" class="form-grid">
-      <div class="form-field"><label for="monthly-pay-default-employee">기본 근로소득</label><input id="monthly-pay-default-employee" type="text" value="${e(formatWon(settings.defaultEmployeePay))}" readonly /></div>
-      <div class="form-field"><label for="monthly-pay-employee">${formatMonth(state.month)} 근로소득</label><input id="monthly-pay-employee" name="employeeGrossPay" type="number" class="money-input" min="0" step="1000" value="${e(amounts.employeeGrossPay)}" required /></div>
-      <div class="form-field"><label for="monthly-employee-hours">근로 수업시간</label><div class="input-suffix"><input id="monthly-employee-hours" name="employeeWorkHours" type="number" min="0" step="0.5" value="${e(amounts.employeeWorkHours)}" /><span>시간</span></div></div>
-      ${monthlyInsuranceBasesHtml(settings.insuranceSettings, current, amounts.employeeGrossPay)}
-      ${tuitionSubmission ? `<div class="form-field full tuition-submission"><strong>선생님 제출 학원비</strong><span>해당 수업 전체 학원비 ${formatWon(tuitionSubmission.tuitionAmount)}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
-      ${businessWorkEditorHtml(workLines, "monthly-business-work")}
+      <div class="form-grid full" data-monthly-income-fields>${monthlyIncomeFieldsHtml(settings, amounts, workLines)}</div>
+      ${tuitionSubmission ? `<div class="form-field full tuition-submission" data-monthly-tuition-submission><strong>선생님 제출 학원비</strong><span>해당 수업 전체 학원비 ${formatWon(tuitionSubmission.tuitionAmount)}</span>${tuitionDiffers ? `<button class="button button-secondary button-compact" type="button" data-use-submitted-tuition><i data-lucide="import"></i><span>선생님 제출값 반영</span></button>` : ""}</div>` : ""}
       <div class="form-field full form-section-heading"><strong>교통비 (주차비 포함)</strong></div>
       <div class="form-field"><label for="monthly-transport-trips">교통비 지급 횟수</label><div class="input-suffix"><input id="monthly-transport-trips" name="transportTrips" type="number" min="0" step="1" value="${e(amounts.transportTrips)}" /><span>회</span></div></div>
       <div class="form-field"><label for="monthly-transport-unit">교통 1회 금액</label><div class="input-suffix"><input id="monthly-transport-unit" name="transportUnitAmount" type="number" class="money-input" min="0" step="1" value="${e(amounts.transportUnitAmount)}" /><span>원</span></div></div>
@@ -3196,14 +3266,13 @@ function openMonthlyPayModal(teacher) {
     const form = elements.modalRoot.querySelector("#monthly-pay-form");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
-    const businessWorkLines = readBusinessWorkLines("#monthly-business-work");
+    const businessWorkLines = mergeBusinessWorkLines(settings.businessRates, readBusinessWorkLines("#monthly-business-work"));
     const override = {
-      ...current,
       id: `${state.month}_${teacher.id}`,
       month: state.month,
       teacherId: teacher.id,
-      employeeGrossPay: Number(data.employeeGrossPay),
-      employeeWorkHours: Number(data.employeeWorkHours || 0),
+      employeeWorkHours: hasEmployeeIncome(settings.incomeComposition) ? Number(data.employeeWorkHours || 0) : 0,
+      ...(employeePayUpdated ? { employeeGrossPay: settings.defaultEmployeePay } : {}),
       businessWorkLines,
       transportTrips: Number(data.transportTrips || 0),
       transportUnitAmount: Number(data.transportUnitAmount || 0),
@@ -3213,10 +3282,6 @@ function openMonthlyPayModal(teacher) {
       additionalEarnings: readAdditionalEarnings("#monthly-additional-earnings"),
       grossPayNote: data.grossPayNote.trim() || null
     };
-    ["nationalPensionBase", "healthInsuranceBase", "employmentInsuranceBase"].forEach((field) => {
-      if (!form.elements[field]) return;
-      override[field] = form.elements[field].value === "" ? null : Number(form.elements[field].value);
-    });
     const workInput = teacher.authUid ? {
       id: monthlyWorkInputId(state.month, teacher.id),
       teacherId: teacher.id,
@@ -3228,7 +3293,7 @@ function openMonthlyPayModal(teacher) {
       submittedAt: new Date().toISOString()
     } : null;
     if (state.store) await state.store.saveAdminMonthlyPayroll(override, workInput);
-    state.data.overrides[key] = override;
+    state.data.overrides[key] = { ...current, ...override };
     if (workInput) state.data.monthlyWorkInputs[key] = workInput;
     showToast(`${formatMonth(state.month)} 지급액을 저장했습니다.`);
     renderPayrollInputs();
@@ -3242,6 +3307,33 @@ function openMonthlyPayModal(teacher) {
     refreshIcons();
   });
   bindAdditionalEarningsEditor("#monthly-additional-earnings");
+  elements.modalRoot.querySelector("[data-monthly-edit-teacher]").addEventListener("click", () => {
+    const draftLines = captureMonthlyWorkDraft();
+    const form = elements.modalRoot.querySelector("#monthly-pay-form");
+    const hours = form.elements.employeeWorkHours?.value ?? "0";
+    editTeacherFromMonthlyPay(teacher, () => {
+      const updatedSettings = teacherPaySettings(teacher);
+      employeePayUpdated ||= settings.defaultEmployeePay !== updatedSettings.defaultEmployeePay
+        || settings.incomeComposition !== updatedSettings.incomeComposition;
+      const updatedLines = mergeBusinessWorkLines(updatedSettings.businessRates, draftLines);
+      const latest = monthlyPayAmounts(teacher, state.month);
+      elements.modalRoot.querySelector("[data-monthly-income-fields]").innerHTML = monthlyIncomeFieldsHtml(updatedSettings, {
+        ...latest, employeeWorkHours: hours,
+        employeeGrossPay: employeePayUpdated ? updatedSettings.defaultEmployeePay : latest.employeeGrossPay
+      }, updatedLines);
+      const removed = draftLines.some((line) => !updatedLines.some((item) => item.id === line.id));
+      const notice = elements.modalRoot.querySelector("[data-monthly-contract-notice]");
+      notice.hidden = false;
+      notice.querySelector("span").textContent = removed
+        ? "선생님 정보가 저장되었습니다. 변경된 계약에 없는 수업 항목은 제외되었습니다. 월 지급액은 확인 후 별도로 저장해 주세요."
+        : "선생님 정보가 저장되었습니다. 월 지급액은 변경된 기준을 확인한 뒤 저장해 주세요.";
+      const submission = elements.modalRoot.querySelector("[data-monthly-tuition-submission]");
+      if (submission) submission.hidden = !updatedLines.some((line) => isTuitionShare(line) && line.rateId === submittedTuition?.rateId);
+      settings = updatedSettings;
+      elements.modalRoot.querySelector("#modal-title").textContent = `${teacher.name} 월 지급액`;
+      bindBusinessWorkEditor("#monthly-business-work");
+    });
+  });
 }
 
 function openPayrollAdjustmentModal(teacher) {
@@ -3259,8 +3351,8 @@ function openPayrollAdjustmentModal(teacher) {
     <form id="payroll-adjustment-form" class="form-grid">
       <div class="form-field"><label for="adjust-nontaxable">근로소득 비과세액</label><input id="adjust-nontaxable" name="employeeNonTaxableAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employeeNonTaxableAmount || 0)}" /></div>
       <div class="form-field"><label for="adjust-student-loan">학자금 지원액</label><input id="adjust-student-loan" name="employeeStudentLoanSupportAmount" type="number" class="money-input" min="0" step="1" value="${e(current.employeeStudentLoanSupportAmount || 0)}" /></div>
-      <div class="form-field"><label for="adjust-employee-tax">근로소득세 수동값</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="자동" /></div>
-      <div class="form-field"><label for="adjust-employee-local">근로소득 지방세 수동값</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-employee-tax">근로소득세 참고액 (공제 제외)</label><input id="adjust-employee-tax" name="employeeIncomeTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeIncomeTax")}" placeholder="자동" /></div>
+      <div class="form-field"><label for="adjust-employee-local">근로소득 지방세 참고액 (공제 제외)</label><input id="adjust-employee-local" name="employeeLocalTax" type="number" class="money-input" min="0" step="1" value="${optionalValue("employeeLocalTax")}" placeholder="자동" /></div>
       <div class="form-field"><label for="adjust-pension">국민연금 수동값</label><input id="adjust-pension" name="nationalPension" type="number" class="money-input" min="0" step="1" value="${optionalValue("nationalPension")}" placeholder="자동" /></div>
       <div class="form-field"><label for="adjust-health-care">건강보험+장기요양 수동값</label><input id="adjust-health-care" name="healthAndLongTermCare" type="number" class="money-input" min="0" step="1" value="${combinedHealthValue}" placeholder="자동" /><span class="form-help">공단 고지서의 두 근로자 부담액을 합쳐 입력합니다.</span></div>
       <div class="form-field"><label for="adjust-employment">고용보험 수동값</label><input id="adjust-employment" name="employmentInsurance" type="number" class="money-input" min="0" step="1" value="${optionalValue("employmentInsurance")}" placeholder="자동" /></div>
@@ -3576,7 +3668,7 @@ function openPublishModal() {
     }
     payslips.forEach((payslip) => {
       const currentIndex = state.data.payslips.findIndex((item) => item.id === payslip.id);
-      const current = { id: payslip.id, ...structuredClone(payslip.data) };
+      const current = { id: payslip.id, ...structuredClone(payslip.data), calculation: publicPayslipCalculation(payslip.data.calculation) };
       if (currentIndex >= 0) state.data.payslips[currentIndex] = current;
       else state.data.payslips.push(current);
       state.data.payslipVersions.push({ id: payslip.versionId, ...structuredClone(payslip.data) });
@@ -3656,24 +3748,33 @@ function openCancelPayrollModal() {
   });
 }
 
-function openModal(title, body, submitLabel, onSubmit) {
+function openModal(title, body, submitLabel, onSubmit, { onClose } = {}) {
+  let submitting = false;
+  const dismiss = () => {
+    if (submitting) return;
+    closeModal();
+    onClose?.();
+  };
   elements.modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-header"><h2 id="modal-title">${e(title)}</h2><button class="icon-button" type="button" aria-label="닫기" data-close-modal><i data-lucide="x"></i></button></header><div class="modal-body">${body}</div><footer class="modal-footer"><button class="button button-secondary" type="button" data-close-modal>${submitLabel ? "취소" : "닫기"}</button>${submitLabel ? `<button class="button button-primary" type="button" data-submit-modal>${e(submitLabel)}</button>` : ""}</footer></section></div>`;
-  elements.modalRoot.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", closeModal));
-  elements.modalRoot.querySelector(".modal-backdrop").addEventListener("click", (event) => { if (event.target.classList.contains("modal-backdrop")) closeModal(); });
+  elements.modalRoot.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", dismiss));
+  elements.modalRoot.querySelector(".modal-backdrop").addEventListener("click", (event) => { if (event.target.classList.contains("modal-backdrop")) dismiss(); });
   const submit = elements.modalRoot.querySelector("[data-submit-modal]");
   if (submit) submit.addEventListener("click", async () => {
     submit.disabled = true;
+    submitting = true;
     try {
       const result = await onSubmit();
-      if (result !== false) closeModal();
+      submitting = false;
+      if (result !== false) dismiss();
     } catch (error) {
       showError(error, "저장하지 못했습니다.");
     } finally {
+      submitting = false;
       submit.disabled = false;
     }
   });
   refreshIcons();
-  overlays.open(elements.modalRoot, { onEscape: closeModal });
+  overlays.open(elements.modalRoot, { onEscape: dismiss });
 }
 
 function closeModal() {
@@ -3901,7 +4002,7 @@ function deliveryTime(value) {
 
 function metric(icon, label, value, helper) { return `<div class="metric"><span class="metric-label"><i data-lucide="${icon}"></i>${e(label)}</span><strong>${e(value)}</strong><small>${e(helper)}</small></div>`; }
 function progressStep(number, title, detail, active, complete) { return `<div class="progress-step ${active ? "active" : ""} ${complete ? "complete" : ""}"><span class="progress-number">${e(number)}</span><div><strong>${e(title)}</strong><span>${e(detail)}</span></div></div>`; }
-function personCell(teacher) { return `<div class="person-cell"><span class="avatar">${e(teacher.name.slice(0, 1))}</span><span class="person-meta"><strong>${e(teacher.name)}</strong><span>${e(teacher.email)}</span></span></div>`; }
+function personCell(teacher) { return `<span class="person-cell"><span class="avatar">${e(teacher.name.slice(0, 1))}</span><span class="person-meta"><strong>${e(teacher.name)}</strong><span>${e(teacher.email)}</span></span></span>`; }
 function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="empty-state">표시할 내역이 없습니다.</div></td></tr>`; }
 function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", cancelled: "취소 후 수정", paid: "지급 완료" })[status] || status; }
 function roleLabel(role) { return ({ admin: "관리자", teacher: "선생님" })[role] || role; }

@@ -15,7 +15,7 @@ export const EXCEL_PAY_FIELDS = {
   employeeWorkHours: "근로 수업시간", businessHours: "사업 수업시간",
   transportTrips: "교통 횟수", transportAmount: "직접 입력 교통비 (영수증 제외)", otherPaymentAmount: "기타 지급 (주차비 제외)",
   excelLectureWithholding: "H 강사료 원천징수 합계", excelAdditionalWithholding: "L 추가 지급 원천징수 합계",
-  employeeIncomeTax: "R 근로소득세", employeeLocalTax: "S 근로소득 지방세",
+  employeeIncomeTax: "R 근로소득세 참고액 (공제 제외)", employeeLocalTax: "S 근로소득 지방세 참고액 (공제 제외)",
   healthInsurance: "T 건강보험", longTermCare: "U 장기요양", nationalPension: "V 국민연금", employmentInsurance: "W 고용보험"
 };
 

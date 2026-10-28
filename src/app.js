@@ -310,6 +310,9 @@ async function openWorkspace(user) {
     const loaded = await state.store.loadWorkspace(user);
     hydrateFirebaseData(loaded);
   }
+  state.month = currentCalendarMonth();
+  state.selectedPayslipMonth = state.month;
+  state.retirementMonth = state.month;
   if (user.role === "teacher" && teacherById(user.teacherId)?.profileCompleted === false) {
     state.view = "profile";
   }
@@ -354,13 +357,6 @@ function hydrateFirebaseData(loaded) {
   state.data.expenseReceipts = loaded.expenseReceipts || [];
   state.data.overrides = Object.fromEntries((loaded.payrollOverrides || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
   state.data.monthlyWorkInputs = Object.fromEntries((loaded.teacherMonthlyInputs || []).map((item) => [`${item.month}:${item.teacherId}`, item]));
-  const latestRunMonth = state.data.payrollRuns.map((run) => run.month).sort().at(-1);
-  const latestInputMonth = Object.values(state.data.monthlyWorkInputs).map((input) => input.month).sort().at(-1);
-  if (state.user?.role === "teacher") {
-    state.month = [currentCalendarMonth(), latestInputMonth].filter(Boolean).sort().at(-1);
-  } else if (latestRunMonth) {
-    state.month = latestRunMonth;
-  }
 }
 
 async function logout() {
@@ -4021,8 +4017,10 @@ function emptyRow(columns) { return `<tr><td colspan="${columns}"><div class="em
 function statusLabel(status) { return ({ draft: "검토 중", ready: "확정 대기", published: "발행 완료", cancelled: "취소 후 수정", paid: "지급 완료" })[status] || status; }
 function roleLabel(role) { return ({ admin: "관리자", teacher: "선생님" })[role] || role; }
 function currentCalendarMonth() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit"
+  }).formatToParts(new Date());
+  return `${parts.find((part) => part.type === "year").value}-${parts.find((part) => part.type === "month").value}`;
 }
 function ratePercent(rate) { return `${((Number(rate) || 0) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`; }
 function policyPercentInput(rate, digits = 3) { return Number(((Number(rate) || 0) * 100).toFixed(digits)); }
